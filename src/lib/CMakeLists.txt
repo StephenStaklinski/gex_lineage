@@ -8,6 +8,7 @@ add_library(vine_core STATIC
     covariance.c
     crispr.c
     geometry.c
+    gex.c
     gradients.c
     heap.c
     hutchinson.c
