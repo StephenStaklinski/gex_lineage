@@ -7,3 +7,7 @@
 *~
 .DS_Store
 .cache
+
+bin
+build
+local_install.sh
