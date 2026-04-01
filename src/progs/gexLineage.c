@@ -52,10 +52,11 @@ int main(int argc, char *argv[]) {
     GexMoransResult *morans = NULL;
     GexLRTResult *lrt = NULL;
     GexPCA *pca = NULL;
-    GexFilterMode filter_mode = GEX_FILTER_LRT;
+    GexFilterMode filter_mode = GEX_FILTER_MORAN;
     GexLRTNullMode lrt_null_mode = GEX_LRT_NULL_CHI2;
     int n_trees = 0;
     int i;
+    int n_sims = 100;
     int moran_perms = 1000;
     double moran_fdr = 0.05;
     double moran_min_i = 0.0;
@@ -212,8 +213,8 @@ int main(int argc, char *argv[]) {
     if (!brownian_run_simulation_check(trees[0],
                                        gex->cell_names,
                                        gex->n_cells,
-                                       1000,
-                                       1000,
+                                       n_sims,
+                                       n_sims,
                                        filter_mode,
                                        lrt_null_mode,
                                        moran_perms,
