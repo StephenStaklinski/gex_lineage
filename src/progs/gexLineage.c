@@ -170,6 +170,13 @@ int main(int argc, char *argv[]) {
     }
 
     gex_print_io_summary(trees, n_trees, gex);
+    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
+        fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names\n");
+        gex_free_trees(trees, n_trees);
+        gex_free_matrix_data(gex);
+        return 1;
+    }
+    printf("After reconciliation: %d shared cell/tip name(s)\n\n", gex->n_cells);
 
     /* Filter genes based on tree correlation statistic */
     if (n_trees < 1 || trees[0] == NULL) {

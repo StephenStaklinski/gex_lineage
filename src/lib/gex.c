@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <math.h>
 #include <phast/eigen.h>
+#include <phast/lists.h>
+#include <phast/stringsplus.h>
 
 /* -------------------- helpers -------------------- */
 
@@ -363,6 +365,37 @@ static int gex_count_kept_lrt_genes(GexLRTResult *res, double max_q) {
     return nkeep;
 }
 
+static int gex_name_in_char_array(const char *name, char **names, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        if (strcmp(name, names[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int gex_name_in_string_list(const char *name, List *names) {
+    int i;
+    for (i = 0; i < lst_size(names); i++) {
+        String *s = lst_get_ptr(names, i);
+        if (strcmp(name, s->chars) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void gex_free_string_ptr_list(List *l) {
+    int i;
+    if (l == NULL)
+        return;
+    for (i = 0; i < lst_size(l); i++) {
+        String *s = lst_get_ptr(l, i);
+        if (s != NULL)
+            str_free(s);
+    }
+    lst_free(l);
+}
+
 static int gex_keep_gene(GexMoransResult *morans,
                          GexLRTResult *lrt,
                          int gene_idx,
@@ -690,6 +723,129 @@ void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
         tr_print(stdout, trees[0], 1);
         printf("\n");
     }
+}
+
+int gex_reconcile_tree_and_expression(TreeNode **trees,
+                                      int n_trees,
+                                      GexMatrix **gex_ptr) {
+    int i, j;
+    int tree_missing_from_expr = 0;
+    int expr_missing_from_tree = 0;
+    int n_keep = 0;
+    List *tree_names = NULL;
+    List *keep_names = NULL;
+    GexMatrix *gex;
+    GexMatrix *subset = NULL;
+
+    if (trees == NULL || n_trees <= 0 || trees[0] == NULL ||
+        gex_ptr == NULL || *gex_ptr == NULL) {
+        fprintf(stderr, "ERROR: gex_reconcile_tree_and_expression got invalid input\n");
+        return -1;
+    }
+
+    gex = *gex_ptr;
+    tree_names = tr_leaf_names(trees[0]);
+    if (tree_names == NULL) {
+        fprintf(stderr, "ERROR: failed to collect tree tip names\n");
+        return -1;
+    }
+
+    keep_names = lst_new_ptr(gex->n_cells > 0 ? gex->n_cells : 1);
+    if (keep_names == NULL) {
+        gex_free_string_ptr_list(tree_names);
+        return -1;
+    }
+
+    for (i = 0; i < lst_size(tree_names); i++) {
+        String *s = lst_get_ptr(tree_names, i);
+        if (!gex_name_in_char_array(s->chars, gex->cell_names, gex->n_cells))
+            tree_missing_from_expr++;
+    }
+
+    for (i = 0; i < gex->n_cells; i++) {
+        if (!gex_name_in_string_list(gex->cell_names[i], tree_names))
+            expr_missing_from_tree++;
+        else {
+            String *s = str_new_charstr(gex->cell_names[i]);
+            if (s == NULL) {
+                gex_free_string_ptr_list(tree_names);
+                gex_free_string_ptr_list(keep_names);
+                return -1;
+            }
+            lst_push_ptr(keep_names, s);
+            n_keep++;
+        }
+    }
+
+    if (tree_missing_from_expr > 0 || expr_missing_from_tree > 0) {
+        fprintf(stderr,
+                "WARNING: tree/expression names do not match perfectly; %d tree tip(s) missing from expression matrix and %d expression cell(s) missing from tree. Using the %d shared name(s).\n",
+                tree_missing_from_expr, expr_missing_from_tree, n_keep);
+    }
+
+    if (n_keep <= 0) {
+        fprintf(stderr, "ERROR: no shared names between first tree tips and expression matrix\n");
+        gex_free_string_ptr_list(tree_names);
+        gex_free_string_ptr_list(keep_names);
+        return -1;
+    }
+
+    subset = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    if (subset == NULL) {
+        gex_free_string_ptr_list(tree_names);
+        gex_free_string_ptr_list(keep_names);
+        return -1;
+    }
+
+    subset->n_cells = n_keep;
+    subset->n_genes = gex->n_genes;
+    subset->X = mat_new(n_keep, gex->n_genes);
+    subset->cell_names = (char **)calloc(n_keep, sizeof(char *));
+    subset->gene_names = (char **)calloc(gex->n_genes, sizeof(char *));
+    if (subset->X == NULL || subset->cell_names == NULL || subset->gene_names == NULL) {
+        gex_free_matrix_data(subset);
+        gex_free_string_ptr_list(tree_names);
+        gex_free_string_ptr_list(keep_names);
+        return -1;
+    }
+
+    for (j = 0; j < gex->n_genes; j++) {
+        subset->gene_names[j] = gex_strdup(gex->gene_names[j]);
+        if (subset->gene_names[j] == NULL) {
+            gex_free_matrix_data(subset);
+            gex_free_string_ptr_list(tree_names);
+            gex_free_string_ptr_list(keep_names);
+            return -1;
+        }
+    }
+
+    for (i = 0, j = 0; i < gex->n_cells; i++) {
+        if (gex_name_in_string_list(gex->cell_names[i], tree_names)) {
+            int g;
+            subset->cell_names[j] = gex_strdup(gex->cell_names[i]);
+            if (subset->cell_names[j] == NULL) {
+                gex_free_matrix_data(subset);
+                gex_free_string_ptr_list(tree_names);
+                gex_free_string_ptr_list(keep_names);
+                return -1;
+            }
+            for (g = 0; g < gex->n_genes; g++)
+                mat_set(subset->X, j, g, mat_get(gex->X, i, g));
+            j++;
+        }
+    }
+
+    for (i = 0; i < n_trees; i++) {
+        if (trees[i] != NULL)
+            tr_prune(&trees[i], keep_names, 1, NULL);
+    }
+
+    gex_free_matrix_data(gex);
+    *gex_ptr = subset;
+
+    gex_free_string_ptr_list(tree_names);
+    gex_free_string_ptr_list(keep_names);
+    return 0;
 }
 
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,

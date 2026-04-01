@@ -51,6 +51,9 @@ GexMatrix *gex_read_labeled_matrix(const char *filename);
 void gex_free_matrix_data(GexMatrix *gex);
 
 void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex);
+int gex_reconcile_tree_and_expression(TreeNode **trees,
+                                      int n_trees,
+                                      GexMatrix **gex_ptr);
 
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
                                       Matrix *W,
