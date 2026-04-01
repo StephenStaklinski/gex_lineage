@@ -167,7 +167,7 @@ double nj_elbo_taylor(TreeModel *mod, multi_MVN *mmvn, CovarData *data,
   /* if variance has hit its floor, there's no sense in updating the trace */
   if (do_refresh && nj_var_at_floor(mmvn, data))
     do_refresh = FALSE;
-  
+
   if (do_refresh) {
     Vector *grad_sigma = vec_new(sigdim);
     vec_zero(grad_sigma);

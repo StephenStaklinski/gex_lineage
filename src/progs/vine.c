@@ -132,6 +132,7 @@ int main(int argc, char *argv[]) {
     {"gtr", 0, 0, 'g'}, 
     {"hyperbolic", 0, 0, 'H'},
     {"mcmc", 0, 0, 'J'},
+    {"parallel", 1, 0, 'j'},
     {"logfile", 1, 0, 'l'},
     {"mean", 1, 0, 'm'},
     {"miniter", 1, 0, 'M'},

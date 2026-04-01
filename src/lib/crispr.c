@@ -113,7 +113,14 @@ CrisprMutTable *cpr_read_table(FILE *F) {
     muts = lst_new_int(M->nsites);
     lst_push_ptr(M->cellmuts, muts);
     for (i = 1; i< M->nsites + 1; i++) {
-      str_as_int(lst_get_ptr(cols, i), &state);
+      if (str_as_int(lst_get_ptr(cols, i), &state) != 0)
+        die("ERROR in line %d of input file: mutation state '%s' is not an "
+            "integer.\n",
+            lineno, ((String *)lst_get_ptr(cols, i))->chars);
+      if (state < 0 && state != -1)
+        die("ERROR in line %d of input file: mutation state '%s' is not a "
+          "non-negative integer or -1.\n",
+          lineno, ((String *)lst_get_ptr(cols, i))->chars);
       lst_push_int(muts, state);
       if (state >= M->nstates)
         M->nstates = state + 1;

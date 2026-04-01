@@ -424,13 +424,28 @@ void nj_variational_inf(TreeModel *mod, multi_MVN *mmvn, int nminibatch,
   nj_update_covariance(mmvn, data);
   if (n_nuisance_params > 0)
     nj_update_nuis_params(best_nuis_params, mod, data);
-  
+
+  /* if using Taylor approximation, run one final MC pass at the restored
+     best parameters to get an unbiased estimate of E[lnL] for reporting.
+     The hybrid ELBO used during training can be biased (especially when
+     variance is at floor), so this gives an accurate final value. */
+  double final_mc_ll = 0;
+  if (data->taylor != NULL && logf != NULL) {
+    double dummy_lprior = 0, dummy_migll = 0;
+    final_mc_ll = nj_elbo_montecarlo(mod, mmvn, data, nminibatch, avegrad,
+                                     ave_nuis_grad, &dummy_lprior, &dummy_migll);
+  }
+
   if (logf != NULL) {
     fprintf(logf,
             "# Reverting to parameters from iteration %d; ELB: %.2f, LNL: "
             "%.2f, LPRIOR: %.2f, KLD: %.2f, penalty: %.2f",
             bestt + 1, bestelb, bestll, best_lprior, bestkld, bestpenalty);
-    if (bestll_at_mean != 0)
+    if (data->taylor != NULL)
+      /* final unbiased MC estimate of E_q[lnL] at best parameters */
+      fprintf(logf, ", LNL_mc: %.2f", final_mc_ll);
+    else if (bestll_at_mean != 0)
+      /* for MC mode: lnL at the mean embedding (no separate MC pass needed) */
       fprintf(logf, ", LNL_mu: %.2f", bestll_at_mean);
     if (data->migtable != NULL)
       fprintf(logf, ", MIGLL: %.2f", bestmigll);
