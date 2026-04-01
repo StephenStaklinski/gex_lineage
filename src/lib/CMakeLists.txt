@@ -10,6 +10,7 @@ add_library(vine_core STATIC
     crispr.c
     geometry.c
     gex.c
+    gex_model.c
     gradients.c
     heap.c
     hutchinson.c

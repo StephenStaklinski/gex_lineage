@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "gex.h"
+#include "gex_model.h"
 #include "pca.h"
 #include "brownian.h"
 
@@ -52,6 +53,7 @@ int main(int argc, char *argv[]) {
     GexMoransResult *morans = NULL;
     GexLRTResult *lrt = NULL;
     GexPCA *pca = NULL;
+    GexLatentBrownianModel *model = NULL;
     GexFilterMode filter_mode = GEX_FILTER_MORAN;
     GexLRTNullMode lrt_null_mode = GEX_LRT_NULL_CHI2;
     int n_trees = 0;
@@ -343,6 +345,40 @@ int main(int argc, char *argv[]) {
 
     gex_print_pca_summary(pca);
 
+    model = gex_fit_latent_brownian_model(gex_filtered, Sigma, pca, moran_seed);
+    if (model == NULL) {
+        fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model\n");
+        gex_free_trees(trees, n_trees);
+        gex_free_matrix_data(gex);
+        gex_free_matrix_data(gex_filtered);
+        gex_free_morans_result(morans);
+        gex_free_lrt_result(lrt);
+        gex_free_pca(pca);
+        mat_free(W);
+        mat_free(Sigma);
+        return 1;
+    }
+    {
+        char model_path[4096];
+        snprintf(model_path, sizeof(model_path), "%s.model.tsv", outprefix);
+        if (gex_write_latent_brownian_model(model_path, model) != 0) {
+            fprintf(stderr, "ERROR: failed to write latent Brownian model parameters to %s\n",
+                    model_path);
+            gex_free_trees(trees, n_trees);
+            gex_free_matrix_data(gex);
+            gex_free_matrix_data(gex_filtered);
+            gex_free_morans_result(morans);
+            gex_free_lrt_result(lrt);
+            gex_free_pca(pca);
+            gex_free_latent_brownian_model(model);
+            mat_free(W);
+            mat_free(Sigma);
+            return 1;
+        }
+        printf("Fitted latent Brownian model with k=%d and wrote parameters to %s\n",
+               model->k, model_path);
+    }
+
     printf("done\n");
 
     gex_free_trees(trees, n_trees);
@@ -351,6 +387,7 @@ int main(int argc, char *argv[]) {
     gex_free_morans_result(morans);
     gex_free_lrt_result(lrt);
     gex_free_pca(pca);
+    gex_free_latent_brownian_model(model);
     if (Sigma != NULL)
         mat_free(Sigma);
     if (W != NULL)
