@@ -44,6 +44,7 @@ typedef enum {
 /* Read a NEXUS file containing TREE lines into an array of PHAST trees.
    On success, *n_trees is set to the number of trees loaded. */
 TreeNode **gex_read_nexus(const char *filename, int *n_trees);
+int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol);
 void gex_free_trees(TreeNode **trees, int n_trees);
 
 /* Read a numeric tab-delimited matrix file into a GexMatrix. */

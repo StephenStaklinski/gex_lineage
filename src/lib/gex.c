@@ -396,6 +396,36 @@ static void gex_free_string_ptr_list(List *l) {
     lst_free(l);
 }
 
+static int gex_is_leaf(TreeNode *node) {
+    return (node != NULL && node->lchild == NULL && node->rchild == NULL);
+}
+
+static void gex_collect_tip_depth_range(TreeNode *node,
+                                        double depth,
+                                        double *min_depth,
+                                        double *max_depth,
+                                        int *n_tips) {
+    double next_depth = depth;
+
+    if (node == NULL)
+        return;
+
+    if (node->parent != NULL)
+        next_depth += node->dparent;
+
+    if (gex_is_leaf(node)) {
+        if (*n_tips == 0 || next_depth < *min_depth)
+            *min_depth = next_depth;
+        if (*n_tips == 0 || next_depth > *max_depth)
+            *max_depth = next_depth;
+        (*n_tips)++;
+        return;
+    }
+
+    gex_collect_tip_depth_range(node->lchild, next_depth, min_depth, max_depth, n_tips);
+    gex_collect_tip_depth_range(node->rchild, next_depth, min_depth, max_depth, n_tips);
+}
+
 static int gex_keep_gene(GexMoransResult *morans,
                          GexLRTResult *lrt,
                          int gene_idx,
@@ -491,6 +521,39 @@ TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
 
     *n_trees = count;
     return trees;
+}
+
+int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol) {
+    int i;
+
+    if (trees == NULL || n_trees < 0 || tol < 0.0) {
+        fprintf(stderr, "ERROR: gex_check_trees_ultrametric got invalid input\n");
+        return -1;
+    }
+
+    for (i = 0; i < n_trees; i++) {
+        double min_depth = 0.0;
+        double max_depth = 0.0;
+        int n_tips = 0;
+
+        if (trees[i] == NULL)
+            continue;
+
+        gex_collect_tip_depth_range(trees[i], 0.0, &min_depth, &max_depth, &n_tips);
+        if (n_tips == 0) {
+            fprintf(stderr, "ERROR: tree %d has no tips\n", i + 1);
+            return -1;
+        }
+
+        if (fabs(max_depth - min_depth) > tol) {
+            fprintf(stderr,
+                    "ERROR: tree %d is not ultrametric; min root-to-tip depth=%.12g max root-to-tip depth=%.12g diff=%.12g exceeds tolerance %.12g\n",
+                    i + 1, min_depth, max_depth, fabs(max_depth - min_depth), tol);
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 void gex_free_trees(TreeNode **trees, int n_trees) {

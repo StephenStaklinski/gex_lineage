@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
     GexLRTResult *lrt = NULL;
     GexPCA *pca = NULL;
     GexFilterMode filter_mode = GEX_FILTER_LRT;
-    GexLRTNullMode lrt_null_mode = GEX_LRT_NULL_MONTECARLO;
+    GexLRTNullMode lrt_null_mode = GEX_LRT_NULL_CHI2;
     int n_trees = 0;
     int i;
     int moran_perms = 1000;
@@ -159,6 +159,10 @@ int main(int argc, char *argv[]) {
     trees = gex_read_nexus(trees_file, &n_trees);
     if (trees == NULL) {
         fprintf(stderr, "ERROR: failed to load trees\n");
+        return 1;
+    }
+    if (gex_check_trees_ultrametric(trees, n_trees, 1e-3) != 0) {
+        gex_free_trees(trees, n_trees);
         return 1;
     }
 
