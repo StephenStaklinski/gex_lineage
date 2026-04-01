@@ -11,3 +11,4 @@
 bin
 build
 local_install.sh
+test_run.sh
