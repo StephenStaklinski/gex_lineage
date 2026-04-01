@@ -426,6 +426,17 @@ static void gex_collect_tip_depth_range(TreeNode *node,
     gex_collect_tip_depth_range(node->rchild, next_depth, min_depth, max_depth, n_tips);
 }
 
+static void gex_scale_tree_recursive(TreeNode *node, double scale) {
+    if (node == NULL)
+        return;
+
+    if (node->parent != NULL)
+        node->dparent *= scale;
+
+    gex_scale_tree_recursive(node->lchild, scale);
+    gex_scale_tree_recursive(node->rchild, scale);
+}
+
 static int gex_keep_gene(GexMoransResult *morans,
                          GexLRTResult *lrt,
                          int gene_idx,
@@ -551,6 +562,41 @@ int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol) {
                     i + 1, min_depth, max_depth, fabs(max_depth - min_depth), tol);
             return -1;
         }
+    }
+
+    return 0;
+}
+
+int gex_rescale_trees_total_height(TreeNode **trees, int n_trees, double target_height) {
+    int i;
+
+    if (trees == NULL || n_trees < 0 || target_height <= 0.0) {
+        fprintf(stderr, "ERROR: gex_rescale_trees_total_height got invalid input\n");
+        return -1;
+    }
+
+    for (i = 0; i < n_trees; i++) {
+        double min_depth = 0.0;
+        double max_depth = 0.0;
+        int n_tips = 0;
+        double scale;
+
+        if (trees[i] == NULL)
+            continue;
+
+        gex_collect_tip_depth_range(trees[i], 0.0, &min_depth, &max_depth, &n_tips);
+        if (n_tips == 0) {
+            fprintf(stderr, "ERROR: tree %d has no tips\n", i + 1);
+            return -1;
+        }
+        if (max_depth <= 0.0) {
+            fprintf(stderr, "ERROR: tree %d has non-positive total height and cannot be rescaled\n",
+                    i + 1);
+            return -1;
+        }
+
+        scale = target_height / max_depth;
+        gex_scale_tree_recursive(trees[i], scale);
     }
 
     return 0;

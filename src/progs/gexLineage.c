@@ -36,7 +36,7 @@ static int parse_lrt_null_mode(const char *s, GexLRTNullMode *mode_out) {
 
 static void usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--filter-test moran|lrt|both] [--lrt-null montecarlo|chi2] [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
+        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--tree-total-time T] [--filter-test moran|lrt|both] [--lrt-null montecarlo|chi2] [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
         progname);
 }
 
@@ -60,6 +60,7 @@ int main(int argc, char *argv[]) {
     double moran_fdr = 0.05;
     double moran_min_i = 0.0;
     double pca_var_threshold = 0.99;
+    double tree_total_time = -1.0;
     unsigned int moran_seed = 1u;
 
     for (i = 1; i < argc; i++) {
@@ -83,6 +84,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
+        }
+        else if (strcmp(argv[i], "--tree-total-time") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            tree_total_time = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
@@ -181,6 +189,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("After reconciliation: %d shared cell/tip name(s)\n\n", gex->n_cells);
+
+    if (tree_total_time > 0.0) {
+        if (gex_rescale_trees_total_height(trees, n_trees, tree_total_time) != 0) {
+            gex_free_trees(trees, n_trees);
+            return 1;
+        }
+        printf("Rescaled all tree(s) to total height %.6f\n\n", tree_total_time);
+    }
 
     /* Filter genes based on tree correlation statistic */
     if (n_trees < 1 || trees[0] == NULL) {
