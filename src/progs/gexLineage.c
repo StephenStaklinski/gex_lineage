@@ -6,9 +6,25 @@
 #include "pca.h"
 #include "brownian.h"
 
+static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
+    if (strcmp(s, "moran") == 0) {
+        *mode_out = GEX_FILTER_MORAN;
+        return 0;
+    }
+    if (strcmp(s, "lrt") == 0) {
+        *mode_out = GEX_FILTER_LRT;
+        return 0;
+    }
+    if (strcmp(s, "both") == 0) {
+        *mode_out = GEX_FILTER_BOTH;
+        return 0;
+    }
+    return -1;
+}
+
 static void usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
+        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--filter-test moran|lrt|both] [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
         progname);
 }
 
@@ -22,13 +38,15 @@ int main(int argc, char *argv[]) {
     Matrix *Sigma = NULL;
     Matrix *W = NULL;
     GexMoransResult *morans = NULL;
+    GexLRTResult *lrt = NULL;
     GexPCA *pca = NULL;
+    GexFilterMode filter_mode = GEX_FILTER_LRT;
     int n_trees = 0;
     int i;
     int moran_perms = 1000;
     double moran_fdr = 0.05;
     double moran_min_i = 0.0;
-    double pca_var_threshold = 0.999;
+    double pca_var_threshold = 0.99;
     unsigned int moran_seed = 1u;
 
     for (i = 1; i < argc; i++) {
@@ -52,6 +70,16 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
+        }
+        else if (strcmp(argv[i], "--filter-test") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
+                fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt, both\n");
+                return 1;
+            }
         }
         else if (strcmp(argv[i], "--pca-var-threshold") == 0) {
             if (i + 1 >= argc) {
@@ -136,6 +164,7 @@ int main(int argc, char *argv[]) {
                                        gex->n_cells,
                                        1000,
                                        1000,
+                                       filter_mode,
                                        moran_perms,
                                        moran_fdr,
                                        moran_min_i,
@@ -170,23 +199,38 @@ int main(int argc, char *argv[]) {
 
     brownian_print_weight_summary(W);
 
-    morans = gex_compute_morans_i(gex, W, moran_perms, moran_seed);
-    if (morans == NULL) {
-        fprintf(stderr, "ERROR: failed to compute Moran's I statistics\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        mat_free(Sigma);
-        mat_free(W);
-        return 1;
+    if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
+        morans = gex_compute_morans_i(gex, W, moran_perms, moran_seed);
+        if (morans == NULL) {
+            fprintf(stderr, "ERROR: failed to compute Moran's I statistics\n");
+            gex_free_trees(trees, n_trees);
+            gex_free_matrix_data(gex);
+            mat_free(Sigma);
+            mat_free(W);
+            return 1;
+        }
+        gex_print_morans_summary(morans, gex, moran_fdr, moran_min_i);
+        {
+            char corr_path[4096];
+            snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
+            if (gex_write_morans_tsv(corr_path, morans, gex, moran_fdr, moran_min_i) != 0) {
+                fprintf(stderr, "ERROR: failed to write Moran correlation results to %s\n",
+                        corr_path);
+                gex_free_trees(trees, n_trees);
+                gex_free_matrix_data(gex);
+                gex_free_morans_result(morans);
+                mat_free(Sigma);
+                mat_free(W);
+                return 1;
+            }
+            printf("Wrote Moran correlation results to %s\n", corr_path);
+        }
     }
 
-    gex_print_morans_summary(morans, gex, moran_fdr, moran_min_i);
-    {
-        char corr_path[4096];
-        snprintf(corr_path, sizeof(corr_path), "%s.correlation.tsv", outprefix);
-        if (gex_write_morans_tsv(corr_path, morans, gex, moran_fdr, moran_min_i) != 0) {
-            fprintf(stderr, "ERROR: failed to write Moran correlation results to %s\n",
-                    corr_path);
+    if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
+        lrt = gex_compute_brownian_lrt(gex, Sigma);
+        if (lrt == NULL) {
+            fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics\n");
             gex_free_trees(trees, n_trees);
             gex_free_matrix_data(gex);
             gex_free_morans_result(morans);
@@ -194,16 +238,33 @@ int main(int argc, char *argv[]) {
             mat_free(W);
             return 1;
         }
-        printf("Wrote real-gene correlation results to %s\n", corr_path);
+        gex_print_lrt_summary(lrt, gex, moran_fdr);
+        {
+            char lrt_path[4096];
+            snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.tsv", outprefix);
+            if (gex_write_lrt_tsv(lrt_path, lrt, gex, moran_fdr) != 0) {
+                fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
+                        lrt_path);
+                gex_free_trees(trees, n_trees);
+                gex_free_matrix_data(gex);
+                gex_free_morans_result(morans);
+                gex_free_lrt_result(lrt);
+                mat_free(Sigma);
+                mat_free(W);
+                return 1;
+            }
+            printf("Wrote LRT correlation results to %s\n", lrt_path);
+        }
     }
 
-    gex_filtered = gex_filter_genes_by_morans_result(gex, morans,
-                                                     moran_fdr, moran_min_i);
+    gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode,
+                                               moran_fdr, moran_min_i);
     if (gex_filtered == NULL) {
-        fprintf(stderr, "ERROR: failed to filter genes by Moran's I\n");
+        fprintf(stderr, "ERROR: failed to filter genes by selected test(s)\n");
         gex_free_trees(trees, n_trees);
         gex_free_matrix_data(gex);
         gex_free_morans_result(morans);
+        gex_free_lrt_result(lrt);
         mat_free(Sigma);
         mat_free(W);
         return 1;
@@ -220,6 +281,7 @@ int main(int argc, char *argv[]) {
         gex_free_matrix_data(gex);
         gex_free_matrix_data(gex_filtered);
         gex_free_morans_result(morans);
+        gex_free_lrt_result(lrt);
         mat_free(W);
         mat_free(Sigma);
         return 1;
@@ -235,6 +297,7 @@ int main(int argc, char *argv[]) {
     gex_free_matrix_data(gex);
     gex_free_matrix_data(gex_filtered);
     gex_free_morans_result(morans);
+    gex_free_lrt_result(lrt);
     gex_free_pca(pca);
     if (Sigma != NULL)
         mat_free(Sigma);

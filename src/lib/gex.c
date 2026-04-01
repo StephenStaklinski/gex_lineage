@@ -150,6 +150,92 @@ static double gex_weighted_quadratic(Matrix *W, double *x, int n) {
     return out;
 }
 
+static double gex_chisq1_sf(double x) {
+    if (x <= 0.0)
+        return 1.0;
+    return erfc(sqrt(0.5 * x));
+}
+
+static double gex_loglik_centered_gaussian_identity(double *y, int n) {
+    int i;
+    double mean = 0.0;
+    double sse = 0.0;
+    double sigma2;
+
+    for (i = 0; i < n; i++)
+        mean += y[i];
+    mean /= (double)n;
+
+    for (i = 0; i < n; i++) {
+        double d = y[i] - mean;
+        sse += d * d;
+    }
+
+    sigma2 = sse / (double)n;
+    if (sigma2 < 1e-12)
+        sigma2 = 1e-12;
+
+    return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
+}
+
+static double gex_loglik_centered_gaussian_cov(double *y,
+                                               Matrix *Sigma,
+                                               Matrix *Sigma_inv,
+                                               double logdet_sigma) {
+    int i, j, n;
+    double *Sinv1 = NULL;
+    double *Sinvy = NULL;
+    double quad = 0.0;
+    double ones_Sinv_ones = 0.0;
+    double ones_Sinv_y = 0.0;
+    double muhat;
+    double sigma2;
+    double ll;
+
+    n = Sigma->nrows;
+    Sinv1 = (double *)calloc(n, sizeof(double));
+    Sinvy = (double *)calloc(n, sizeof(double));
+    if (Sinv1 == NULL || Sinvy == NULL) {
+        free(Sinv1);
+        free(Sinvy);
+        return -HUGE_VAL;
+    }
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            Sinv1[i] += mat_get(Sigma_inv, i, j);
+            Sinvy[i] += mat_get(Sigma_inv, i, j) * y[j];
+        }
+        ones_Sinv_ones += Sinv1[i];
+        ones_Sinv_y += Sinvy[i];
+    }
+
+    if (ones_Sinv_ones <= 0.0) {
+        free(Sinv1);
+        free(Sinvy);
+        return -HUGE_VAL;
+    }
+
+    muhat = ones_Sinv_y / ones_Sinv_ones;
+    for (i = 0; i < n; i++) {
+        double yi = y[i] - muhat;
+        for (j = 0; j < n; j++)
+            quad += yi * mat_get(Sigma_inv, i, j) * (y[j] - muhat);
+    }
+
+    sigma2 = quad / (double)n;
+    if (sigma2 < 1e-12)
+        sigma2 = 1e-12;
+
+    ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
+                 logdet_sigma +
+                 (double)n);
+
+    free(Sinv1);
+    free(Sinvy);
+    return ll;
+}
+
 static Matrix *gex_standardize_columns(GexMatrix *gex) {
     int i, j;
     Matrix *Z;
@@ -233,6 +319,41 @@ static int gex_count_kept_genes(GexMoransResult *res, double max_q, double min_i
     }
 
     return nkeep;
+}
+
+static int gex_count_kept_lrt_genes(GexLRTResult *res, double max_q) {
+    int j;
+    int nkeep = 0;
+
+    for (j = 0; j < res->n_genes; j++) {
+        if (res->qvals[j] <= max_q && res->lrt_stat[j] > 0.0)
+            nkeep++;
+    }
+
+    return nkeep;
+}
+
+static int gex_keep_gene(GexMoransResult *morans,
+                         GexLRTResult *lrt,
+                         int gene_idx,
+                         GexFilterMode mode,
+                         double max_q,
+                         double min_i) {
+    int keep_moran = 0;
+    int keep_lrt = 0;
+
+    if (morans != NULL)
+        keep_moran = (morans->qvals[gene_idx] <= max_q &&
+                      morans->morans_i[gene_idx] > min_i);
+    if (lrt != NULL)
+        keep_lrt = (lrt->qvals[gene_idx] <= max_q &&
+                    lrt->lrt_stat[gene_idx] > 0.0);
+
+    if (mode == GEX_FILTER_MORAN)
+        return keep_moran;
+    if (mode == GEX_FILTER_LRT)
+        return keep_lrt;
+    return (keep_moran || keep_lrt);
 }
 
 /* -------------------- tree reading -------------------- */
@@ -686,7 +807,7 @@ void gex_print_morans_summary(GexMoransResult *res,
 
     printf("\nFirst few gene-wise Moran's I statistics:\n");
     printf("gene\tI\tp\tq\tkeep\n");
-    for (j = 0; j < 10; j++) {
+    for (j = 0; j < res->n_genes && j < 10; j++) {
         int keep = (res->qvals[j] <= max_q && res->morans_i[j] > min_i);
         printf("%s\t%g\t%g\t%g\t%s\n",
                gex->gene_names[j],
@@ -732,6 +853,184 @@ int gex_write_morans_tsv(const char *filename,
     return 0;
 }
 
+GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma) {
+    int i, j;
+    int n;
+    Matrix *Sigma_reg = NULL;
+    Matrix *Sigma_inv = NULL;
+    Matrix *L = NULL;
+    GexLRTResult *res = NULL;
+    double logdet_sigma = 0.0;
+    double max_diag = 0.0;
+    double jitter;
+    double *y = NULL;
+
+    if (gex == NULL || gex->X == NULL || Sigma == NULL ||
+        Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells) {
+        fprintf(stderr, "ERROR: gex_compute_brownian_lrt got invalid input\n");
+        return NULL;
+    }
+
+    n = gex->n_cells;
+    Sigma_reg = mat_new(n, n);
+    Sigma_inv = mat_new(n, n);
+    L = mat_new(n, n);
+    if (Sigma_reg == NULL || Sigma_inv == NULL || L == NULL) {
+        if (Sigma_reg != NULL) mat_free(Sigma_reg);
+        if (Sigma_inv != NULL) mat_free(Sigma_inv);
+        if (L != NULL) mat_free(L);
+        return NULL;
+    }
+
+    for (i = 0; i < n; i++) {
+        double d = mat_get(Sigma, i, i);
+        if (d > max_diag)
+            max_diag = d;
+    }
+    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            mat_set(Sigma_reg, i, j, mat_get(Sigma, i, j));
+        mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
+    }
+
+    if (mat_invert(Sigma_inv, Sigma_reg) != 0) {
+        fprintf(stderr, "ERROR: failed to invert Brownian covariance matrix for LRT\n");
+        mat_free(Sigma_reg);
+        mat_free(Sigma_inv);
+        mat_free(L);
+        return NULL;
+    }
+    if (mat_cholesky(L, Sigma_reg) != 0) {
+        fprintf(stderr, "ERROR: failed to Cholesky Brownian covariance matrix for LRT\n");
+        mat_free(Sigma_reg);
+        mat_free(Sigma_inv);
+        mat_free(L);
+        return NULL;
+    }
+
+    for (i = 0; i < n; i++) {
+        double diag = mat_get(L, i, i);
+        if (diag <= 0.0) {
+            mat_free(Sigma_reg);
+            mat_free(Sigma_inv);
+            mat_free(L);
+            return NULL;
+        }
+        logdet_sigma += 2.0 * log(diag);
+    }
+
+    res = (GexLRTResult *)calloc(1, sizeof(GexLRTResult));
+    y = (double *)malloc(n * sizeof(double));
+    if (res == NULL || y == NULL) {
+        free(y);
+        free(res);
+        mat_free(Sigma_reg);
+        mat_free(Sigma_inv);
+        mat_free(L);
+        return NULL;
+    }
+
+    res->lrt_stat = (double *)calloc(gex->n_genes, sizeof(double));
+    res->pvals = (double *)calloc(gex->n_genes, sizeof(double));
+    res->qvals = (double *)calloc(gex->n_genes, sizeof(double));
+    res->n_genes = gex->n_genes;
+    if (res->lrt_stat == NULL || res->pvals == NULL || res->qvals == NULL) {
+        gex_free_lrt_result(res);
+        free(y);
+        mat_free(Sigma_reg);
+        mat_free(Sigma_inv);
+        mat_free(L);
+        return NULL;
+    }
+
+    for (j = 0; j < gex->n_genes; j++) {
+        double ll_null;
+        double ll_alt;
+        for (i = 0; i < n; i++)
+            y[i] = mat_get(gex->X, i, j);
+
+        ll_null = gex_loglik_centered_gaussian_identity(y, n);
+        ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
+        res->lrt_stat[j] = 2.0 * (ll_alt - ll_null);
+        if (res->lrt_stat[j] < 0.0 && fabs(res->lrt_stat[j]) < 1e-10)
+            res->lrt_stat[j] = 0.0;
+        if (res->lrt_stat[j] < 0.0)
+            res->lrt_stat[j] = 0.0;
+        res->pvals[j] = gex_chisq1_sf(res->lrt_stat[j]);
+    }
+
+    gex_bh_adjust(res->pvals, res->qvals, res->n_genes);
+    res->n_significant = gex_count_kept_lrt_genes(res, 0.05);
+
+    free(y);
+    mat_free(Sigma_reg);
+    mat_free(Sigma_inv);
+    mat_free(L);
+    return res;
+}
+
+void gex_print_lrt_summary(GexLRTResult *res,
+                           GexMatrix *gex,
+                           double max_q) {
+    int j;
+
+    if (res == NULL || gex == NULL) {
+        fprintf(stderr, "ERROR: cannot summarize NULL LRT result\n");
+        return;
+    }
+
+    printf("Computed Brownian LRT for %d gene(s)\n", res->n_genes);
+    printf("Genes passing LRT filter (q <= %.4f): %d\n",
+           max_q, gex_count_kept_lrt_genes(res, max_q));
+    printf("\nFirst few gene-wise Brownian LRT statistics:\n");
+    printf("gene\tlrt\tp\tq\tkeep\n");
+    for (j = 0; j < res->n_genes && j < 10; j++) {
+        int keep = (res->qvals[j] <= max_q && res->lrt_stat[j] > 0.0);
+        printf("%s\t%g\t%g\t%g\t%s\n",
+               gex->gene_names[j],
+               res->lrt_stat[j],
+               res->pvals[j],
+               res->qvals[j],
+               (keep ? "yes" : "no"));
+    }
+    printf("\n");
+}
+
+int gex_write_lrt_tsv(const char *filename,
+                      GexLRTResult *res,
+                      GexMatrix *gex,
+                      double max_q) {
+    FILE *out;
+    int i;
+
+    if (filename == NULL || res == NULL || gex == NULL) {
+        fprintf(stderr, "ERROR: gex_write_lrt_tsv got invalid input\n");
+        return -1;
+    }
+
+    out = fopen(filename, "w");
+    if (out == NULL) {
+        fprintf(stderr, "ERROR: could not open LRT output file: %s\n", filename);
+        return -1;
+    }
+
+    fprintf(out, "gene\tlrt_stat\tp_value\tq_value\tkeep\n");
+    for (i = 0; i < res->n_genes; i++) {
+        int keep = (res->qvals[i] <= max_q && res->lrt_stat[i] > 0.0);
+        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%s\n",
+                gex->gene_names[i],
+                res->lrt_stat[i],
+                res->pvals[i],
+                res->qvals[i],
+                (keep ? "yes" : "no"));
+    }
+
+    fclose(out);
+    return 0;
+}
+
 void gex_free_morans_result(GexMoransResult *res) {
     if (res == NULL)
         return;
@@ -748,21 +1047,42 @@ void gex_free_morans_result(GexMoransResult *res) {
     free(res);
 }
 
-GexMatrix *gex_filter_genes_by_morans_result(GexMatrix *gex,
-                                             GexMoransResult *res,
-                                             double max_q,
-                                             double min_i) {
+void gex_free_lrt_result(GexLRTResult *res) {
+    if (res == NULL)
+        return;
+
+    free(res->lrt_stat);
+    free(res->pvals);
+    free(res->qvals);
+    free(res);
+}
+
+GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
+                                       GexMoransResult *morans,
+                                       GexLRTResult *lrt,
+                                       GexFilterMode mode,
+                                       double max_q,
+                                       double min_i) {
     int i, j;
     int out_j = 0;
-    int nkeep;
+    int nkeep = 0;
     GexMatrix *out = NULL;
 
-    if (gex == NULL || res == NULL || gex->n_genes != res->n_genes)
+    if (gex == NULL)
+        return NULL;
+    if ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) &&
+        (morans == NULL || gex->n_genes != morans->n_genes))
+        return NULL;
+    if ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) &&
+        (lrt == NULL || gex->n_genes != lrt->n_genes))
         return NULL;
 
-    nkeep = gex_count_kept_genes(res, max_q, min_i);
+    for (j = 0; j < gex->n_genes; j++) {
+        if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i))
+            nkeep++;
+    }
     if (nkeep <= 0) {
-        fprintf(stderr, "ERROR: Moran's I filtering removed all genes\n");
+        fprintf(stderr, "ERROR: selected gene filter removed all genes\n");
         return NULL;
     }
 
@@ -789,7 +1109,7 @@ GexMatrix *gex_filter_genes_by_morans_result(GexMatrix *gex,
     }
 
     for (j = 0; j < gex->n_genes; j++) {
-        if (res->qvals[j] <= max_q && res->morans_i[j] > min_i) {
+        if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i)) {
             out->gene_names[out_j] = gex_strdup(gex->gene_names[j]);
             if (out->gene_names[out_j] == NULL) {
                 gex_free_matrix_data(out);

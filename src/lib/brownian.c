@@ -416,6 +416,7 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   int n,
                                   int n_tree_genes,
                                   int n_null_genes,
+                                  GexFilterMode mode,
                                   int n_perm,
                                   double max_q,
                                   double min_i,
@@ -425,7 +426,8 @@ int brownian_run_simulation_check(TreeNode *tree,
     GexMatrix *sim = NULL;
     Matrix *Sigma = NULL;
     Matrix *W = NULL;
-    GexMoransResult *res = NULL;
+    GexMoransResult *morans = NULL;
+    GexLRTResult *lrt = NULL;
 
     sim = brownian_simulate_expression(tree, names, n,
                                        n_tree_genes, n_null_genes, seed);
@@ -434,22 +436,38 @@ int brownian_run_simulation_check(TreeNode *tree,
 
     Sigma = brownian_covariance_from_tree(tree, names, n);
     W = (Sigma == NULL ? NULL : brownian_weight_matrix_from_covariance(Sigma));
-    res = (W == NULL ? NULL : gex_compute_morans_i(sim, W, n_perm, seed + 17u));
-    if (Sigma == NULL || W == NULL || res == NULL) {
+    if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
+        morans = (W == NULL ? NULL : gex_compute_morans_i(sim, W, n_perm, seed + 17u));
+    if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
+        lrt = (Sigma == NULL ? NULL : gex_compute_brownian_lrt(sim, Sigma));
+    if (Sigma == NULL || W == NULL ||
+        ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && morans == NULL) ||
+        ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) && lrt == NULL)) {
         gex_free_matrix_data(sim);
         if (Sigma != NULL) mat_free(Sigma);
         if (W != NULL) mat_free(W);
-        if (res != NULL) gex_free_morans_result(res);
+        if (morans != NULL) gex_free_morans_result(morans);
+        if (lrt != NULL) gex_free_lrt_result(lrt);
         return 0;
     }
 
     for (j = 0; j < n_tree_genes; j++) {
-        if (res->qvals[j] <= max_q && res->morans_i[j] > min_i) tp++;
+        int keep = 0;
+        if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
+            keep = keep || (morans->qvals[j] <= max_q && morans->morans_i[j] > min_i);
+        if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
+            keep = keep || (lrt->qvals[j] <= max_q && lrt->lrt_stat[j] > 0.0);
+        if (keep) tp++;
         else fn++;
     }
     for (j = 0; j < n_null_genes; j++) {
         int idx = n_tree_genes + j;
-        if (res->qvals[idx] <= max_q && res->morans_i[idx] > min_i) fp++;
+        int keep = 0;
+        if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
+            keep = keep || (morans->qvals[idx] <= max_q && morans->morans_i[idx] > min_i);
+        if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
+            keep = keep || (lrt->qvals[idx] <= max_q && lrt->lrt_stat[idx] > 0.0);
+        if (keep) fp++;
         else tn++;
     }
 
@@ -463,7 +481,8 @@ int brownian_run_simulation_check(TreeNode *tree,
     gex_free_matrix_data(sim);
     mat_free(Sigma);
     mat_free(W);
-    gex_free_morans_result(res);
+    gex_free_morans_result(morans);
+    gex_free_lrt_result(lrt);
 
     return (fn == 0 && fp == 0);
 }

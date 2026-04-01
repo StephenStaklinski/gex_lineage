@@ -22,6 +22,20 @@ typedef struct {
     int n_significant;
 } GexMoransResult;
 
+typedef struct {
+    double *lrt_stat;
+    double *pvals;
+    double *qvals;
+    int n_genes;
+    int n_significant;
+} GexLRTResult;
+
+typedef enum {
+    GEX_FILTER_MORAN = 0,
+    GEX_FILTER_LRT = 1,
+    GEX_FILTER_BOTH = 2
+} GexFilterMode;
+
 /* Read a NEXUS file containing TREE lines into an array of PHAST trees.
    On success, *n_trees is set to the number of trees loaded. */
 TreeNode **gex_read_nexus(const char *filename, int *n_trees);
@@ -48,9 +62,21 @@ int gex_write_morans_tsv(const char *filename,
                          double min_i);
 void gex_free_morans_result(GexMoransResult *res);
 
-GexMatrix *gex_filter_genes_by_morans_result(GexMatrix *gex,
-                                             GexMoransResult *res,
-                                             double max_q,
-                                             double min_i);
+GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma);
+void gex_print_lrt_summary(GexLRTResult *res,
+                           GexMatrix *gex,
+                           double max_q);
+int gex_write_lrt_tsv(const char *filename,
+                      GexLRTResult *res,
+                      GexMatrix *gex,
+                      double max_q);
+void gex_free_lrt_result(GexLRTResult *res);
+
+GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
+                                       GexMoransResult *morans,
+                                       GexLRTResult *lrt,
+                                       GexFilterMode mode,
+                                       double max_q,
+                                       double min_i);
 
 #endif
