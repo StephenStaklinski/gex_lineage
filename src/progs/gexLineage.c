@@ -359,11 +359,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     {
-        char model_path[4096];
-        snprintf(model_path, sizeof(model_path), "%s.model.tsv", outprefix);
-        if (gex_write_latent_brownian_model(model_path, model) != 0) {
-            fprintf(stderr, "ERROR: failed to write latent Brownian model parameters to %s\n",
-                    model_path);
+        if (gex_write_latent_brownian_model(outprefix, model, gex_filtered) != 0) {
+            fprintf(stderr,
+                    "ERROR: failed to write latent Brownian model outputs with prefix %s\n",
+                    outprefix);
             gex_free_trees(trees, n_trees);
             gex_free_matrix_data(gex);
             gex_free_matrix_data(gex_filtered);
@@ -375,8 +374,8 @@ int main(int argc, char *argv[]) {
             mat_free(Sigma);
             return 1;
         }
-        printf("Fitted latent Brownian model with k=%d and wrote parameters to %s\n",
-               model->k, model_path);
+        printf("Fitted latent Brownian model with k=%d and wrote parameters to %s.model.summary.tsv, %s.model.Z.tsv, and %s.model.L.tsv\n",
+               model->k, outprefix, outprefix, outprefix);
     }
 
     printf("done\n");

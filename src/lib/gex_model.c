@@ -476,36 +476,66 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     return model;
 }
 
-int gex_write_latent_brownian_model(const char *filename,
-                                    GexLatentBrownianModel *model) {
-    FILE *out;
+int gex_write_latent_brownian_model(const char *outprefix,
+                                    GexLatentBrownianModel *model,
+                                    GexMatrix *gex) {
+    FILE *summary_out = NULL, *z_out = NULL, *l_out = NULL;
+    char summary_path[4096], z_path[4096], l_path[4096];
     int i, j;
 
-    if (filename == NULL || model == NULL)
+    if (outprefix == NULL || model == NULL || gex == NULL)
+        return -1;
+    if (gex->n_cells != model->n_cells || gex->n_genes != model->n_genes)
         return -1;
 
-    out = fopen(filename, "w");
-    if (out == NULL)
-        return -1;
+    snprintf(summary_path, sizeof(summary_path), "%s.model.summary.tsv", outprefix);
+    snprintf(z_path, sizeof(z_path), "%s.model.Z.tsv", outprefix);
+    snprintf(l_path, sizeof(l_path), "%s.model.L.tsv", outprefix);
 
-    fprintf(out, "param_type\tindex1\tindex2\tvalue\n");
-    fprintf(out, "summary\tn_cells\t.\t%d\n", model->n_cells);
-    fprintf(out, "summary\tn_genes\t.\t%d\n", model->n_genes);
-    fprintf(out, "summary\tk\t.\t%d\n", model->k);
-    fprintf(out, "summary\tobjective\t.\t%.17g\n", model->objective);
-    fprintf(out, "sigma_obs\t0\t.\t%.17g\n", model->sigma2_obs);
+    summary_out = fopen(summary_path, "w");
+    z_out = fopen(z_path, "w");
+    l_out = fopen(l_path, "w");
+    if (summary_out == NULL || z_out == NULL || l_out == NULL) {
+        if (summary_out != NULL) fclose(summary_out);
+        if (z_out != NULL) fclose(z_out);
+        if (l_out != NULL) fclose(l_out);
+        return -1;
+    }
+
+    fprintf(summary_out, "parameter\tvalue\n");
+    fprintf(summary_out, "n_cells\t%d\n", model->n_cells);
+    fprintf(summary_out, "n_genes\t%d\n", model->n_genes);
+    fprintf(summary_out, "k\t%d\n", model->k);
+    fprintf(summary_out, "objective\t%.17g\n", model->objective);
+    fprintf(summary_out, "sigma_obs\t%.17g\n", model->sigma2_obs);
     for (j = 0; j < model->k; j++)
-        fprintf(out, "sigma_latent\t%d\t.\t%.17g\n", j, model->sigma2_latent[j]);
+        fprintf(summary_out, "sigma_latent_LF%d\t%.17g\n", j + 1, model->sigma2_latent[j]);
+
+    fprintf(z_out, "cell");
+    for (j = 0; j < model->k; j++)
+        fprintf(z_out, "\tLF%d", j + 1);
+    fprintf(z_out, "\n");
     for (i = 0; i < model->n_cells; i++) {
+        fprintf(z_out, "%s", gex->cell_names[i]);
         for (j = 0; j < model->k; j++)
-            fprintf(out, "Z\t%d\t%d\t%.17g\n", i, j, mat_get(model->Z, i, j));
-    }
-    for (i = 0; i < model->k; i++) {
-        for (j = 0; j < model->n_genes; j++)
-            fprintf(out, "L\t%d\t%d\t%.17g\n", i, j, mat_get(model->L, i, j));
+            fprintf(z_out, "\t%.17g", mat_get(model->Z, i, j));
+        fprintf(z_out, "\n");
     }
 
-    fclose(out);
+    fprintf(l_out, "factor");
+    for (j = 0; j < model->n_genes; j++)
+        fprintf(l_out, "\t%s", gex->gene_names[j]);
+    fprintf(l_out, "\n");
+    for (i = 0; i < model->k; i++) {
+        fprintf(l_out, "LF%d", i + 1);
+        for (j = 0; j < model->n_genes; j++)
+            fprintf(l_out, "\t%.17g", mat_get(model->L, i, j));
+        fprintf(l_out, "\n");
+    }
+
+    fclose(summary_out);
+    fclose(z_out);
+    fclose(l_out);
     return 0;
 }
 
