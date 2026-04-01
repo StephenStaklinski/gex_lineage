@@ -41,6 +41,11 @@ void gex_print_morans_summary(GexMoransResult *res,
                               GexMatrix *gex,
                               double max_q,
                               double min_i);
+int gex_write_morans_tsv(const char *filename,
+                         GexMoransResult *res,
+                         GexMatrix *gex,
+                         double max_q,
+                         double min_i);
 void gex_free_morans_result(GexMoransResult *res);
 
 GexMatrix *gex_filter_genes_by_morans_result(GexMatrix *gex,

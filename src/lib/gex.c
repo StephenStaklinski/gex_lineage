@@ -698,6 +698,40 @@ void gex_print_morans_summary(GexMoransResult *res,
     printf("\n");
 }
 
+int gex_write_morans_tsv(const char *filename,
+                         GexMoransResult *res,
+                         GexMatrix *gex,
+                         double max_q,
+                         double min_i) {
+    FILE *out;
+    int i;
+
+    if (filename == NULL || res == NULL || gex == NULL) {
+        fprintf(stderr, "ERROR: gex_write_morans_tsv got invalid input\n");
+        return -1;
+    }
+
+    out = fopen(filename, "w");
+    if (out == NULL) {
+        fprintf(stderr, "ERROR: could not open Moran output file: %s\n", filename);
+        return -1;
+    }
+
+    fprintf(out, "gene\tmorans_I\tp_value\tq_value\tkeep\n");
+    for (i = 0; i < res->n_genes; i++) {
+        int keep = (res->qvals[i] <= max_q && res->morans_i[i] > min_i);
+        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%s\n",
+                gex->gene_names[i],
+                res->morans_i[i],
+                res->pvals[i],
+                res->qvals[i],
+                (keep ? "yes" : "no"));
+    }
+
+    fclose(out);
+    return 0;
+}
+
 void gex_free_morans_result(GexMoransResult *res) {
     if (res == NULL)
         return;

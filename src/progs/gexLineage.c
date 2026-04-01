@@ -8,13 +8,14 @@
 
 static void usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
+        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
         progname);
 }
 
 int main(int argc, char *argv[]) {
     const char *trees_file = NULL;
     const char *expr_file = NULL;
+    const char *outprefix = NULL;
     TreeNode **trees = NULL;
     GexMatrix *gex = NULL;
     GexMatrix *gex_filtered = NULL;
@@ -44,6 +45,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             expr_file = argv[++i];
+        }
+        else if (strcmp(argv[i], "--outprefix") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            outprefix = argv[++i];
         }
         else if (strcmp(argv[i], "--pca-var-threshold") == 0) {
             if (i + 1 >= argc) {
@@ -92,7 +100,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (trees_file == NULL || expr_file == NULL) {
+    if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
         return 1;
     }
@@ -173,6 +181,21 @@ int main(int argc, char *argv[]) {
     }
 
     gex_print_morans_summary(morans, gex, moran_fdr, moran_min_i);
+    {
+        char corr_path[4096];
+        snprintf(corr_path, sizeof(corr_path), "%s.correlation.tsv", outprefix);
+        if (gex_write_morans_tsv(corr_path, morans, gex, moran_fdr, moran_min_i) != 0) {
+            fprintf(stderr, "ERROR: failed to write Moran correlation results to %s\n",
+                    corr_path);
+            gex_free_trees(trees, n_trees);
+            gex_free_matrix_data(gex);
+            gex_free_morans_result(morans);
+            mat_free(Sigma);
+            mat_free(W);
+            return 1;
+        }
+        printf("Wrote real-gene correlation results to %s\n", corr_path);
+    }
 
     gex_filtered = gex_filter_genes_by_morans_result(gex, morans,
                                                      moran_fdr, moran_min_i);
