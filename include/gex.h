@@ -36,6 +36,11 @@ typedef enum {
     GEX_FILTER_BOTH = 2
 } GexFilterMode;
 
+typedef enum {
+    GEX_LRT_NULL_MONTECARLO = 0,
+    GEX_LRT_NULL_CHI2 = 1
+} GexLRTNullMode;
+
 /* Read a NEXUS file containing TREE lines into an array of PHAST trees.
    On success, *n_trees is set to the number of trees loaded. */
 TreeNode **gex_read_nexus(const char *filename, int *n_trees);
@@ -62,7 +67,11 @@ int gex_write_morans_tsv(const char *filename,
                          double min_i);
 void gex_free_morans_result(GexMoransResult *res);
 
-GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma);
+GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
+                                       Matrix *Sigma,
+                                       GexLRTNullMode null_mode,
+                                       int n_mc,
+                                       unsigned int seed);
 void gex_print_lrt_summary(GexLRTResult *res,
                            GexMatrix *gex,
                            double max_q);

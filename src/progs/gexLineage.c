@@ -22,9 +22,21 @@ static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
     return -1;
 }
 
+static int parse_lrt_null_mode(const char *s, GexLRTNullMode *mode_out) {
+    if (strcmp(s, "montecarlo") == 0) {
+        *mode_out = GEX_LRT_NULL_MONTECARLO;
+        return 0;
+    }
+    if (strcmp(s, "chi2") == 0) {
+        *mode_out = GEX_LRT_NULL_CHI2;
+        return 0;
+    }
+    return -1;
+}
+
 static void usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--filter-test moran|lrt|both] [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
+        "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> [--filter-test moran|lrt|both] [--lrt-null montecarlo|chi2] [--pca-var-threshold V] [--moran-perms N] [--moran-fdr Q] [--moran-min-i I] [--seed S]\n",
         progname);
 }
 
@@ -41,6 +53,7 @@ int main(int argc, char *argv[]) {
     GexLRTResult *lrt = NULL;
     GexPCA *pca = NULL;
     GexFilterMode filter_mode = GEX_FILTER_LRT;
+    GexLRTNullMode lrt_null_mode = GEX_LRT_NULL_MONTECARLO;
     int n_trees = 0;
     int i;
     int moran_perms = 1000;
@@ -78,6 +91,16 @@ int main(int argc, char *argv[]) {
             }
             if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
                 fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt, both\n");
+                return 1;
+            }
+        }
+        else if (strcmp(argv[i], "--lrt-null") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            if (parse_lrt_null_mode(argv[++i], &lrt_null_mode) != 0) {
+                fprintf(stderr, "ERROR: --lrt-null must be one of montecarlo, chi2\n");
                 return 1;
             }
         }
@@ -165,6 +188,7 @@ int main(int argc, char *argv[]) {
                                        1000,
                                        1000,
                                        filter_mode,
+                                       lrt_null_mode,
                                        moran_perms,
                                        moran_fdr,
                                        moran_min_i,
@@ -228,7 +252,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-        lrt = gex_compute_brownian_lrt(gex, Sigma);
+        lrt = gex_compute_brownian_lrt(gex, Sigma, lrt_null_mode, moran_perms, moran_seed);
         if (lrt == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics\n");
             gex_free_trees(trees, n_trees);

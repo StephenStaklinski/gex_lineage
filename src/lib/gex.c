@@ -127,6 +127,16 @@ static unsigned int gex_rand_u32(unsigned int *state) {
     return *state;
 }
 
+static double gex_uniform_open(unsigned int *state) {
+    return ((double)gex_rand_u32(state) + 1.0) / 4294967297.0;
+}
+
+static double gex_rand_normal(unsigned int *state) {
+    double u1 = gex_uniform_open(state);
+    double u2 = gex_uniform_open(state);
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+}
+
 static void gex_shuffle_double(double *x, int n, unsigned int *state) {
     int i;
 
@@ -176,6 +186,26 @@ static double gex_loglik_centered_gaussian_identity(double *y, int n) {
         sigma2 = 1e-12;
 
     return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
+}
+
+static void gex_fit_gaussian_identity(double *y, int n, double *mean_out, double *sigma2_out) {
+    int i;
+    double mean = 0.0;
+    double sse = 0.0;
+
+    for (i = 0; i < n; i++)
+        mean += y[i];
+    mean /= (double)n;
+
+    for (i = 0; i < n; i++) {
+        double d = y[i] - mean;
+        sse += d * d;
+    }
+
+    *mean_out = mean;
+    *sigma2_out = sse / (double)n;
+    if (*sigma2_out < 1e-12)
+        *sigma2_out = 1e-12;
 }
 
 static double gex_loglik_centered_gaussian_cov(double *y,
@@ -353,7 +383,8 @@ static int gex_keep_gene(GexMoransResult *morans,
         return keep_moran;
     if (mode == GEX_FILTER_LRT)
         return keep_lrt;
-    return (keep_moran || keep_lrt);
+    /* Return the intersection if both tests are run */
+    return (keep_moran && keep_lrt);
 }
 
 /* -------------------- tree reading -------------------- */
@@ -853,7 +884,11 @@ int gex_write_morans_tsv(const char *filename,
     return 0;
 }
 
-GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma) {
+GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
+                                       Matrix *Sigma,
+                                       GexLRTNullMode null_mode,
+                                       int n_mc,
+                                       unsigned int seed) {
     int i, j;
     int n;
     Matrix *Sigma_reg = NULL;
@@ -864,10 +899,16 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma) {
     double max_diag = 0.0;
     double jitter;
     double *y = NULL;
+    double *y_sim = NULL;
+    unsigned int rng_state;
 
     if (gex == NULL || gex->X == NULL || Sigma == NULL ||
         Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells) {
         fprintf(stderr, "ERROR: gex_compute_brownian_lrt got invalid input\n");
+        return NULL;
+    }
+    if (null_mode == GEX_LRT_NULL_MONTECARLO && n_mc <= 0) {
+        fprintf(stderr, "ERROR: Monte Carlo LRT requires positive n_mc\n");
         return NULL;
     }
 
@@ -923,8 +964,10 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma) {
 
     res = (GexLRTResult *)calloc(1, sizeof(GexLRTResult));
     y = (double *)malloc(n * sizeof(double));
-    if (res == NULL || y == NULL) {
+    y_sim = (double *)malloc(n * sizeof(double));
+    if (res == NULL || y == NULL || y_sim == NULL) {
         free(y);
+        free(y_sim);
         free(res);
         mat_free(Sigma_reg);
         mat_free(Sigma_inv);
@@ -939,18 +982,23 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma) {
     if (res->lrt_stat == NULL || res->pvals == NULL || res->qvals == NULL) {
         gex_free_lrt_result(res);
         free(y);
+        free(y_sim);
         mat_free(Sigma_reg);
         mat_free(Sigma_inv);
         mat_free(L);
         return NULL;
     }
 
+    rng_state = (seed == 0u ? 1u : seed);
     for (j = 0; j < gex->n_genes; j++) {
         double ll_null;
         double ll_alt;
+        double mu0;
+        double sigma20;
         for (i = 0; i < n; i++)
             y[i] = mat_get(gex->X, i, j);
 
+        gex_fit_gaussian_identity(y, n, &mu0, &sigma20);
         ll_null = gex_loglik_centered_gaussian_identity(y, n);
         ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
         res->lrt_stat[j] = 2.0 * (ll_alt - ll_null);
@@ -958,13 +1006,38 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex, Matrix *Sigma) {
             res->lrt_stat[j] = 0.0;
         if (res->lrt_stat[j] < 0.0)
             res->lrt_stat[j] = 0.0;
-        res->pvals[j] = gex_chisq1_sf(res->lrt_stat[j]);
+
+        if (null_mode == GEX_LRT_NULL_CHI2) {
+            res->pvals[j] = gex_chisq1_sf(res->lrt_stat[j]);
+        }
+        else {
+            int ge_count = 0;
+            int rep;
+            for (rep = 0; rep < n_mc; rep++) {
+                double ll0_sim;
+                double ll1_sim;
+                double stat_sim;
+                for (i = 0; i < n; i++)
+                    y_sim[i] = mu0 + sqrt(sigma20) * gex_rand_normal(&rng_state);
+                ll0_sim = gex_loglik_centered_gaussian_identity(y_sim, n);
+                ll1_sim = gex_loglik_centered_gaussian_cov(y_sim, Sigma_reg, Sigma_inv, logdet_sigma);
+                stat_sim = 2.0 * (ll1_sim - ll0_sim);
+                if (stat_sim < 0.0 && fabs(stat_sim) < 1e-10)
+                    stat_sim = 0.0;
+                if (stat_sim < 0.0)
+                    stat_sim = 0.0;
+                if (stat_sim >= res->lrt_stat[j])
+                    ge_count++;
+            }
+            res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_mc + 1.0);
+        }
     }
 
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);
     res->n_significant = gex_count_kept_lrt_genes(res, 0.05);
 
     free(y);
+    free(y_sim);
     mat_free(Sigma_reg);
     mat_free(Sigma_inv);
     mat_free(L);
