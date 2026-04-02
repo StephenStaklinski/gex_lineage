@@ -232,24 +232,20 @@ int main(int argc, char *argv[]) {
     TODO: Make these steps somewhat Bayesian by integrating over the set of all trees */
 
     /* Calculate the phylogenetic covariance matrix */
-    Sigma = brownian_covariance_from_tree(trees[0],
-                                          gex->cell_names,
-                                          gex->n_cells);
+    Sigma = covariance_from_tree(trees[0], gex->cell_names, gex->n_cells);
     if (Sigma == NULL) {
         fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix\n");
         goto cleanup;
     }
-    brownian_print_covariance_summary(Sigma,
-                                      gex->cell_names,
-                                      gex->n_cells);
+    print_covariance_summary(Sigma, gex->cell_names, gex->n_cells);
 
     /* Calculate the weight matrix from the phylogenetic covariance matrix */
-    W = brownian_weight_matrix_from_covariance(Sigma);
+    W = weight_matrix_from_covariance(Sigma);
     if (W == NULL) {
         fprintf(stderr, "ERROR: failed to compute Brownian weight matrix\n");
         goto cleanup;
     }
-    brownian_print_weight_summary(W);
+    print_weight_matrix_summary(W);
     
     /* Test the gene-tree correlation or lrt filter on simulated data to understand
     performance for the provided tree. Pass pre-calculated Sigma and W. */

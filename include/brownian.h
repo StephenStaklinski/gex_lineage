@@ -8,7 +8,7 @@
 
 Matrix *covariance_from_tree(TreeNode *tree, char **names, int n);
 
-Matrix *brownian_weight_matrix_from_covariance(Matrix *Sigma);
+Matrix *weight_matrix_from_covariance(Matrix *Sigma);
 
 GexMatrix *brownian_simulate_expression(TreeNode *tree,
                                         char **names,
@@ -31,8 +31,8 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   Matrix *W,
                                   unsigned int seed);
 
-void brownian_print_covariance_summary(Matrix *Sigma, char **names, int n);
+void print_covariance_summary(Matrix *Sigma, char **names, int n);
 
-void brownian_print_weight_summary(Matrix *W);
+void print_weight_matrix_summary(Matrix *W);
 
 #endif

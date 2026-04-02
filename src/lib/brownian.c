@@ -5,35 +5,39 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* -------------------- helpers -------------------- */
 
 static int brownian_is_leaf(TreeNode *node) {
     if (node == NULL) return 0;
     return (node->lchild == NULL && node->rchild == NULL);
 }
 
-static TreeNode *brownian_find_tip_by_name(TreeNode *node, const char *name) {
+/* Find a tip in the tree by name. Returns pointer to the tip node or NULL if not found. */
+static TreeNode *find_tree_tip_by_name(TreeNode *node, const char *name) {
     TreeNode *left_hit;
     TreeNode *right_hit;
 
     if (node == NULL || name == NULL)
         return NULL;
+
+    /* If this node is a leaf and has the requested name, return it */
     if (brownian_is_leaf(node) && node->name != NULL &&
         strcmp(node->name, name) == 0)
         return node;
 
-    left_hit = brownian_find_tip_by_name(node->lchild, name);
+    /* Recursively search the left and right subtrees until at the tips */
+    left_hit = find_tree_tip_by_name(node->lchild, name);
     if (left_hit != NULL)
         return left_hit;
-
-    right_hit = brownian_find_tip_by_name(node->rchild, name);
+    right_hit = find_tree_tip_by_name(node->rchild, name);
     if (right_hit != NULL)
         return right_hit;
 
     return NULL;
 }
 
-static double brownian_depth_to_root(TreeNode *node) {
+/* Compute the depth of a node to the origin of the tree. */
+/* TODO: Validate that the origin node above the root exists and will be included here for the origin distance. */
+static double node_depth_to_origin(TreeNode *node) {
     double depth = 0.0;
 
     while (node != NULL && node->parent != NULL) {
@@ -44,7 +48,9 @@ static double brownian_depth_to_root(TreeNode *node) {
     return depth;
 }
 
-static TreeNode *brownian_mrca(TreeNode *a, TreeNode *b) {
+/* Find the most recent common ancestor (MRCA) of two nodes in a tree.
+Returns a pointer to the MRCA node or NULL if no common ancestor is found. */
+static TreeNode *find_mrca(TreeNode *a, TreeNode *b) {
     TreeNode *anc;
     TreeNode *cur;
 
@@ -168,10 +174,12 @@ static void brownian_simulate_gene_recursive(TreeNode *node,
 }
 
 /* Calculate the phylogenetic covariance matrix for an input tree.
+Covariance is the distance from root to MRCA for each pair of tips. 
+Tips are matched to the order of the input names.
 Returns a pointer to the allocated covariance matrix or NULL on failure. */
 Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     int i, j;
-    Matrix *Sigma = NULL;
+    Matrix *Sigma = NULL;   /* Phylogenetic covariance matrix */
     TreeNode **tips = NULL;
 
     if (tree == NULL || names == NULL || n <= 0) {
@@ -179,12 +187,13 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
         return NULL;
     }
 
-    Sigma = mat_new(n, n);
+    Sigma = mat_new(n, n);  /* Allocate the covariance matrix based on the input n tips */
     if (Sigma == NULL) {
         fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix\n");
         return NULL;
     }
 
+    /* Allocate an array to hold pointers to the tree tips in the order of the input names */
     tips = (TreeNode **)malloc(n * sizeof(TreeNode *));
     if (tips == NULL) {
         fprintf(stderr, "ERROR: out of memory allocating Brownian tip map\n");
@@ -192,11 +201,12 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
         return NULL;
     }
 
+    /* Fill the tip mapping from the input names to tips in the tree */
     for (i = 0; i < n; i++) {
-        tips[i] = brownian_find_tip_by_name(tree, names[i]);
+        tips[i] = find_tree_tip_by_name(tree, names[i]);
         if (tips[i] == NULL) {
             fprintf(stderr,
-                    "ERROR: could not find tip '%s' in tree while building Brownian covariance\n",
+                    "ERROR: could not find tip '%s' in tree while building phylogenetic covariance\n",
                     names[i]);
             free(tips);
             mat_free(Sigma);
@@ -204,10 +214,11 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
         }
     }
 
-    /* Fill covariance matrix */
+    /* Fill the phylogenetic covariance matrix */
     for (i = 0; i < n; i++) {
         for (j = i; j < n; j++) {
-            TreeNode *mrca = brownian_mrca(tips[i], tips[j]);
+            /* Compute the MRCA of the two tips */
+            TreeNode *mrca = find_mrca(tips[i], tips[j]);
             double cov;
 
             if (mrca == NULL) {
@@ -219,9 +230,12 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
                 return NULL;
             }
 
-            cov = brownian_depth_to_root(mrca);
+            /* Compute the covariance as the depth to the MRCA */
+            /* TODO: Make this more efficient by leveraging the fixed root height 
+            and shared ancestry in the tree structure. */
+            cov = node_depth_to_origin(mrca);
             mat_set(Sigma, i, j, cov);
-            mat_set(Sigma, j, i, cov);
+            mat_set(Sigma, j, i, cov);  /* Symmetric matrix; TODO: Could save on memory here if it becomes problematic. */
         }
     }
 
@@ -229,7 +243,12 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     return Sigma;
 }
 
-Matrix *brownian_weight_matrix_from_covariance(Matrix *Sigma) {
+/* Calculate the covariance-based weight matrix from a phylogenetic covariance matrix.
+The weight matrix is calculated as W_ij = 1/(d_ij + eps) where d_ij is the covariance-based 
+distance between tips i and j (d_ij = Sigma_ii + Sigma_jj - 2*Sigma_ij) and eps is a small 
+constant to avoid division by zero. The weight matrix is then normalized to sum to 1.
+Returns a pointer to the allocated weight matrix or NULL on failure. */
+Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
     int i, j;
     int n;
     double max_dist = 0.0;
@@ -238,14 +257,14 @@ Matrix *brownian_weight_matrix_from_covariance(Matrix *Sigma) {
     Matrix *W = NULL;
 
     if (Sigma == NULL || Sigma->nrows != Sigma->ncols || Sigma->nrows <= 0) {
-        fprintf(stderr, "ERROR: brownian_weight_matrix_from_covariance got invalid input\n");
+        fprintf(stderr, "ERROR: weight_matrix_from_covariance got invalid input\n");
         return NULL;
     }
 
     n = Sigma->nrows;
     W = mat_new(n, n);
     if (W == NULL) {
-        fprintf(stderr, "ERROR: failed to allocate Brownian weight matrix\n");
+        fprintf(stderr, "ERROR: failed to allocate weight matrix\n");
         return NULL;
     }
 
@@ -272,7 +291,7 @@ Matrix *brownian_weight_matrix_from_covariance(Matrix *Sigma) {
             if (dij < 0.0 && fabs(dij) < 1e-12)
                 dij = 0.0;
             if (dij < 0.0) {
-                fprintf(stderr, "ERROR: Brownian covariance implied negative distance\n");
+                fprintf(stderr, "ERROR: covariance implied negative distance\n");
                 mat_free(W);
                 return NULL;
             }
@@ -285,7 +304,7 @@ Matrix *brownian_weight_matrix_from_covariance(Matrix *Sigma) {
     }
 
     if (total <= 0.0) {
-        fprintf(stderr, "ERROR: Brownian weight matrix normalization failed\n");
+        fprintf(stderr, "ERROR: weight matrix normalization failed\n");
         mat_free(W);
         return NULL;
     }
@@ -487,19 +506,20 @@ int brownian_run_simulation_check(TreeNode *tree,
     return (fn == 0 && fp == 0);
 }
 
-void brownian_print_covariance_summary(Matrix *Sigma, char **names, int n) {
+/* Print a summary of the covariance matrix. */
+void print_covariance_summary(Matrix *Sigma, char **names, int n) {
     int i, j;
 
     if (Sigma == NULL || names == NULL || n <= 0) {
-        fprintf(stderr, "ERROR: cannot summarize NULL Brownian covariance matrix\n");
+        fprintf(stderr, "ERROR: cannot summarize NULL covariance matrix\n");
         return;
     }
     if (Sigma->nrows != n || Sigma->ncols != n) {
-        fprintf(stderr, "ERROR: Brownian covariance summary got mismatched dimensions\n");
+        fprintf(stderr, "ERROR: covariance summary got mismatched dimensions\n");
         return;
     }
 
-    printf("First few entries of Brownian covariance matrix:\n");
+    printf("First few entries of covariance matrix:\n");
     for (i = 0; i < n && i < 10; i++) {
         printf("%s", names[i]);
         for (j = 0; j < n && j < 10; j++)
@@ -509,15 +529,16 @@ void brownian_print_covariance_summary(Matrix *Sigma, char **names, int n) {
     printf("\n");
 }
 
-void brownian_print_weight_summary(Matrix *W) {
+/* Print a summary of the covariance-based weight matrix. */
+void print_weight_matrix_summary(Matrix *W) {
     int i, j;
 
     if (W == NULL) {
-        fprintf(stderr, "ERROR: cannot summarize NULL Brownian weight matrix\n");
+        fprintf(stderr, "ERROR: cannot summarize NULL weight matrix\n");
         return;
     }
 
-    printf("First few entries of Brownian covariance-based weight matrix:\n");
+    printf("First few entries of covariance-based weight matrix:\n");
     for (i = 0; i < W->nrows && i < 10; i++) {
         for (j = 0; j < W->ncols && j < 10; j++)
             printf(" %g", mat_get(W, i, j));
