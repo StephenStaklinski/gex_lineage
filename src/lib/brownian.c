@@ -36,13 +36,20 @@ static TreeNode *find_tree_tip_by_name(TreeNode *node, const char *name) {
 }
 
 /* Compute the depth of a node to the origin of the tree. */
-/* TODO: Validate that the origin node above the root exists and will be included here for the origin distance. */
 static double node_depth_to_origin(TreeNode *node) {
     double depth = 0.0;
 
+    /* Recurse up the tree to the root node */
     while (node != NULL && node->parent != NULL) {
         depth += node->dparent;
         node = node->parent;
+    }
+
+    /* Add the depth of the leading branch from the origin to the root */
+    if (node != NULL && node->dparent >= 0.0) {
+        depth += node->dparent;
+    } else {
+        fprintf(stderr, "ERROR: origin node has invalid branch length or does not exist, so depths are incorrect\n");
     }
 
     return depth;
