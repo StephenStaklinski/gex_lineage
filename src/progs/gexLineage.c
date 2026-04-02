@@ -269,9 +269,9 @@ int main(int argc, char *argv[]) {
                                        Sigma,
                                        W,
                                        seed)) {
-        fprintf(stderr, "WARNING: Brownian simulation check of correlation filter did not perfectly recover all positive/negative genes for the provided tree\n\n");
+        fprintf(stderr, "WARNING: Simulation check of phylogenetic signal filter did not perfectly recover all positive/negative genes for the provided tree\n\n");
     } else {
-        printf("Brownian simulation check of correlation filter successfully recovered all positive/negative genes for the provided tree\n\n");
+        printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree\n\n");
     }
 
     /* Optionally run the phylogenetic autocorrelation filter */
