@@ -14,10 +14,10 @@ typedef struct {
     int K;
 } GexPCA;
 
-/* Compute PCA on the gene expression matrix and retain the minimum number
-   of components needed to explain at least the requested variance threshold. */
 GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold);
+
 void gex_free_pca(GexPCA *pca);
+
 void gex_print_pca_summary(GexPCA *pca);
 
 #endif

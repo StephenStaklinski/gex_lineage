@@ -167,13 +167,15 @@ static void brownian_simulate_gene_recursive(TreeNode *node,
     brownian_simulate_gene_recursive(node->rchild, curval, sigma2, tips, n, out, state);
 }
 
-Matrix *brownian_covariance_from_tree(TreeNode *tree, char **names, int n) {
+/* Calculate the phylogenetic covariance matrix for an input tree.
+Returns a pointer to the allocated covariance matrix or NULL on failure. */
+Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     int i, j;
     Matrix *Sigma = NULL;
     TreeNode **tips = NULL;
 
     if (tree == NULL || names == NULL || n <= 0) {
-        fprintf(stderr, "ERROR: brownian_covariance_from_tree got invalid input\n");
+        fprintf(stderr, "ERROR: covariance_from_tree got invalid input\n");
         return NULL;
     }
 

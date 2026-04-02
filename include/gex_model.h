@@ -22,9 +22,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix *Sigma,
                                                       GexPCA *pca,
                                                       unsigned int seed);
+                                                      
 int gex_write_latent_brownian_model(const char *outprefix,
                                     GexLatentBrownianModel *model,
                                     GexMatrix *gex);
+
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
 
 #endif

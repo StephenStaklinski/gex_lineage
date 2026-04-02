@@ -193,7 +193,7 @@ int main(int argc, char *argv[]) {
 
     /* Load the input trees */
     trees = gex_read_nexus(trees_file, &n_trees);
-    if (trees == NULL) {
+    if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
         fprintf(stderr, "ERROR: failed to load trees\n");
         goto cleanup;
     }
@@ -228,14 +228,8 @@ int main(int argc, char *argv[]) {
         printf("Rescaled all tree(s) to total height %.6f\n\n", tree_total_time);
     }
 
-    /* Filter genes based on tree correlation statistic */
-    if (n_trees < 1 || trees[0] == NULL) {
-        fprintf(stderr, "ERROR: no trees available for Brownian covariance\n");
-        goto cleanup;
-    }
-
-    /* Use first tree for initial testing here below. 
-    TODO: Make results somewhat Bayesian by integrating over a collection of trees */
+    /* Use first tree only (for initial testing) for the steps here below. 
+    TODO: Make these steps somewhat Bayesian by integrating over the set of all trees */
 
     /* Calculate the phylogenetic covariance matrix */
     Sigma = brownian_covariance_from_tree(trees[0],
