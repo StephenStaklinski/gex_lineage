@@ -542,9 +542,15 @@ int gex_write_latent_brownian_model(const char *outprefix,
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
     if (model == NULL)
         return;
-    if (model->Z != NULL) mat_free(model->Z);
-    if (model->L != NULL) mat_free(model->L);
-    if (model->sigma2_latent != NULL) free(model->sigma2_latent);
-    if (model->latent_mvn != NULL) mvn_free(model->latent_mvn);
+        
+    if (model->Z != NULL) 
+        mat_free(model->Z);
+    if (model->L != NULL) 
+        mat_free(model->L);
+    if (model->sigma2_latent != NULL) 
+        free(model->sigma2_latent);
+    if (model->latent_mvn != NULL) 
+        mvn_free(model->latent_mvn);
+
     free(model);
 }

@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
 
-    /* Data structures to store results from calculations later */
+    /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
@@ -85,144 +85,141 @@ int main(int argc, char *argv[]) {
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
+    int status = 1; /* Assume failure by default */
     
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             trees_file = argv[++i];
         }
         else if (strcmp(argv[i], "--expr") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             expr_file = argv[++i];
         }
         else if (strcmp(argv[i], "--outprefix") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             outprefix = argv[++i];
         }
         else if (strcmp(argv[i], "--tree-total-time") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             tree_total_time = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
                 fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt, both\n");
-                return 1;
+                goto cleanup;
             }
         }
         else if (strcmp(argv[i], "--lrt-null") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             if (parse_lrt_null_mode(argv[++i], &lrt_null_mode) != 0) {
                 fprintf(stderr, "ERROR: --lrt-null must be one of montecarlo, chi2\n");
-                return 1;
+                goto cleanup;
             }
         }
         else if (strcmp(argv[i], "--pca-var-threshold") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             pca_var_threshold = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-perms") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             n_perms = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--max-q") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             max_q = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--moran-min-i") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             moran_min_i = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                return 1;
+                goto cleanup;
             }
             seed = (unsigned int)strtoul(argv[++i], NULL, 10);
         }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
-            return 0;
+            status = 0; /* Success since the user just wants command line help */
+            goto cleanup;
         }
         else {
             fprintf(stderr, "ERROR: unknown argument: %s\n", argv[i]);
             usage(argv[0]);
-            return 1;
+            goto cleanup;
         }
     }
 
     /* Check that all required inputs are specified */
     if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
-        return 1;
+        goto cleanup;
     }
 
     /* Load the input trees */
     trees = gex_read_nexus(trees_file, &n_trees);
     if (trees == NULL) {
         fprintf(stderr, "ERROR: failed to load trees\n");
-        return 1;
+        goto cleanup;
     }
 
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (gex_check_trees_ultrametric(trees, n_trees, 1e-3) != 0) {
-        gex_free_trees(trees, n_trees);
-        return 1;
+        goto cleanup;
     }
 
     /* Load the input expression matrix */
     gex = gex_read_labeled_matrix(expr_file);
     if (gex == NULL) {
         fprintf(stderr, "ERROR: failed to load expression matrix\n");
-        gex_free_trees(trees, n_trees);
-        return 1;
+        goto cleanup;
     }
 
     /* Print input/output summary for user verification */
     gex_print_io_summary(trees, n_trees, gex);
     if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
         fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        return 1;
+        goto cleanup;
     }
     printf("After reconciliation: %d shared cell/tip name(s)\n\n", gex->n_cells);
 
     if (tree_total_time > 0.0) {
         if (gex_rescale_trees_total_height(trees, n_trees, tree_total_time) != 0) {
-            gex_free_trees(trees, n_trees);
-            return 1;
+            goto cleanup;
         }
         printf("Rescaled all tree(s) to total height %.6f\n\n", tree_total_time);
     }
@@ -230,14 +227,14 @@ int main(int argc, char *argv[]) {
     /* Filter genes based on tree correlation statistic */
     if (n_trees < 1 || trees[0] == NULL) {
         fprintf(stderr, "ERROR: no trees available for Brownian covariance\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        return 1;
+        goto cleanup;
     }
 
-    /* Use first tree for initial testing.
-    First test the autocorrelation filter on simulated data, then
-    run the filter on the real input data. */
+    /* Use first tree for initial testing here. 
+    TODO: Make results somewhat Bayesian by integrating over a collection of trees */
+    
+    /* First test the gene-tree correlation or lrt filter on simulated data to understand
+    performance for the provided tree. */
     if (!brownian_run_simulation_check(trees[0],
                                        gex->cell_names,
                                        gex->n_cells,
@@ -254,40 +251,32 @@ int main(int argc, char *argv[]) {
         printf("Brownian simulation check of correlation filter successfully recovered all positive/negative genes for the provided tree\n\n");
     }
 
+    /* Calculate the phylogenetic covariance matrix */
     Sigma = brownian_covariance_from_tree(trees[0],
                                           gex->cell_names,
                                           gex->n_cells);
     if (Sigma == NULL) {
         fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        return 1;
+        goto cleanup;
     }
-
     brownian_print_covariance_summary(Sigma,
                                       gex->cell_names,
                                       gex->n_cells);
 
+    /* Calculate the weight matrix from the phylogenetic covariance matrix */
     W = brownian_weight_matrix_from_covariance(Sigma);
     if (W == NULL) {
         fprintf(stderr, "ERROR: failed to compute Brownian weight matrix\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        mat_free(Sigma);
-        return 1;
+        goto cleanup;
     }
-
     brownian_print_weight_summary(W);
 
+    /* Optionally run the phylogenetic autocorrelation filter */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
         morans = gex_compute_morans_i(gex, W, n_perms, seed);
         if (morans == NULL) {
             fprintf(stderr, "ERROR: failed to compute Moran's I statistics\n");
-            gex_free_trees(trees, n_trees);
-            gex_free_matrix_data(gex);
-            mat_free(Sigma);
-            mat_free(W);
-            return 1;
+            goto cleanup;
         }
         gex_print_morans_summary(morans, gex, max_q, moran_min_i);
         {
@@ -296,27 +285,18 @@ int main(int argc, char *argv[]) {
             if (gex_write_morans_tsv(corr_path, morans, gex, max_q, moran_min_i) != 0) {
                 fprintf(stderr, "ERROR: failed to write Moran correlation results to %s\n",
                         corr_path);
-                gex_free_trees(trees, n_trees);
-                gex_free_matrix_data(gex);
-                gex_free_morans_result(morans);
-                mat_free(Sigma);
-                mat_free(W);
-                return 1;
+                goto cleanup;
             }
             printf("Wrote Moran correlation results to %s\n", corr_path);
         }
     }
 
+    /* Optionally run the phylogenetic LRT filter */
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
         lrt = gex_compute_brownian_lrt(gex, Sigma, lrt_null_mode, n_perms, seed);
         if (lrt == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics\n");
-            gex_free_trees(trees, n_trees);
-            gex_free_matrix_data(gex);
-            gex_free_morans_result(morans);
-            mat_free(Sigma);
-            mat_free(W);
-            return 1;
+            goto cleanup;
         }
         gex_print_lrt_summary(lrt, gex, max_q);
         {
@@ -325,31 +305,19 @@ int main(int argc, char *argv[]) {
             if (gex_write_lrt_tsv(lrt_path, lrt, gex, max_q) != 0) {
                 fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
                         lrt_path);
-                gex_free_trees(trees, n_trees);
-                gex_free_matrix_data(gex);
-                gex_free_morans_result(morans);
-                gex_free_lrt_result(lrt);
-                mat_free(Sigma);
-                mat_free(W);
-                return 1;
+                goto cleanup;
             }
             printf("Wrote LRT correlation results to %s\n", lrt_path);
         }
     }
 
+    /* Filter genes based on the results of the correlation and/or LRT test(s) */
     gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode,
                                                max_q, moran_min_i);
     if (gex_filtered == NULL) {
         fprintf(stderr, "ERROR: failed to filter genes by selected test(s)\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        gex_free_morans_result(morans);
-        gex_free_lrt_result(lrt);
-        mat_free(Sigma);
-        mat_free(W);
-        return 1;
+        goto cleanup;
     }
-
     printf("Filtered matrix has %d gene(s)\n", gex_filtered->n_genes);
 
     /* Run PCA on the filtered matrix and retain the smallest number of
@@ -357,66 +325,46 @@ int main(int argc, char *argv[]) {
     pca = gex_compute_pca(gex_filtered, pca_var_threshold);
     if (pca == NULL) {
         fprintf(stderr, "ERROR: PCA failed\n");
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        gex_free_matrix_data(gex_filtered);
-        gex_free_morans_result(morans);
-        gex_free_lrt_result(lrt);
-        mat_free(W);
-        mat_free(Sigma);
-        return 1;
+        goto cleanup;
     }
     printf("Retained %d PCA component(s) to explain at least %.2f%% of variance\n",
            pca->K, 100.0 * pca_var_threshold);
-
     gex_print_pca_summary(pca);
 
+    /* Fit the latent Brownian model */
     model = gex_fit_latent_brownian_model(gex_filtered, Sigma, pca, seed);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model\n");
+        goto cleanup;
+    }
+
+    /* Write the fitted latent Brownian model results to files */
+    if (gex_write_latent_brownian_model(outprefix, model, gex_filtered) != 0) {
+        fprintf(stderr,
+                "ERROR: failed to write latent Brownian model outputs with prefix %s\n",
+                outprefix);
+        goto cleanup;
+    }
+    printf("Fitted latent Brownian model with k=%d and wrote parameters to %s.model.summary.tsv, %s.model.Z.tsv, and %s.model.L.tsv\n",
+            model->k, outprefix, outprefix, outprefix);
+
+    /* End of program */
+    printf("Done\n");
+    status = 0; /* Success */
+    goto cleanup;
+
+    /* Free allocated memory */
+    cleanup:
         gex_free_trees(trees, n_trees);
         gex_free_matrix_data(gex);
         gex_free_matrix_data(gex_filtered);
         gex_free_morans_result(morans);
         gex_free_lrt_result(lrt);
         gex_free_pca(pca);
-        mat_free(W);
-        mat_free(Sigma);
-        return 1;
-    }
-    {
-        if (gex_write_latent_brownian_model(outprefix, model, gex_filtered) != 0) {
-            fprintf(stderr,
-                    "ERROR: failed to write latent Brownian model outputs with prefix %s\n",
-                    outprefix);
-            gex_free_trees(trees, n_trees);
-            gex_free_matrix_data(gex);
-            gex_free_matrix_data(gex_filtered);
-            gex_free_morans_result(morans);
-            gex_free_lrt_result(lrt);
-            gex_free_pca(pca);
-            gex_free_latent_brownian_model(model);
-            mat_free(W);
+        gex_free_latent_brownian_model(model);
+        if (Sigma != NULL)
             mat_free(Sigma);
-            return 1;
-        }
-        printf("Fitted latent Brownian model with k=%d and wrote parameters to %s.model.summary.tsv, %s.model.Z.tsv, and %s.model.L.tsv\n",
-               model->k, outprefix, outprefix, outprefix);
-    }
-
-    printf("done\n");
-
-    gex_free_trees(trees, n_trees);
-    gex_free_matrix_data(gex);
-    gex_free_matrix_data(gex_filtered);
-    gex_free_morans_result(morans);
-    gex_free_lrt_result(lrt);
-    gex_free_pca(pca);
-    gex_free_latent_brownian_model(model);
-    if (Sigma != NULL)
-        mat_free(Sigma);
-    if (W != NULL)
-        mat_free(W);
-
-    return 0;
+        if (W != NULL)
+            mat_free(W);
+        return status;
 }

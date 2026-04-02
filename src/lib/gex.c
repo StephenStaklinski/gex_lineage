@@ -1389,9 +1389,13 @@ void gex_free_lrt_result(GexLRTResult *res) {
     if (res == NULL)
         return;
 
-    free(res->lrt_stat);
-    free(res->pvals);
-    free(res->qvals);
+    if (res->lrt_stat != NULL)
+        free(res->lrt_stat);
+    if (res->pvals != NULL)
+        free(res->pvals);
+    if (res->qvals != NULL)
+        free(res->qvals);
+        
     free(res);
 }
 
