@@ -436,6 +436,7 @@ static void gex_collect_tip_depth_range(TreeNode *node,
     gex_collect_tip_depth_range(node->rchild, next_depth, min_depth, max_depth, n_tips);
 }
 
+/* Scale the distances in a tree uniformly by a given factor. */
 static void gex_scale_tree_recursive(TreeNode *node, double scale) {
     if (node == NULL)
         return;
@@ -849,43 +850,49 @@ void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
     }
 }
 
+/* Reconcile the tree tip names with the expression matrix cell names.
+Prune trees and subset matrix to the shared names. Updates the gex_ptr 
+to point to the new subsetted matrix. Returns 0 on success, -1 on failure. */
 int gex_reconcile_tree_and_expression(TreeNode **trees,
                                       int n_trees,
                                       GexMatrix **gex_ptr) {
     int i, j;
-    int tree_missing_from_expr = 0;
-    int expr_missing_from_tree = 0;
-    int n_keep = 0;
+    int tree_missing_from_expr = 0; /* Number of tree tips missing from expression matrix */
+    int expr_missing_from_tree = 0; /* Number of expression matrix cells missing from tree tips */
+    int n_keep = 0; /* Number of shared names between tree tips and expression matrix cells */
     List *tree_names = NULL;
     List *keep_names = NULL;
     GexMatrix *gex;
     GexMatrix *subset = NULL;
 
+    /* Check inputs are valid */
     if (trees == NULL || n_trees <= 0 || trees[0] == NULL ||
         gex_ptr == NULL || *gex_ptr == NULL) {
         fprintf(stderr, "ERROR: gex_reconcile_tree_and_expression got invalid input\n");
         return -1;
     }
 
-    gex = *gex_ptr;
-    tree_names = tr_leaf_names(trees[0]);
+    gex = *gex_ptr; /* Get the expression matrix pointer */
+    tree_names = tr_leaf_names(trees[0]);   /* Collect the names of all tree tips */
     if (tree_names == NULL) {
         fprintf(stderr, "ERROR: failed to collect tree tip names\n");
         return -1;
     }
 
-    keep_names = lst_new_ptr(gex->n_cells > 0 ? gex->n_cells : 1);
+    keep_names = lst_new_ptr(gex->n_cells > 0 ? gex->n_cells : 1);  /* List to hold the names of the shared tree tips and expression matrix cells */
     if (keep_names == NULL) {
         gex_free_string_ptr_list(tree_names);
         return -1;
     }
 
+    /* Check which tree tips are missing from the expression matrix */
     for (i = 0; i < lst_size(tree_names); i++) {
         String *s = lst_get_ptr(tree_names, i);
         if (!gex_name_in_char_array(s->chars, gex->cell_names, gex->n_cells))
             tree_missing_from_expr++;
     }
 
+    /* Check which expression matrix cells are missing from the tree tips */
     for (i = 0; i < gex->n_cells; i++) {
         if (!gex_name_in_string_list(gex->cell_names[i], tree_names))
             expr_missing_from_tree++;
@@ -914,13 +921,14 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         return -1;
     }
 
-    subset = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    subset = (GexMatrix *)calloc(1, sizeof(GexMatrix)); /* Allocate memory for the subsetted matrix */
     if (subset == NULL) {
         gex_free_string_ptr_list(tree_names);
         gex_free_string_ptr_list(keep_names);
         return -1;
     }
 
+    /* Initialize the subsetted matrix */
     subset->n_cells = n_keep;
     subset->n_genes = gex->n_genes;
     subset->X = mat_new(n_keep, gex->n_genes);
@@ -933,6 +941,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         return -1;
     }
 
+    /* Fill the gene names in the subsetted matrix (same as original since we keep all genes) */
     for (j = 0; j < gex->n_genes; j++) {
         subset->gene_names[j] = gex_strdup(gex->gene_names[j]);
         if (subset->gene_names[j] == NULL) {
@@ -943,6 +952,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         }
     }
 
+    /* Fill the cell names and expression values in the subsetted matrix for the shared names */
     for (i = 0, j = 0; i < gex->n_cells; i++) {
         if (gex_name_in_string_list(gex->cell_names[i], tree_names)) {
             int g;
@@ -959,6 +969,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         }
     }
 
+    /* Prune the trees to keep only the shared names */
     for (i = 0; i < n_trees; i++) {
         if (trees[i] != NULL)
             tr_prune(&trees[i], keep_names, 1, NULL);
