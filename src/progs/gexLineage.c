@@ -72,6 +72,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
+    const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -198,7 +199,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Check that the input trees are ultrametric (required for cell lineage) */
-    if (gex_check_trees_ultrametric(trees, n_trees, 1e-3) != 0) {
+    if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
         goto cleanup;
     }
 
