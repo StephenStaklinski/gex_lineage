@@ -230,26 +230,8 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    /* Use first tree for initial testing here. 
+    /* Use first tree for initial testing here below. 
     TODO: Make results somewhat Bayesian by integrating over a collection of trees */
-    
-    /* First test the gene-tree correlation or lrt filter on simulated data to understand
-    performance for the provided tree. */
-    if (!brownian_run_simulation_check(trees[0],
-                                       gex->cell_names,
-                                       gex->n_cells,
-                                       n_sims,
-                                       n_sims,
-                                       filter_mode,
-                                       lrt_null_mode,
-                                       n_perms,
-                                       max_q,
-                                       moran_min_i,
-                                       seed)) {
-        fprintf(stderr, "WARNING: Brownian simulation check of correlation filter did not perfectly recover all positive/negative genes for the provided tree\n\n");
-    } else {
-        printf("Brownian simulation check of correlation filter successfully recovered all positive/negative genes for the provided tree\n\n");
-    }
 
     /* Calculate the phylogenetic covariance matrix */
     Sigma = brownian_covariance_from_tree(trees[0],
@@ -270,6 +252,26 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
     brownian_print_weight_summary(W);
+    
+    /* Test the gene-tree correlation or lrt filter on simulated data to understand
+    performance for the provided tree. Pass pre-calculated Sigma and W. */
+    if (!brownian_run_simulation_check(trees[0],
+                                       gex->cell_names,
+                                       gex->n_cells,
+                                       n_sims,
+                                       n_sims,
+                                       filter_mode,
+                                       lrt_null_mode,
+                                       n_perms,
+                                       max_q,
+                                       moran_min_i,
+                                       Sigma,
+                                       W,
+                                       seed)) {
+        fprintf(stderr, "WARNING: Brownian simulation check of correlation filter did not perfectly recover all positive/negative genes for the provided tree\n\n");
+    } else {
+        printf("Brownian simulation check of correlation filter successfully recovered all positive/negative genes for the provided tree\n\n");
+    }
 
     /* Optionally run the phylogenetic autocorrelation filter */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {

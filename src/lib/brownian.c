@@ -421,12 +421,12 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   int n_perm,
                                   double max_q,
                                   double min_i,
+                                  Matrix *Sigma,
+                                  Matrix *W,
                                   unsigned int seed) {
     int j;
     int tp = 0, fn = 0, fp = 0, tn = 0;
     GexMatrix *sim = NULL;
-    Matrix *Sigma = NULL;
-    Matrix *W = NULL;
     GexMoransResult *morans = NULL;
     GexLRTResult *lrt = NULL;
 
@@ -435,8 +435,6 @@ int brownian_run_simulation_check(TreeNode *tree,
     if (sim == NULL)
         return 0;
 
-    Sigma = brownian_covariance_from_tree(tree, names, n);
-    W = (Sigma == NULL ? NULL : brownian_weight_matrix_from_covariance(Sigma));
     if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
         morans = (W == NULL ? NULL : gex_compute_morans_i(sim, W, n_perm, seed + 17u));
     if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
@@ -448,8 +446,6 @@ int brownian_run_simulation_check(TreeNode *tree,
         ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && morans == NULL) ||
         ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) && lrt == NULL)) {
         gex_free_matrix_data(sim);
-        if (Sigma != NULL) mat_free(Sigma);
-        if (W != NULL) mat_free(W);
         if (morans != NULL) gex_free_morans_result(morans);
         if (lrt != NULL) gex_free_lrt_result(lrt);
         return 0;
@@ -483,8 +479,6 @@ int brownian_run_simulation_check(TreeNode *tree,
     printf("\n");
 
     gex_free_matrix_data(sim);
-    mat_free(Sigma);
-    mat_free(W);
     gex_free_morans_result(morans);
     gex_free_lrt_result(lrt);
 

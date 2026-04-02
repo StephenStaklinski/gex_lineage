@@ -28,6 +28,8 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   int n_perm,
                                   double max_q,
                                   double min_i,
+                                  Matrix *Sigma,
+                                  Matrix *W,
                                   unsigned int seed);
 
 void brownian_print_covariance_summary(Matrix *Sigma, char **names, int n);
