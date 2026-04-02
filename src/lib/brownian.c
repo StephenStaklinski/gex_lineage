@@ -6,53 +6,9 @@
 #include <string.h>
 
 
-static int brownian_is_leaf(TreeNode *node) {
+static int is_leaf(TreeNode *node) {
     if (node == NULL) return 0;
     return (node->lchild == NULL && node->rchild == NULL);
-}
-
-/* Find a tip in the tree by name. Returns pointer to the tip node or NULL if not found. */
-static TreeNode *find_tree_tip_by_name(TreeNode *node, const char *name) {
-    TreeNode *left_hit;
-    TreeNode *right_hit;
-
-    if (node == NULL || name == NULL)
-        return NULL;
-
-    /* If this node is a leaf and has the requested name, return it */
-    if (brownian_is_leaf(node) && node->name != NULL &&
-        strcmp(node->name, name) == 0)
-        return node;
-
-    /* Recursively search the left and right subtrees until at the tips */
-    left_hit = find_tree_tip_by_name(node->lchild, name);
-    if (left_hit != NULL)
-        return left_hit;
-    right_hit = find_tree_tip_by_name(node->rchild, name);
-    if (right_hit != NULL)
-        return right_hit;
-
-    return NULL;
-}
-
-/* Compute the depth of a node to the origin of the tree. */
-static double node_depth_to_origin(TreeNode *node) {
-    double depth = 0.0;
-
-    /* Recurse up the tree to the root node */
-    while (node != NULL && node->parent != NULL) {
-        depth += node->dparent;
-        node = node->parent;
-    }
-
-    /* Add the depth of the leading branch from the origin to the root */
-    if (node != NULL && node->dparent >= 0.0) {
-        depth += node->dparent;
-    } else {
-        fprintf(stderr, "ERROR: origin node has invalid branch length or does not exist, so depths are incorrect\n");
-    }
-
-    return depth;
 }
 
 /* Find the most recent common ancestor (MRCA) of two nodes in a tree.
@@ -72,6 +28,31 @@ static TreeNode *find_mrca(TreeNode *a, TreeNode *b) {
     }
 
     return NULL;
+}
+
+/* Fill the depth array with the depth from the origin to each node in the tree. 
+Sets the depth for each node in the array. Returns 0 on success, -1 on failure. */
+static int fill_node_depths(TreeNode *node, double *depth_by_id, int nnodes, double depth) {
+    if (node == NULL)
+        return 0;
+
+    if (node->id < 0 || node->id >= nnodes)
+        return -1;
+
+    depth_by_id[node->id] = depth;
+
+    if (fill_node_depths(node->lchild,
+                                  depth_by_id,
+                                  nnodes,
+                                  depth + (node->lchild ? node->lchild->dparent : 0.0)) != 0)
+        return -1;
+    if (fill_node_depths(node->rchild,
+                                  depth_by_id,
+                                  nnodes,
+                                  depth + (node->rchild ? node->rchild->dparent : 0.0)) != 0)
+        return -1;
+
+    return 0;
 }
 
 static char *brownian_strdup(const char *s) {
@@ -103,7 +84,7 @@ static double brownian_rand_normal(unsigned int *state) {
     return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
 }
 
-static void brownian_fill_tip_map(TreeNode *node,
+static void fill_tip_map(TreeNode *node,
                                   char **names,
                                   int n,
                                   TreeNode **tips) {
@@ -111,7 +92,7 @@ static void brownian_fill_tip_map(TreeNode *node,
 
     if (node == NULL)
         return;
-    if (brownian_is_leaf(node)) {
+    if (is_leaf(node)) {
         for (i = 0; i < n; i++) {
             if (tips[i] == NULL && node->name != NULL &&
                 strcmp(node->name, names[i]) == 0) {
@@ -122,28 +103,29 @@ static void brownian_fill_tip_map(TreeNode *node,
         return;
     }
 
-    brownian_fill_tip_map(node->lchild, names, n, tips);
-    brownian_fill_tip_map(node->rchild, names, n, tips);
+    fill_tip_map(node->lchild, names, n, tips);
+    fill_tip_map(node->rchild, names, n, tips);
 }
 
-static double brownian_max_root_to_tip_height(TreeNode *node) {
+/* Compute the maximum height from the origin to any tip in the tree. 
+Does a depth-first search from the origin to find the maximum distance. */
+static double max_origin_to_tip_height(TreeNode *node) {
     double left_h, right_h;
     double here = 0.0;
 
     if (node == NULL)
         return 0.0;
 
-    if (node->parent != NULL) {
-        here = node->dparent;
-        if (here < 0.0)
-            here = 0.0;
-    }
+    /* Use all branch lengths including the branch from the origin to the root where the root node parent would be NULL */
+    here = node->dparent;
+    if (here < 0.0)
+        here = 0.0;
 
-    if (brownian_is_leaf(node))
+    if (is_leaf(node))
         return here;
 
-    left_h = brownian_max_root_to_tip_height(node->lchild);
-    right_h = brownian_max_root_to_tip_height(node->rchild);
+    left_h = max_origin_to_tip_height(node->lchild);
+    right_h = max_origin_to_tip_height(node->rchild);
     return here + (left_h > right_h ? left_h : right_h);
 }
 
@@ -166,7 +148,7 @@ static void brownian_simulate_gene_recursive(TreeNode *node,
         curval += sqrt(sigma2 * bl) * brownian_rand_normal(state);
     }
 
-    if (brownian_is_leaf(node)) {
+    if (is_leaf(node)) {
         for (i = 0; i < n; i++) {
             if (tips[i] == node) {
                 out[i] = curval;
@@ -188,6 +170,7 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     int i, j;
     Matrix *Sigma = NULL;   /* Phylogenetic covariance matrix */
     TreeNode **tips = NULL;
+    double *depth_by_id = NULL;
 
     if (tree == NULL || names == NULL || n <= 0) {
         fprintf(stderr, "ERROR: covariance_from_tree got invalid input\n");
@@ -199,9 +182,10 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
         fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix\n");
         return NULL;
     }
+    mat_zero(Sigma);
 
     /* Allocate an array to hold pointers to the tree tips in the order of the input names */
-    tips = (TreeNode **)malloc(n * sizeof(TreeNode *));
+    tips = (TreeNode **)calloc(n, sizeof(TreeNode *));
     if (tips == NULL) {
         fprintf(stderr, "ERROR: out of memory allocating Brownian tip map\n");
         mat_free(Sigma);
@@ -209,8 +193,8 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     }
 
     /* Fill the tip mapping from the input names to tips in the tree */
+    fill_tip_map(tree, names, n, tips);
     for (i = 0; i < n; i++) {
-        tips[i] = find_tree_tip_by_name(tree, names[i]);
         if (tips[i] == NULL) {
             fprintf(stderr,
                     "ERROR: could not find tip '%s' in tree while building phylogenetic covariance\n",
@@ -221,31 +205,75 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
         }
     }
 
-    /* Fill the phylogenetic covariance matrix */
-    for (i = 0; i < n; i++) {
-        for (j = i; j < n; j++) {
-            /* Compute the MRCA of the two tips */
-            TreeNode *mrca = find_mrca(tips[i], tips[j]);
-            double cov;
+    /* Check that the leading origin to root node branch exists */
+    if (tree->dparent < 0.0) {
+        fprintf(stderr, "ERROR: origin node has invalid branch length or does not exist, so depths are incorrect\n");
+        free(tips);
+        mat_free(Sigma);
+        return NULL;
+    }
 
-            if (mrca == NULL) {
+    /* Set the number of nodes in the tree */
+    tr_set_nnodes(tree);
+    if (tree->nnodes <= 0) {
+        fprintf(stderr, "ERROR: tree has invalid node count\n");
+        free(tips);
+        mat_free(Sigma);
+        return NULL;
+    }
+
+    /* Allocate an array to hold the depths from the origin to each node in the tree */
+    depth_by_id = (double *)malloc(tree->nnodes * sizeof(double));
+    if (depth_by_id == NULL) {
+        fprintf(stderr, "ERROR: out of memory allocating Brownian node depths\n");
+        free(tips);
+        mat_free(Sigma);
+        return NULL;
+    }
+
+    /* Fill the node depth array with the depth from the origin to each node in the tree. 
+    This allows for fast lookup of MRCA depths when building the covariance matrix. */
+    if (fill_node_depths(tree, depth_by_id, tree->nnodes, tree->dparent) != 0) {
+        fprintf(stderr, "ERROR: failed to compute node depths for phylogenetic covariance\n");
+        free(depth_by_id);
+        free(tips);
+        mat_free(Sigma);
+        return NULL;
+    }
+
+    /* Fill the covariance matrix based on the depth to MRCA for each pair of tips.
+    The covariance between two tips is the depth from the origin to their MRCA. */
+    for (i = 0; i < n; i++) {
+        for (j = i + 1; j < n; j++) {
+            TreeNode *mrca = find_mrca(tips[i], tips[j]);
+
+            if (mrca == NULL || mrca->id < 0 || mrca->id >= tree->nnodes) {
                 fprintf(stderr,
                         "ERROR: failed to compute MRCA for '%s' and '%s'\n",
                         tips[i]->name, tips[j]->name);
+                free(depth_by_id);
                 free(tips);
                 mat_free(Sigma);
                 return NULL;
             }
 
-            /* Compute the covariance as the depth to the MRCA */
-            /* TODO: Make this more efficient by leveraging the fixed root height 
-            and shared ancestry in the tree structure. */
-            cov = node_depth_to_origin(mrca);
-            mat_set(Sigma, i, j, cov);
-            mat_set(Sigma, j, i, cov);  /* Symmetric matrix; TODO: Could save on memory here if it becomes problematic. */
+            mat_set(Sigma, i, j, depth_by_id[mrca->id]);
         }
     }
 
+    /* Make the covariance matrix symmetric */
+    for (i = 0; i < n; i++) {
+        for (j = i + 1; j < n; j++) {
+            mat_set(Sigma, j, i, mat_get(Sigma, i, j));
+        }
+    }
+
+    /* Fill the diagonal elements for each tip paired with itself */
+    for (i = 0; i < n; i++) {
+        mat_set(Sigma, i, i, depth_by_id[tips[i]->id]);
+    }
+
+    free(depth_by_id);
     free(tips);
     return Sigma;
 }
@@ -351,7 +379,7 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
     }
 
     /* Set sigma2 based on input tree height, as 1/tree_height, to get reasonable Moran's I values */
-    tree_height = brownian_max_root_to_tip_height(tree);
+    tree_height = max_origin_to_tip_height(tree);
     sigma2 = (tree_height > 0.0 ? 1.0 / tree_height : 1.0);
 
     tips = (TreeNode **)calloc(n, sizeof(TreeNode *));
@@ -362,7 +390,7 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
         return NULL;
     }
 
-    brownian_fill_tip_map(tree, names, n, tips);
+    fill_tip_map(tree, names, n, tips);
     for (i = 0; i < n; i++) {
         if (tips[i] == NULL) {
             fprintf(stderr, "ERROR: could not match simulated tip '%s'\n", names[i]);
