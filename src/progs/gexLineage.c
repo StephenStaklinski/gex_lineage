@@ -212,6 +212,9 @@ int main(int argc, char *argv[]) {
 
     /* Print input/output summary for user verification */
     gex_print_io_summary(trees, n_trees, gex);
+
+    /* Reconcile tree tips and expression cell names to the intersection of both sets
+    if they do not perfectly match. */
     if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
         fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names\n");
         goto cleanup;

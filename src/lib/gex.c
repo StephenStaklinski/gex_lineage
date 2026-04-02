@@ -813,9 +813,10 @@ void gex_free_matrix_data(GexMatrix *gex) {
     free(gex);
 }
 
-/* Summary of tree set and expr matrix i/o */
+/* Print a summary of the tree set and expr matrix i/o results */
 void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
     int i;
+    int n_print = 10; /* Number of variable entries to print in each summary */
 
     printf("Loaded %d tree(s)\n", n_trees);
 
@@ -824,18 +825,18 @@ void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
                gex->n_cells, gex->n_genes);
 
         printf("First few cell names:\n");
-        for (i = 0; i < gex->n_cells && i < 10; i++)
+        for (i = 0; i < gex->n_cells && i < n_print; i++)
             printf("  %s\n", gex->cell_names[i]);
 
         printf("First few gene names:\n");
-        for (i = 0; i < gex->n_genes && i < 10; i++)
+        for (i = 0; i < gex->n_genes && i < n_print; i++)
             printf("  %s\n", gex->gene_names[i]);
 
         printf("First few entries of matrix:\n");
-        for (i = 0; i < gex->n_cells && i < 10; i++) {
+        for (i = 0; i < gex->n_cells && i < n_print; i++) {
             int j;
             printf("  %s:", gex->cell_names[i]);
-            for (j = 0; j < gex->n_genes && j < 10; j++)
+            for (j = 0; j < gex->n_genes && j < n_print; j++)
                 printf(" %g", mat_get(gex->X, i, j));
             printf("\n");
         }
