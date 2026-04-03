@@ -19,6 +19,7 @@ static int gex_cmp_eigpair_desc(const void *a, const void *b) {
     return 0;
 }
 
+/* Center the columns of a matrix by subtracting the mean of each column. */
 static Matrix *gex_center_matrix(Matrix *X) {
     int i, j;
     int n = X->nrows;
@@ -55,6 +56,7 @@ static Matrix *gex_center_matrix(Matrix *X) {
     return Xc;
 }
 
+/* Compute the covariance matrix of a centered matrix. */
 static Matrix *gex_compute_covariance(Matrix *Xc) {
     int i, j, k;
     int n = Xc->nrows;
@@ -82,6 +84,7 @@ static Matrix *gex_compute_covariance(Matrix *Xc) {
     return Cov;
 }
 
+/* Compute the number of PCA components needed to explain a certain proportion of the total variance. */
 static int gex_pca_components_for_variance_threshold_internal(double *var_explained,
                                                               int K,
                                                               double threshold) {
@@ -95,8 +98,10 @@ static int gex_pca_components_for_variance_threshold_internal(double *var_explai
     if (threshold >= 1.0)
         threshold = 1.0;
 
+    /* Iterate through components that were sorted in descending order of eigenvalues (variance explained)*/
     for (i = 0; i < K; i++) {
         cumulative += var_explained[i];
+        /* Return the number of components once the threshold is reached or crossed */
         if (cumulative >= threshold)
             return i + 1;
     }
@@ -104,17 +109,22 @@ static int gex_pca_components_for_variance_threshold_internal(double *var_explai
     return K;
 }
 
+/* Compute PCA for a gene expression matrix. 
+Return a pointer to the result or NULL on failure. */
 GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
-    int i, j;
-    int p;
-    int keep_K;
-    Matrix *Xc = NULL;
-    Matrix *Cov = NULL;
-    Matrix *eigvecs = NULL;
-    Vector *eigvals = NULL;
-    GexEigPair *pairs = NULL;
-    GexPCA *out = NULL;
-    double total_var = 0.0;
+    int success = 0; /* Flag indicating if the function succeeded; Default is failure */
+    int i, j;   /* Loop indices */
+    int p;  /* Number of genes */
+    int keep_K; /* Number of components to keep based on variance threshold */
+    Matrix *Xc = NULL;  /* Centered gene expression matrix */
+    Matrix *Cov = NULL; /* Covariance matrix of the centered data */
+    Matrix *eigvecs = NULL; /* Matrix of eigenvectors (columns) from eigendecomposition of covariance matrix */
+    Vector *eigvals = NULL; /* Vector of eigenvalues from eigendecomposition of covariance matrix */
+    GexEigPair *pairs = NULL;   /* Array of eigenvalue/index pairs for sorting eigenvalues in descending order */
+    GexPCA *out = NULL; /* Output PCA result */
+    double total_var = 0.0; /* Total variance (sum of eigenvalues) for computing variance explained */
+    Matrix *new_components = NULL; /* Reduced components matrix */
+    double *new_var = NULL;    /* Reduced variance explained array */
 
     if (gex == NULL || gex->X == NULL) {
         fprintf(stderr, "ERROR: gex_compute_pca received NULL matrix\n");
@@ -128,46 +138,40 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
 
     p = gex->n_genes;
 
+    /* Center the gene expression matrix by subtracting the mean of each column (gene) */
     Xc = gex_center_matrix(gex->X);
     if (Xc == NULL)
         return NULL;
 
+    /* Compute the covariance matrix of the centered data */
     Cov = gex_compute_covariance(Xc);
     if (Cov == NULL) {
         mat_free(Xc);
         return NULL;
     }
 
+    /* Allocate memory for eigenvectors and eigenvalues */
     eigvals = vec_new(p);
     eigvecs = mat_new(p, p);
     if (eigvals == NULL || eigvecs == NULL) {
         fprintf(stderr, "ERROR: out of memory allocating eigensystem objects\n");
-        if (Xc != NULL) mat_free(Xc);
-        if (Cov != NULL) mat_free(Cov);
-        if (eigvals != NULL) vec_free(eigvals);
-        if (eigvecs != NULL) mat_free(eigvecs);
-        return NULL;
+        goto cleanup_compute_pca;
     }
 
+    /* Perform eigendecomposition of the symmetric covariance matrix */
     if (mat_diagonalize_sym(Cov, eigvals, eigvecs) != 0) {
         fprintf(stderr, "ERROR: symmetric eigendecomposition failed in PCA\n");
-        mat_free(Xc);
-        mat_free(Cov);
-        vec_free(eigvals);
-        mat_free(eigvecs);
-        return NULL;
+        goto cleanup_compute_pca;
     }
 
+    /* Create an array of eigenvalue/index pairs to sort the eigenvalues in descending order while keeping track of their original indices */
     pairs = (GexEigPair *)malloc(p * sizeof(GexEigPair));
     if (pairs == NULL) {
         fprintf(stderr, "ERROR: out of memory allocating eigenvalue sort buffer\n");
-        mat_free(Xc);
-        mat_free(Cov);
-        vec_free(eigvals);
-        mat_free(eigvecs);
-        return NULL;
+        goto cleanup_compute_pca;
     }
 
+    /* Populate the eigenvalue/index pairs */
     for (i = 0; i < p; i++) {
         double val = vec_get(eigvals, i);
         if (val < 0.0 && fabs(val) < 1e-12)
@@ -176,20 +180,18 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         pairs[i].idx = i;
     }
 
+    /* Sort the eigenvalue/index pairs in descending order */
     qsort(pairs, p, sizeof(GexEigPair), gex_cmp_eigpair_desc);
 
+    /* Compute total variance as the sum of eigenvalues for computing variance explained */
     for (i = 0; i < p; i++)
         total_var += pairs[i].val;
 
+    /* Allocate memory for the output PCA result */
     out = (GexPCA *)calloc(1, sizeof(GexPCA));
     if (out == NULL) {
         fprintf(stderr, "ERROR: out of memory allocating PCA result\n");
-        free(pairs);
-        mat_free(Xc);
-        mat_free(Cov);
-        vec_free(eigvals);
-        mat_free(eigvecs);
-        return NULL;
+        goto cleanup_compute_pca;
     }
 
     out->components = mat_new(p, p);
@@ -198,13 +200,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
 
     if (out->components == NULL || out->var_explained == NULL) {
         fprintf(stderr, "ERROR: out of memory allocating PCA outputs\n");
-        gex_free_pca(out);
-        free(pairs);
-        mat_free(Xc);
-        mat_free(Cov);
-        vec_free(eigvals);
-        mat_free(eigvecs);
-        return NULL;
+        goto cleanup_compute_pca;
     }
 
     if (total_var <= 0.0) {
@@ -216,10 +212,12 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         }
     }
     else {
+        /* Fill the output PCA result with eigenvectors and variance explained in sorted order */
         for (i = 0; i < p; i++) {
             int idx = pairs[i].idx;
             double lambda = pairs[i].val;
 
+            /* Normalize variance explained by this component */
             out->var_explained[i] = lambda / total_var;
 
             for (j = 0; j < p; j++) {
@@ -229,14 +227,6 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         }
     }
 
-    free(pairs);
-    mat_free(Xc);
-    mat_free(Cov);
-    vec_free(eigvals);
-    mat_free(eigvecs);
-
-    Matrix *new_components;
-    double *new_var;
     keep_K = gex_pca_components_for_variance_threshold_internal(out->var_explained,
                                                                 out->K,
                                                                 variance_threshold);
@@ -245,29 +235,52 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         return NULL;
     }
 
+    /* Allocate memory for the reduced PCA components and variance explained */
     new_components = mat_new(keep_K, out->components->ncols);
     new_var = (double *)calloc(keep_K, sizeof(double));
     if (new_components == NULL || new_var == NULL) {
-        if (new_components != NULL)
-            mat_free(new_components);
-        free(new_var);
-        gex_free_pca(out);
-        return NULL;
+        goto cleanup_compute_pca;
     }
 
+    /* Fill the reduced PCA result with the top components and their variance explained */
     for (i = 0; i < keep_K; i++) {
         new_var[i] = out->var_explained[i];
         for (j = 0; j < out->components->ncols; j++)
             mat_set(new_components, i, j, mat_get(out->components, i, j));
     }
 
+    /* Replace the original PCA components and variance explained with the reduced versions */
     mat_free(out->components);
     free(out->var_explained);
     out->components = new_components;
     out->var_explained = new_var;
     out->K = keep_K;
 
-    return out;
+    success = 1; /* Mark as successful */
+
+    goto cleanup_compute_pca;
+
+    cleanup_compute_pca:
+        if (pairs != NULL)
+            free(pairs);
+        if (Xc != NULL)
+            mat_free(Xc);
+        if (Cov != NULL)
+            mat_free(Cov);
+        if (eigvals != NULL)
+            vec_free(eigvals);
+        if (eigvecs != NULL)
+            mat_free(eigvecs);
+        if (!success) {
+            if (out != NULL)
+                gex_free_pca(out);
+            if (new_components != NULL)
+                mat_free(new_components);
+            if (new_var != NULL)
+                free(new_var);
+            return NULL;
+        }
+        return out;
 }
 
 void gex_print_pca_summary(GexPCA *pca) {
