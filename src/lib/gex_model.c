@@ -230,7 +230,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int step;   /* Optimization step */
     int max_steps = 100000;   /* Maximum number of optimization steps */
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
-    int stable_steps_needed = 50;   /* Number of consecutive stable steps required for convergence */
+    int stable_steps_needed = 100;   /* Number of consecutive stable steps required for convergence */
+    int running_avg_window_long = 500;   /* Number of recent steps used for the long running objective average */
+    int running_avg_window_short = 100;   /* Number of recent steps used for the short running objective average */
     int stable_steps = 0;   /* Running count of consecutive near-converged steps */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule */
     int final_step = 0;   /* Final optimization step reached before termination */
@@ -256,8 +258,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
     double max_diag = 0.0;  /* Maximum diagonal element of Sigma */
     double jitter;  /* Diagonal jitter used for numerical stability */
-    double prev_objective = HUGE_VAL;   /* Objective value from the previous step */
-    double rel_objective_change = HUGE_VAL; /* Relative change in objective between consecutive steps */
+    double running_objective_avg_long = HUGE_VAL; /* Running average over the long objective window */
+    double running_objective_avg_short = HUGE_VAL; /* Running average over the short objective window */
+    double rel_objective_change = HUGE_VAL; /* Relative difference between the short and long running averages */
+    double running_objective_sum_long = 0.0; /* Running sum for the long moving-average window */
+    double running_objective_sum_short = 0.0; /* Running sum for the short moving-average window */
+    double *objective_hist_long = NULL;   /* Circular buffer for the long objective history */
+    double *objective_hist_short = NULL;   /* Circular buffer for the short objective history */
+    int objective_hist_size_long = 0;   /* Current number of values stored in the long window */
+    int objective_hist_size_short = 0;   /* Current number of values stored in the short window */
+    int objective_hist_idx_long = 0;    /* Next insertion position in the long history buffer */
+    int objective_hist_idx_short = 0;    /* Next insertion position in the short history buffer */
     const double objective_tol = 1e-4;  /* Relative objective tolerance used for convergence */
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
@@ -279,7 +290,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     logf = fopen(log_path, "w");
     if (logf == NULL)
         goto cleanup_fit_latent_brownian_model;
-    fprintf(logf, "step\tobjective\trel_objective_change\tgrad_norm\tsigma_obs");
+    fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tgrad_norm\tsigma_obs");
     for (i = 0; i < pca->K; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_norm\tL_norm\tstable_steps\n");
@@ -424,6 +435,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         mL == NULL || vL == NULL)
         goto cleanup_fit_latent_brownian_model;
 
+    objective_hist_long = (double *)calloc(running_avg_window_long, sizeof(double));
+    objective_hist_short = (double *)calloc(running_avg_window_short, sizeof(double));
+    if (objective_hist_long == NULL || objective_hist_short == NULL)
+        goto cleanup_fit_latent_brownian_model;
+
     for (step = 0; step < k; step++)
         log_sigma_latent[step] = log(model->sigma2_latent[step]);
 
@@ -459,9 +475,23 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
                                                 grad_log_sigma_latent,
                                                 grad_log_sigma_obs, k);
-        if (step > 1) {
-            rel_objective_change = fabs(model->objective - prev_objective) /
-                                   max(1.0, fabs(prev_objective));
+
+        /* Compare the short and long running averages of the objective so
+        that convergence is judged using denoised trends at two time scales
+        rather than noisy single-iteration values. */
+        if (objective_hist_size_long > 0)
+            running_objective_avg_long = running_objective_sum_long / (double)objective_hist_size_long;
+        else
+            running_objective_avg_long = HUGE_VAL;
+
+        if (objective_hist_size_short > 0)
+            running_objective_avg_short = running_objective_sum_short / (double)objective_hist_size_short;
+        else
+            running_objective_avg_short = HUGE_VAL;
+
+        if (objective_hist_size_long > 0 && objective_hist_size_short > 0) {
+            rel_objective_change = fabs(running_objective_avg_short - running_objective_avg_long) /
+                                   max(1.0, fabs(running_objective_avg_long));
         }
         else {
             rel_objective_change = HUGE_VAL;
@@ -503,21 +533,48 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Record the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
-        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g",
+        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g",
                 step,
                 model->objective,
+                running_objective_avg_long,
+                running_objective_avg_short,
                 rel_objective_change,
+                stable_steps,
                 metrics.grad_norm,
                 model->sigma2_obs);
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
-        fprintf(logf, "\t%.17g\t%.17g\t%d\n",
+        fprintf(logf, "\t%.17g\t%.17g\n",
                 gex_model_matrix_norm(model->Z),
-                gex_model_matrix_norm(model->L),
-                stable_steps);
+                gex_model_matrix_norm(model->L));
         fflush(logf);
 
-        prev_objective = model->objective;
+        /* Update both moving-average histories online in O(1) time so the
+        denoised convergence diagnostics do not slow optimization. */
+        if (objective_hist_size_long < running_avg_window_long) {
+            objective_hist_long[objective_hist_idx_long] = model->objective;
+            running_objective_sum_long += model->objective;
+            objective_hist_size_long++;
+        }
+        else {
+            running_objective_sum_long -= objective_hist_long[objective_hist_idx_long];
+            objective_hist_long[objective_hist_idx_long] = model->objective;
+            running_objective_sum_long += model->objective;
+        }
+        objective_hist_idx_long = (objective_hist_idx_long + 1) % running_avg_window_long;
+
+        if (objective_hist_size_short < running_avg_window_short) {
+            objective_hist_short[objective_hist_idx_short] = model->objective;
+            running_objective_sum_short += model->objective;
+            objective_hist_size_short++;
+        }
+        else {
+            running_objective_sum_short -= objective_hist_short[objective_hist_idx_short];
+            objective_hist_short[objective_hist_idx_short] = model->objective;
+            running_objective_sum_short += model->objective;
+        }
+        objective_hist_idx_short = (objective_hist_idx_short + 1) % running_avg_window_short;
+
         if (stable_steps >= stable_steps_needed) {
             converged = 1;
             final_step = step;
@@ -540,12 +597,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Write a final footer line describing why optimization terminated and
     the convergence settings used for the run. */
-    fprintf(logf, "# termination\t%s\tfinal_step\t%d\tstable_steps\t%d\tmin_steps\t%d\tstable_steps_needed\t%d\trel_objective_tol\t%.17g\n",
+    fprintf(logf, "# termination\t%s\tfinal_step\t%d\tstable_steps\t%d\tstable_steps_needed\t%d\tmin_steps\t%d\trel_objective_tol\t%.17g\n",
             (converged ? "converged" : "max_steps_reached"),
             final_step,
             stable_steps,
-            min_steps,
             stable_steps_needed,
+            min_steps,
             objective_tol);
     fflush(logf);
 
@@ -556,6 +613,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     free(grad_log_sigma_latent);
     free(m_log_sigma_latent);
     free(v_log_sigma_latent);
+    free(objective_hist_long);
+    free(objective_hist_short);
     if (grad_Z != NULL) mat_free(grad_Z);
     if (grad_L != NULL) mat_free(grad_L);
     if (mZ != NULL) mat_free(mZ);
