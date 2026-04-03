@@ -6,6 +6,8 @@
 #include <math.h>
 #include <phast/eigen.h>
 #include <phast/lists.h>
+#include <phast/misc.h>
+#include <phast/numerical_opt.h>
 #include <phast/stringsplus.h>
 
 /* -------------------- helpers -------------------- */
@@ -277,6 +279,149 @@ static double gex_loglik_centered_gaussian_cov(double *y,
     free(Sinv1);
     free(Sinvy);
     return ll;
+}
+
+typedef struct {
+    double *y;
+    Matrix *Sigma;
+    Matrix *Sigma_lambda;
+    Matrix *Sigma_inv;
+    Matrix *L;
+    double diag_mean;
+    double jitter;
+} GexPagelsLambdaOptData;
+
+/* Compute the log-likelihood under a Pagel's lambda style covariance model.
+The diagonal entries are held fixed at the common tip variance and the
+off-diagonal entries are scaled by lambda. */
+static double gex_loglik_pagels_lambda_cov(double *y,
+                                           Matrix *Sigma,
+                                           double diag_mean,
+                                           double jitter,
+                                           double lambda,
+                                           Matrix *Sigma_lambda,
+                                           Matrix *Sigma_inv,
+                                           Matrix *L) {
+    int i, j, n;
+    double logdet_sigma = 0.0;
+
+    n = Sigma->nrows;
+    if (lambda < 0.0 || lambda > 1.0)
+        return -HUGE_VAL;
+
+    /* Build the lambda-transformed covariance matrix.
+    For ultrametric trees, all diagonals should match, so keeping a common
+    diagonal value makes lambda = 0 correspond to the null model up to scale. */
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++) {
+            if (i == j)
+                mat_set(Sigma_lambda, i, j, diag_mean + jitter);
+            else
+                mat_set(Sigma_lambda, i, j, lambda * mat_get(Sigma, i, j));
+        }
+    }
+
+    if (mat_invert(Sigma_inv, Sigma_lambda) != 0)
+        return -HUGE_VAL;
+    if (mat_cholesky(L, Sigma_lambda) != 0)
+        return -HUGE_VAL;
+
+    for (i = 0; i < n; i++) {
+        double diag = mat_get(L, i, i);
+        if (diag <= 0.0)
+            return -HUGE_VAL;
+        logdet_sigma += 2.0 * log(diag);
+    }
+
+    return gex_loglik_centered_gaussian_cov(y, Sigma_lambda, Sigma_inv, logdet_sigma);
+}
+
+/* Objective function for fitting Pagel's lambda by one-dimensional numerical optimization. */
+static double gex_pagels_lambda_negloglik(double lambda, void *data) {
+    GexPagelsLambdaOptData *d = (GexPagelsLambdaOptData *)data;
+    double ll = gex_loglik_pagels_lambda_cov(d->y,
+                                             d->Sigma,
+                                             d->diag_mean,
+                                             d->jitter,
+                                             lambda,
+                                             d->Sigma_lambda,
+                                             d->Sigma_inv,
+                                             d->L);
+
+    if (!isfinite(ll))
+        return HUGE_VAL;
+    return -ll;
+}
+
+/* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
+Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
+static double gex_fit_pagels_lambda_loglik(double *y,
+                                           Matrix *Sigma,
+                                           double jitter,
+                                           Matrix *Sigma_lambda,
+                                           Matrix *Sigma_inv,
+                                           Matrix *L,
+                                           double *lambda_hat) {
+    int i, status;
+    double diag_mean = 0.0;
+    double lambda;
+    double fx;
+    double fx0;
+    double fx1;
+    double best_lambda;
+    double best_fx;
+    GexPagelsLambdaOptData data;
+
+    for (i = 0; i < Sigma->nrows; i++)
+        diag_mean += mat_get(Sigma, i, i);
+    diag_mean /= (double)Sigma->nrows;
+
+    data.y = y;
+    data.Sigma = Sigma;
+    data.Sigma_lambda = Sigma_lambda;
+    data.Sigma_inv = Sigma_inv;
+    data.L = L;
+    data.diag_mean = diag_mean;
+    data.jitter = jitter;
+
+    /* Explicitly evaluate both boundaries because lambda is allowed to sit on
+    the edge of the parameter space and the mixture null depends on that case. */
+    fx0 = gex_pagels_lambda_negloglik(0.0, &data);
+    fx1 = gex_pagels_lambda_negloglik(1.0, &data);
+    if (fx0 <= fx1) {
+        best_fx = fx0;
+        best_lambda = 0.0;
+    }
+    else {
+        best_fx = fx1;
+        best_lambda = 1.0;
+    }
+
+    lambda = 0.5;
+    fx = gex_pagels_lambda_negloglik(lambda, &data);
+    status = opt_newton_1d(gex_pagels_lambda_negloglik,
+                           &lambda,
+                           &data,
+                           &fx,
+                           6,
+                           0.0,
+                           1.0,
+                           NULL,
+                           NULL,
+                           NULL);
+
+    if (isfinite(fx) && fx < best_fx) {
+        best_fx = fx;
+        best_lambda = lambda;
+    }
+
+    /* If the optimizer does not fully converge, still retain the best valid
+    value found among the boundary and interior evaluations. */
+    if (status != 0 && !isfinite(best_fx))
+        return -HUGE_VAL;
+
+    *lambda_hat = best_lambda;
+    return -best_fx;
 }
 
 /* Standardize the columns of a gene expression matrix by
@@ -1228,27 +1373,22 @@ int gex_write_morans_tsv(const char *filename,
 
    For each gene, the function computes the log-likelihood under both models
    and forms the likelihood ratio statistic LRT = 2 * (logLik_alt - logLik_null).
-   P-values are obtained either from a chi-squared(1) approximation or via
-   Monte Carlo simulation under the null. Returns a pointer to the result 
-   structure or NULL on failure.
-
-   TODO: Implement the Pagel's Lambda version of the LRT to allow detection of
-   partial phylogenetic signal in the data with the alternative model
-   as y ~ N(mu, sigma^2 * (lambda * Sigma + (1-lambda) * I))) This would 
-   require numerical optimization to find the MLE of lambda for each gene, 
-   which could be computationally intensive but eliminates the need for monte 
-   carlo to estimate p-values, instead using the asymptotic mixture distribution 
-   of ((1/2) chi2 with dof=0) + ((1/2)chi2 with dof=1).
+   P-values are obtained either from Monte Carlo simulation under the null
+   for the full Brownian alternative or from the standard 50:50 mixture of
+   chi-square with 1 dof and a point mass at zero for the Pagel's lambda
+   alternative. Returns a pointer to the result structure or NULL on failure.
 */
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        Matrix *Sigma,
                                        int n_mc,
-                                       unsigned int seed) {
+                                       unsigned int seed,
+                                       GexLRTAltMode alt_mode) {
     int i, j;   /* Loop indices */
     int n;  /* Number of cells */
     Matrix *Sigma_reg = NULL;   /* Regularized covariance matrix */
     Matrix *Sigma_inv = NULL;   /* Inverse of the regularized covariance matrix */
     Matrix *L = NULL;   /* Cholesky factor of the regularized covariance matrix */
+    Matrix *Sigma_lambda = NULL;   /* Lambda-transformed covariance matrix */
     GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
     double logdet_sigma = 0.0;  /* Log determinant of the regularized covariance matrix */
     double max_diag = 0.0;  /* Maximum diagonal element of the covariance matrix */
@@ -1258,7 +1398,9 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     unsigned int rng_state; /* Random number generator state */
 
     if (gex == NULL || gex->X == NULL || Sigma == NULL ||
-        Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells || n_mc <= 0) {
+        Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells ||
+        alt_mode < GEX_LRT_ALT_FULL || alt_mode > GEX_LRT_ALT_LAMBDA ||
+        (alt_mode == GEX_LRT_ALT_FULL && n_mc <= 0)) {
         fprintf(stderr, "ERROR: gex_compute_brownian_lrt got invalid input\n");
         return NULL;
     }
@@ -1268,10 +1410,14 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     Sigma_reg = mat_new(n, n);
     Sigma_inv = mat_new(n, n);
     L = mat_new(n, n);
-    if (Sigma_reg == NULL || Sigma_inv == NULL || L == NULL) {
+    if (alt_mode == GEX_LRT_ALT_LAMBDA)
+        Sigma_lambda = mat_new(n, n);
+    if (Sigma_reg == NULL || Sigma_inv == NULL || L == NULL ||
+        (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambda == NULL)) {
         if (Sigma_reg != NULL) mat_free(Sigma_reg);
         if (Sigma_inv != NULL) mat_free(Sigma_inv);
         if (L != NULL) mat_free(L);
+        if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
         return NULL;
     }
 
@@ -1290,45 +1436,52 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
     }
 
-    /* Invert the regularized covariance matrix */
-    if (mat_invert(Sigma_inv, Sigma_reg) != 0) {
-        fprintf(stderr, "ERROR: failed to invert Brownian covariance matrix for LRT\n");
-        mat_free(Sigma_reg);
-        mat_free(Sigma_inv);
-        mat_free(L);
-        return NULL;
-    }
-    if (mat_cholesky(L, Sigma_reg) != 0) {
-        fprintf(stderr, "ERROR: failed to Cholesky Brownian covariance matrix for LRT\n");
-        mat_free(Sigma_reg);
-        mat_free(Sigma_inv);
-        mat_free(L);
-        return NULL;
-    }
-
-    /* Compute the log determinant of the regularized covariance matrix */
-    for (i = 0; i < n; i++) {
-        double diag = mat_get(L, i, i);
-        if (diag <= 0.0) {
+    if (alt_mode == GEX_LRT_ALT_FULL) {
+        /* Invert the regularized covariance matrix */
+        if (mat_invert(Sigma_inv, Sigma_reg) != 0) {
+            fprintf(stderr, "ERROR: failed to invert Brownian covariance matrix for LRT\n");
             mat_free(Sigma_reg);
             mat_free(Sigma_inv);
             mat_free(L);
+            if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
             return NULL;
         }
-        logdet_sigma += 2.0 * log(diag);
+        if (mat_cholesky(L, Sigma_reg) != 0) {
+            fprintf(stderr, "ERROR: failed to Cholesky Brownian covariance matrix for LRT\n");
+            mat_free(Sigma_reg);
+            mat_free(Sigma_inv);
+            mat_free(L);
+            if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
+            return NULL;
+        }
+
+        /* Compute the log determinant of the regularized covariance matrix */
+        for (i = 0; i < n; i++) {
+            double diag = mat_get(L, i, i);
+            if (diag <= 0.0) {
+                mat_free(Sigma_reg);
+                mat_free(Sigma_inv);
+                mat_free(L);
+                if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
+                return NULL;
+            }
+            logdet_sigma += 2.0 * log(diag);
+        }
     }
 
     /* Initialize result structure and temporary vectors for the LRT computation */
     res = (GexLRTResult *)calloc(1, sizeof(GexLRTResult));
     y = (double *)malloc(n * sizeof(double));
-    y_sim = (double *)malloc(n * sizeof(double));
-    if (res == NULL || y == NULL || y_sim == NULL) {
+    if (alt_mode == GEX_LRT_ALT_FULL)
+        y_sim = (double *)malloc(n * sizeof(double));
+    if (res == NULL || y == NULL || (alt_mode == GEX_LRT_ALT_FULL && y_sim == NULL)) {
         free(y);
         free(y_sim);
         free(res);
         mat_free(Sigma_reg);
         mat_free(Sigma_inv);
         mat_free(L);
+        if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
         return NULL;
     }
     res->ll_null = (double *)calloc(gex->n_genes, sizeof(double));
@@ -1345,6 +1498,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         mat_free(Sigma_reg);
         mat_free(Sigma_inv);
         mat_free(L);
+        if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
         return NULL;
     }
 
@@ -1368,41 +1522,60 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         res->ll_null[j] = ll_null;
 
         /* Compute the log-likelihood under the alternative model */
-        ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
+        if (alt_mode == GEX_LRT_ALT_FULL) {
+            ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
+        }
+        else {
+            double lambda_hat = 0.0;
+            ll_alt = gex_fit_pagels_lambda_loglik(y,
+                                                  Sigma,
+                                                  jitter,
+                                                  Sigma_lambda,
+                                                  Sigma_inv,
+                                                  L,
+                                                  &lambda_hat);
+        }
         res->ll_alt[j] = ll_alt;
 
         /* Compute the LRT statistic */
         res->lrt_stat[j] = 2.0 * (ll_alt - ll_null);
 
-        /* Estimate p-values by simulating data under the null model to
-        use a monte carlo estimate */
-        int ge_count = 0;
-        int rep;
-        for (rep = 0; rep < n_mc; rep++) {
-            double ll0_sim;
-            double ll1_sim;
-            double stat_sim;
-            for (i = 0; i < n; i++)
-                /* Draw simulated data independently from the null model N(μ0, σ20) */
-                y_sim[i] = mu0 + sqrt(sigma20) * gex_rand_normal(&rng_state);
+        if (alt_mode == GEX_LRT_ALT_FULL) {
+            /* Estimate p-values by simulating data under the null model to
+            use a monte carlo estimate. */
+            int ge_count = 0;
+            int rep;
+            for (rep = 0; rep < n_mc; rep++) {
+                double ll0_sim;
+                double ll1_sim;
+                double stat_sim;
+                for (i = 0; i < n; i++)
+                    /* Draw simulated data independently from the null model N(μ0, σ20) */
+                    y_sim[i] = mu0 + sqrt(sigma20) * gex_rand_normal(&rng_state);
 
-            /* Re-calculate the mean and variance of the simulated gene expression data.
-            This is necessary because we only simulate finite samples, so we are not guaranteed
-            to have the generating distribution mean and variance parameters exactly. */
-            calculate_mean_variance(y_sim, n, &mu0, &sigma20);
+                /* Re-calculate the mean and variance of the simulated gene expression data.
+                This is necessary because we only simulate finite samples, so we are not guaranteed
+                to have the generating distribution mean and variance parameters exactly. */
+                calculate_mean_variance(y_sim, n, &mu0, &sigma20);
 
-            /* Compute the log-likelihood under the null model */
-            ll0_sim = gex_loglik_centered_gaussian_identity(n, sigma20);
+                /* Compute the log-likelihood under the null model */
+                ll0_sim = gex_loglik_centered_gaussian_identity(n, sigma20);
 
-            /* Compute the log-likelihood under the alternative model */
-            ll1_sim = gex_loglik_centered_gaussian_cov(y_sim, Sigma_reg, Sigma_inv, logdet_sigma);
+                /* Compute the log-likelihood under the alternative model */
+                ll1_sim = gex_loglik_centered_gaussian_cov(y_sim, Sigma_reg, Sigma_inv, logdet_sigma);
 
-            /* Compute the LRT statistic for the simulated data */
-            stat_sim = 2.0 * (ll1_sim - ll0_sim);
-            if (stat_sim >= res->lrt_stat[j])
-                ge_count++;
+                /* Compute the LRT statistic for the simulated data */
+                stat_sim = 2.0 * (ll1_sim - ll0_sim);
+                if (stat_sim >= res->lrt_stat[j])
+                    ge_count++;
+            }
+            res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_mc + 1.0);
         }
-        res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_mc + 1.0);
+        else {
+            /* Under the boundary null lambda = 0, use the standard 50:50
+            mixture of a point mass at zero and chi-square with 1 dof. */
+            res->pvals[j] = half_chisq_cdf(res->lrt_stat[j], 1.0, FALSE);
+        }
     }
 
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
@@ -1413,6 +1586,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     mat_free(Sigma_reg);
     mat_free(Sigma_inv);
     mat_free(L);
+    if (Sigma_lambda != NULL)
+        mat_free(Sigma_lambda);
     return res;
 }
 

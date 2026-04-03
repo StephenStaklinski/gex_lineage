@@ -25,6 +25,18 @@ static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
     return -1;
 }
 
+static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
+    if (strcmp(s, "full") == 0) {
+        *mode_out = GEX_LRT_ALT_FULL;
+        return 0;
+    }
+    if (strcmp(s, "lambda") == 0) {
+        *mode_out = GEX_LRT_ALT_LAMBDA;
+        return 0;
+    }
+    return -1;
+}
+
 /* Print command line usage information to stderr. */
 static void usage(const char *progname) {
     fprintf(stderr,
@@ -34,6 +46,7 @@ static void usage(const char *progname) {
         "--outprefix <prefix> "
         "[--tree-total-time T] "
         "[--filter-test moran|lrt|both] "
+        "[--lrt-alt full|lambda] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -59,6 +72,7 @@ int main(int argc, char *argv[]) {
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
+    GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_FULL;   /* Which alternative model to use for the Brownian LRT */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -120,6 +134,16 @@ int main(int argc, char *argv[]) {
                 goto cleanup;
             }
             pca_var_threshold = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--lrt-alt") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                goto cleanup;
+            }
+            if (parse_lrt_alt_mode(argv[++i], &lrt_alt_mode) != 0) {
+                fprintf(stderr, "ERROR: --lrt-alt must be one of full, lambda\n");
+                goto cleanup;
+            }
         }
         else if (strcmp(argv[i], "--n-perms") == 0) {
             if (i + 1 >= argc) {
@@ -237,6 +261,7 @@ int main(int argc, char *argv[]) {
                                        n_sims,
                                        n_sims,
                                        filter_mode,
+                                       lrt_alt_mode,
                                        n_perms,
                                        max_q,
                                        moran_min_i,
@@ -270,7 +295,7 @@ int main(int argc, char *argv[]) {
 
     /* Run the phylogenetic LRT filter tests if requested */
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-        lrt = gex_compute_brownian_lrt(gex, Sigma, n_perms, seed);
+        lrt = gex_compute_brownian_lrt(gex, Sigma, n_perms, seed, lrt_alt_mode);
         if (lrt == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics\n");
             goto cleanup;

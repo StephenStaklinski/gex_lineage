@@ -511,6 +511,7 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   int n_tree_genes,
                                   int n_null_genes,
                                   GexFilterMode mode,
+                                  GexLRTAltMode lrt_alt_mode,
                                   int n_perm,
                                   double max_q,
                                   double min_i,
@@ -538,7 +539,8 @@ int brownian_run_simulation_check(TreeNode *tree,
     if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
         lrt = (Sigma == NULL ? NULL : gex_compute_brownian_lrt(sim, Sigma,
                                                                n_perm,
-                                                               seed + 31u));
+                                                               seed + 31u,
+                                                               lrt_alt_mode));
 
     if (Sigma == NULL ||
         ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && (morans == NULL || W == NULL)) ||

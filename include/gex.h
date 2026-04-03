@@ -43,6 +43,11 @@ typedef enum {
     GEX_LRT_NULL_CHI2 = 1
 } GexLRTNullMode;
 
+typedef enum {
+    GEX_LRT_ALT_FULL = 0,
+    GEX_LRT_ALT_LAMBDA = 1
+} GexLRTAltMode;
+
 TreeNode **gex_read_nexus(const char *filename, int *n_trees);
 
 int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol);
@@ -82,7 +87,8 @@ void gex_free_morans_result(GexMoransResult *res);
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        Matrix *Sigma,
                                        int n_mc,
-                                       unsigned int seed);
+                                       unsigned int seed,
+                                       GexLRTAltMode alt_mode);
 
 void gex_print_lrt_summary(GexLRTResult *res,
                            GexMatrix *gex,
