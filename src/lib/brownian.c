@@ -518,6 +518,7 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   Matrix *Sigma,
                                   Matrix *W,
                                   unsigned int seed) {
+    int status = 0;   /* Assume failure to start */
     int j;
     int tp = 0, fn = 0, fp = 0, tn = 0;
     GexMatrix *sim = NULL;  /* Simulated gene expression matrix */
@@ -542,10 +543,7 @@ int brownian_run_simulation_check(TreeNode *tree,
     if (Sigma == NULL || W == NULL ||
         ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && morans == NULL) ||
         ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) && lrt == NULL)) {
-        gex_free_matrix_data(sim);
-        if (morans != NULL) gex_free_morans_result(morans);
-        if (lrt != NULL) gex_free_lrt_result(lrt);
-        return 0;
+        goto cleanup_simulation_check;
     }
 
     /* Evaluate the performance of the filter(s) */
@@ -587,11 +585,16 @@ int brownian_run_simulation_check(TreeNode *tree,
     printf("\n");
 
     /* Free allocated memory */
-    gex_free_matrix_data(sim);
-    gex_free_morans_result(morans);
-    gex_free_lrt_result(lrt);
+    goto cleanup_simulation_check;
 
-    return (fn == 0 && fp == 0);    /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
+    status = (fn == 0 && fp == 0);
+    return status;    /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
+
+    cleanup_simulation_check:
+        gex_free_matrix_data(sim);
+        gex_free_morans_result(morans);
+        gex_free_lrt_result(lrt);
+        return status;
 }
 
 /* Print a summary of the covariance matrix. */
