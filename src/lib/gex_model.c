@@ -15,6 +15,8 @@ typedef struct {
     double logdet_sigma;
 } GexLatentBrownianWorkspace;
 
+/* Center the columns of a matrix by subtracting the mean of each column.
+Returns a newly allocated centered matrix or NULL on failure. */
 static Matrix *gex_model_center_matrix(Matrix *X) {
     int i, j;
     int n = X->nrows;
@@ -26,7 +28,8 @@ static Matrix *gex_model_center_matrix(Matrix *X) {
     Xc = mat_new(n, p);
     if (means == NULL || Xc == NULL) {
         free(means);
-        if (Xc != NULL) mat_free(Xc);
+        if (Xc != NULL)
+            mat_free(Xc);
         return NULL;
     }
 
@@ -45,84 +48,6 @@ static Matrix *gex_model_center_matrix(Matrix *X) {
     return Xc;
 }
 
-static int gex_model_setup_workspace(Matrix *Sigma, GexLatentBrownianWorkspace *ws) {
-    int i, j, n;
-    Matrix *L = NULL;
-    double max_diag = 0.0;
-    double jitter;
-    if (Sigma == NULL || Sigma->nrows != Sigma->ncols)
-        return -1;
-
-    n = Sigma->nrows;
-    ws->Sigma_reg = mat_new(n, n);
-    ws->Sigma_inv = mat_new(n, n);
-    L = mat_new(n, n);
-    if (ws->Sigma_reg == NULL || ws->Sigma_inv == NULL || L == NULL) {
-        if (ws->Sigma_reg != NULL) mat_free(ws->Sigma_reg);
-        if (ws->Sigma_inv != NULL) mat_free(ws->Sigma_inv);
-        if (L != NULL) mat_free(L);
-        return -1;
-    }
-
-    for (i = 0; i < n; i++) {
-        double d = mat_get(Sigma, i, i);
-        if (d > max_diag)
-            max_diag = d;
-    }
-    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
-
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            mat_set(ws->Sigma_reg, i, j, mat_get(Sigma, i, j));
-        mat_set(ws->Sigma_reg, i, i, mat_get(ws->Sigma_reg, i, i) + jitter);
-    }
-
-    if (mat_invert(ws->Sigma_inv, ws->Sigma_reg) != 0 ||
-        mat_cholesky(L, ws->Sigma_reg) != 0) {
-        mat_free(ws->Sigma_reg);
-        mat_free(ws->Sigma_inv);
-        mat_free(L);
-        return -1;
-    }
-
-    ws->logdet_sigma = 0.0;
-    for (i = 0; i < n; i++)
-        ws->logdet_sigma += 2.0 * log(mat_get(L, i, i));
-
-    mat_free(L);
-    return 0;
-}
-
-static void gex_model_free_workspace(GexLatentBrownianWorkspace *ws) {
-    if (ws->Xc != NULL) mat_free(ws->Xc);
-    if (ws->Sigma_reg != NULL) mat_free(ws->Sigma_reg);
-    if (ws->Sigma_inv != NULL) mat_free(ws->Sigma_inv);
-}
-
-static GexLatentBrownianModel *gex_model_new(int n_cells, int n_genes, int k) {
-    int i;
-    GexLatentBrownianModel *model = NULL;
-
-    model = (GexLatentBrownianModel *)calloc(1, sizeof(GexLatentBrownianModel));
-    if (model == NULL)
-        return NULL;
-
-    model->n_cells = n_cells;
-    model->n_genes = n_genes;
-    model->k = k;
-    model->Z = mat_new(n_cells, k);
-    model->L = mat_new(k, n_genes);
-    model->sigma2_latent = (double *)calloc(k, sizeof(double));
-    if (model->Z == NULL || model->L == NULL || model->sigma2_latent == NULL) {
-        gex_free_latent_brownian_model(model);
-        return NULL;
-    }
-    for (i = 0; i < k; i++)
-        model->sigma2_latent[i] = 1.0;
-    model->sigma2_obs = 1.0;
-
-    return model;
-}
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            GexLatentBrownianWorkspace *ws,
                                            Matrix *grad_Z,
@@ -280,46 +205,114 @@ static void gex_model_adam_update_vector(double *param,
     }
 }
 
+/* Main model entry point. Fit a latent Brownian model to the given gene expression data.
+Returns a pointer to the fitted model or NULL on failure. */
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix *Sigma,
                                                       GexPCA *pca,
                                                       unsigned int seed) {
-    int i, j, d;
-    int step;
-    int total_steps = 250;
-    int k;
-    double log_sigma_obs;
-    double *log_sigma_latent = NULL;
-    double *grad_log_sigma_latent = NULL;
-    double *m_log_sigma_latent = NULL;
-    double *v_log_sigma_latent = NULL;
-    double grad_log_sigma_obs = 0.0;
-    double m_log_sigma_obs = 0.0;
-    double v_log_sigma_obs = 0.0;
-    GexLatentBrownianWorkspace ws;
-    GexLatentBrownianModel *model = NULL;
-    Matrix *grad_Z = NULL, *grad_L = NULL, *mZ = NULL, *vZ = NULL, *mL = NULL, *vL = NULL;
-    Scheduler *sched = NULL;
-    SchedState *sched_state = NULL;
-    SchedDirectives directives;
-    SchedMetrics metrics;
+    int i, j, d, n;    /* Loop indices */
+    int step;   /* Optimization step */
+    int total_steps = 250;  /* Total number of optimization steps */
+    int k;  /* Number of latent dimensions */
+    int n_cells = gex->n_cells;
+    int n_genes = gex->n_genes;
+    int success = 0;   /* Whether the model fitting completed successfully */
+    double log_sigma_obs;   /* Log of observation noise standard deviation */
+    double *log_sigma_latent = NULL;    /* Log of latent noise standard deviations */
+    double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
+    double *m_log_sigma_latent = NULL;  /* Adam optimizer moment estimates for latent noise */
+    double *v_log_sigma_latent = NULL;  /* Adam optimizer variance estimates for latent noise */
+    double grad_log_sigma_obs = 0.0;    /* Gradient of log observation noise standard deviation */
+    double m_log_sigma_obs = 0.0;   /* Adam optimizer moment estimate for observation noise */
+    double v_log_sigma_obs = 0.0;   /* Adam optimizer variance estimate for observation noise */
+    GexLatentBrownianWorkspace ws;  /* Workspace for precomputed matrices and intermediate calculations */
+    GexLatentBrownianModel *model = NULL;   /* Fitted model */
+    Matrix *grad_Z = NULL, *grad_L = NULL, *mZ = NULL, *vZ = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
+    Scheduler *sched = NULL;    /* Scheduler for managing optimization steps */
+    SchedState *sched_state = NULL; /* State for the scheduler */
+    SchedDirectives directives; /* Directives for each optimization step */
+    SchedMetrics metrics;   /* Metrics for each optimization step */
+    Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
+    double max_diag = 0.0;  /* Maximum diagonal element of Sigma */
+    double jitter;  /* Diagonal jitter used for numerical stability */
 
-    if (gex == NULL || Sigma == NULL || pca == NULL || pca->K <= 0)
+    /* Input validation */
+    if (gex == NULL || gex->X == NULL || Sigma == NULL || pca == NULL || pca->K <= 0)
+        return NULL;
+    if (Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells)
         return NULL;
 
+    /* Initialize workspace containers for the centered data matrix and the
+    inverse/log-determinant calculations based on the phylogenetic covariance. */
     memset(&ws, 0, sizeof(ws));
+
+    /* Center the expression matrix by subtracting the mean of each gene.
+    This ensures the latent factor model is fit to the residual structure
+    after removing per-gene offsets. */
     ws.Xc = gex_model_center_matrix(gex->X);
-    if (ws.Xc == NULL || gex_model_setup_workspace(Sigma, &ws) != 0) {
-        gex_model_free_workspace(&ws);
-        return NULL;
+    if (ws.Xc == NULL)
+        goto cleanup_fit_latent_brownian_model;
+
+    /* Build a regularized version of the phylogenetic covariance matrix and
+    precompute its inverse and log-determinant for repeated use during fitting. */
+    n = Sigma->nrows;
+    ws.Sigma_reg = mat_new(n, n);
+    ws.Sigma_inv = mat_new(n, n);
+    L = mat_new(n, n);
+    if (ws.Sigma_reg == NULL || ws.Sigma_inv == NULL || L == NULL)
+        goto cleanup_fit_latent_brownian_model;
+
+    for (i = 0; i < n; i++) {
+        double d = mat_get(Sigma, i, i);
+        if (d > max_diag)
+            max_diag = d;
+    }
+    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            mat_set(ws.Sigma_reg, i, j, mat_get(Sigma, i, j));
+        mat_set(ws.Sigma_reg, i, i, mat_get(ws.Sigma_reg, i, i) + jitter);
     }
 
-    k = pca->K;
-    model = gex_model_new(gex->n_cells, gex->n_genes, k);
-    if (model == NULL) {
-        gex_model_free_workspace(&ws);
-        return NULL;
+    if (mat_invert(ws.Sigma_inv, ws.Sigma_reg) != 0 ||
+        mat_cholesky(L, ws.Sigma_reg) != 0)
+        goto cleanup_fit_latent_brownian_model;
+
+    ws.logdet_sigma = 0.0;
+    for (i = 0; i < n; i++) {
+        double diag = mat_get(L, i, i);
+        if (diag <= 0.0)
+            goto cleanup_fit_latent_brownian_model;
+        ws.logdet_sigma += 2.0 * log(diag);
     }
+
+    mat_free(L);
+    L = NULL;
+
+    /* Use the number of input PCA components as the number of latent dimensions */
+    k = pca->K; 
+
+    /* Allocate the model object and its core parameter matrices. */
+    model = (GexLatentBrownianModel *)calloc(1, sizeof(GexLatentBrownianModel));
+    if (model == NULL)
+        goto cleanup_fit_latent_brownian_model;
+    model->n_cells = n_cells;
+    model->n_genes = n_genes;
+    model->k = k;
+    model->Z = mat_new(n_cells, k);
+    model->L = mat_new(k, n_genes);
+    model->sigma2_latent = (double *)calloc(k, sizeof(double));
+    if (model->Z == NULL || model->L == NULL || model->sigma2_latent == NULL)
+        goto cleanup_fit_latent_brownian_model;
+    for (i = 0; i < k; i++)
+        model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
+    model->sigma2_obs = 1.0;
+
+    /* Initialize the latent coordinates from the centered data matrix using
+    simple standardized gene-derived starting vectors. This provides a stable
+    non-degenerate starting point for the optimizer. */
     for (d = 0; d < model->k; d++) {
         int src_gene = d % model->n_genes;
         double mean = 0.0;
@@ -343,6 +336,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 mat_set(model->Z, i, d, mat_get(model->Z, i, d) * scale);
         }
     }
+
+    /* Initialize the loading matrix by regressing each gene onto each latent
+    factor independently. This gives a reasonable first approximation to the
+    low-rank reconstruction before joint optimization. */
     for (d = 0; d < model->k; d++) {
         double denom = 1e-8;
         for (i = 0; i < model->n_cells; i++) {
@@ -371,6 +368,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             model->sigma2_obs = 1e-6;
     }
 
+    /* Allocate gradients, optimizer state, and log-variance parameterization
+    used during Adam optimization of the model parameters. */
     log_sigma_obs = log(model->sigma2_obs);
     log_sigma_latent = (double *)calloc(k, sizeof(double));
     grad_log_sigma_latent = (double *)calloc(k, sizeof(double));
@@ -385,21 +384,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (log_sigma_latent == NULL || grad_log_sigma_latent == NULL ||
         m_log_sigma_latent == NULL || v_log_sigma_latent == NULL ||
         grad_Z == NULL || grad_L == NULL || mZ == NULL || vZ == NULL ||
-        mL == NULL || vL == NULL) {
-        gex_free_latent_brownian_model(model);
-        gex_model_free_workspace(&ws);
-        free(log_sigma_latent);
-        free(grad_log_sigma_latent);
-        free(m_log_sigma_latent);
-        free(v_log_sigma_latent);
-        if (grad_Z != NULL) mat_free(grad_Z);
-        if (grad_L != NULL) mat_free(grad_L);
-        if (mZ != NULL) mat_free(mZ);
-        if (vZ != NULL) mat_free(vZ);
-        if (mL != NULL) mat_free(mL);
-        if (vL != NULL) mat_free(vL);
-        return NULL;
-    }
+        mL == NULL || vL == NULL)
+        goto cleanup_fit_latent_brownian_model;
 
     for (step = 0; step < k; step++)
         log_sigma_latent[step] = log(model->sigma2_latent[step]);
@@ -407,10 +393,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     mat_zero(mZ); mat_zero(vZ); mat_zero(mL); mat_zero(vL);
     (void)seed;
 
+    /* Initialize the scheduler that controls learning-rate and clipping
+    directives across optimization steps. */
     sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5);
     sched_state = sched_new_state(sched);
+    if (sched == NULL || sched_state == NULL)
+        goto cleanup_fit_latent_brownian_model;
     metrics.grad_norm = 0.0;
 
+    /* Run gradient-based optimization of latent coordinates, gene loadings,
+    and the variance parameters using Adam updates. */
     for (step = 1; step <= total_steps; step++) {
         int d;
 
@@ -465,14 +457,32 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
 
+    success = 1;
+
+    cleanup_fit_latent_brownian_model:
     free(log_sigma_latent);
     free(grad_log_sigma_latent);
     free(m_log_sigma_latent);
     free(v_log_sigma_latent);
-    mat_free(grad_Z); mat_free(grad_L); mat_free(mZ); mat_free(vZ); mat_free(mL); mat_free(vL);
-    free(sched_state);
-    free(sched);
-    gex_model_free_workspace(&ws);
+    if (grad_Z != NULL) mat_free(grad_Z);
+    if (grad_L != NULL) mat_free(grad_L);
+    if (mZ != NULL) mat_free(mZ);
+    if (vZ != NULL) mat_free(vZ);
+    if (mL != NULL) mat_free(mL);
+    if (vL != NULL) mat_free(vL);
+    if (sched_state != NULL) free(sched_state);
+    if (sched != NULL) free(sched);
+    if (L != NULL) mat_free(L);
+    if (ws.Xc != NULL) mat_free(ws.Xc);
+    if (ws.Sigma_reg != NULL) mat_free(ws.Sigma_reg);
+    if (ws.Sigma_inv != NULL) mat_free(ws.Sigma_inv);
+
+    if (!success) {
+        if (model != NULL)
+            gex_free_latent_brownian_model(model);
+        return NULL;
+    }
+
     return model;
 }
 
