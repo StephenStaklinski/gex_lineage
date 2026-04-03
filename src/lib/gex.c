@@ -1139,11 +1139,13 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
         return res;
 }
 
+/* Print a summary of the Moran's I results */
 void gex_print_morans_summary(GexMoransResult *res,
                               GexMatrix *gex,
                               double max_q,
                               double min_i) {
     int i, j;
+    int n_print = 10; /* Number of variable entries to print in each summary */
 
     if (res == NULL || gex == NULL) {
         fprintf(stderr, "ERROR: cannot summarize NULL Moran's I result\n");
@@ -1155,16 +1157,16 @@ void gex_print_morans_summary(GexMoransResult *res,
            max_q, min_i, gex_count_kept_genes(res, max_q, min_i));
 
     printf("First few entries of Moran's I gene-gene correlation matrix:\n");
-    for (i = 0; i < res->n_genes && i < 10; i++) {
+    for (i = 0; i < res->n_genes && i < n_print; i++) {
         printf("%s", gex->gene_names[i]);
-        for (j = 0; j < res->n_genes && j < 10; j++)
+        for (j = 0; j < res->n_genes && j < n_print; j++)
             printf("\t%g", mat_get(res->corr, i, j));
         printf("\n");
     }
 
     printf("\nFirst few gene-wise Moran's I statistics:\n");
     printf("gene\tI\tp\tq\tkeep\n");
-    for (j = 0; j < res->n_genes && j < 10; j++) {
+    for (j = 0; j < res->n_genes && j < n_print; j++) {
         int keep = (res->qvals[j] <= max_q && res->morans_i[j] > min_i);
         printf("%s\t%g\t%g\t%g\t%s\n",
                gex->gene_names[j],
@@ -1176,6 +1178,7 @@ void gex_print_morans_summary(GexMoransResult *res,
     printf("\n");
 }
 
+/* Write Moran's I results to a TSV file */
 int gex_write_morans_tsv(const char *filename,
                          GexMoransResult *res,
                          GexMatrix *gex,
