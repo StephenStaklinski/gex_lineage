@@ -551,26 +551,35 @@ int brownian_run_simulation_check(TreeNode *tree,
     /* Evaluate the performance of the filter(s) */
     for (j = 0; j < n_tree_genes; j++) {
         int keep = 0;
-        if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
-            keep = keep || (morans->qvals[j] <= max_q && morans->morans_i[j] > min_i);
-        if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
-            keep = keep || (lrt->qvals[j] <= max_q && lrt->lrt_stat[j] > 0.0);
+        if (mode == GEX_FILTER_MORAN) {
+            keep = (morans->qvals[j] <= max_q && morans->morans_i[j] > min_i);
+        } else if (mode == GEX_FILTER_LRT) {
+            keep = (lrt->qvals[j] <= max_q && lrt->lrt_stat[j] > 0.0);
+        } else if (mode == GEX_FILTER_BOTH) {
+            keep = (morans->qvals[j] <= max_q && morans->morans_i[j] > min_i) &&
+                (lrt->qvals[j] <= max_q && lrt->lrt_stat[j] > 0.0);
+        }
         if (keep) tp++;
         else fn++;
     }
+
     for (j = 0; j < n_null_genes; j++) {
         int idx = n_tree_genes + j;
         int keep = 0;
-        if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
-            keep = keep || (morans->qvals[idx] <= max_q && morans->morans_i[idx] > min_i);
-        if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
-            keep = keep || (lrt->qvals[idx] <= max_q && lrt->lrt_stat[idx] > 0.0);
+        if (mode == GEX_FILTER_MORAN) {
+            keep = (morans->qvals[idx] <= max_q && morans->morans_i[idx] > min_i);
+        } else if (mode == GEX_FILTER_LRT) {
+            keep = (lrt->qvals[idx] <= max_q && lrt->lrt_stat[idx] > 0.0);
+        } else if (mode == GEX_FILTER_BOTH) {
+            keep = (morans->qvals[idx] <= max_q && morans->morans_i[idx] > min_i) &&
+                (lrt->qvals[idx] <= max_q && lrt->lrt_stat[idx] > 0.0);
+        }
         if (keep) fp++;
         else tn++;
     }
 
     /* Print a summary of the simulation check results. */
-    printf("Brownian simulation check:\n");
+    printf("Phylogenetic signal filter(s) simulation check:\n");
     printf("  positives simulated: %d, detected: %d, missed: %d\n",
            n_tree_genes, tp, fn);
     printf("  negatives simulated: %d, rejected: %d, false positives: %d\n",
