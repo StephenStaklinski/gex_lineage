@@ -283,6 +283,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         return out;
 }
 
+/* Print a summary of the PCA results */
 void gex_print_pca_summary(GexPCA *pca) {
     int i;
     double cumulative = 0.0;
@@ -292,6 +293,7 @@ void gex_print_pca_summary(GexPCA *pca) {
         return;
     }
 
+    /* Report the variance explained by each component */
     printf("PCA variance explained:\n");
     for (i = 0; i < pca->K; i++) {
         cumulative += pca->var_explained[i];
