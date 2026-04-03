@@ -1495,12 +1495,16 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     }
     res->ll_null = (double *)calloc(gex->n_genes, sizeof(double));
     res->ll_alt = (double *)calloc(gex->n_genes, sizeof(double));
+    if (alt_mode == GEX_LRT_ALT_LAMBDA)
+        res->lambda_hat = (double *)calloc(gex->n_genes, sizeof(double));
     res->lrt_stat = (double *)calloc(gex->n_genes, sizeof(double));
     res->pvals = (double *)calloc(gex->n_genes, sizeof(double));
     res->qvals = (double *)calloc(gex->n_genes, sizeof(double));
+    res->alt_mode = alt_mode;
     res->n_genes = gex->n_genes;
     if (res->lrt_stat == NULL || res->pvals == NULL || res->qvals == NULL || 
-        res->ll_null == NULL || res->ll_alt == NULL) {
+        res->ll_null == NULL || res->ll_alt == NULL ||
+        (alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat == NULL)) {
         gex_free_lrt_result(res);
         free(y);
         free(y_sim);
@@ -1544,6 +1548,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                                   Sigma_inv,
                                                   L,
                                                   &lambda_hat);
+            res->lambda_hat[j] = lambda_hat;
         }
         res->ll_alt[j] = ll_alt;
 
@@ -1646,17 +1651,34 @@ int gex_write_lrt_tsv(const char *filename,
         return -1;
     }
 
-    fprintf(out, "gene\tll_null\tll_alt\tlrt_stat\tp_value\tq_value\tkeep\n");
+    if (res->alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat != NULL)
+        fprintf(out, "gene\tll_null\tll_alt\tlambda_hat\tlrt_stat\tp_value\tq_value\tkeep\n");
+    else
+        fprintf(out, "gene\tll_null\tll_alt\tlrt_stat\tp_value\tq_value\tkeep\n");
+
     for (i = 0; i < res->n_genes; i++) {
         int keep = (res->qvals[i] <= max_q && res->lrt_stat[i] > 0.0);
-        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
-                gex->gene_names[i],
-                res->ll_null[i],
-                res->ll_alt[i],
-                res->lrt_stat[i],
-                res->pvals[i],
-                res->qvals[i],
-                (keep ? "yes" : "no"));
+        if (res->alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat != NULL) {
+            fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
+                    gex->gene_names[i],
+                    res->ll_null[i],
+                    res->ll_alt[i],
+                    res->lambda_hat[i],
+                    res->lrt_stat[i],
+                    res->pvals[i],
+                    res->qvals[i],
+                    (keep ? "yes" : "no"));
+        }
+        else {
+            fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
+                    gex->gene_names[i],
+                    res->ll_null[i],
+                    res->ll_alt[i],
+                    res->lrt_stat[i],
+                    res->pvals[i],
+                    res->qvals[i],
+                    (keep ? "yes" : "no"));
+        }
     }
 
     fclose(out);
@@ -1693,6 +1715,8 @@ void gex_free_lrt_result(GexLRTResult *res) {
         free(res->ll_null);
     if (res->ll_alt != NULL)
         free(res->ll_alt);
+    if (res->lambda_hat != NULL)
+        free(res->lambda_hat);
     free(res);
 }
 

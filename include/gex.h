@@ -13,6 +13,16 @@ typedef struct {
     int n_genes;
 } GexMatrix;
 
+typedef enum {
+    GEX_LRT_NULL_MONTECARLO = 0,
+    GEX_LRT_NULL_CHI2 = 1
+} GexLRTNullMode;
+
+typedef enum {
+    GEX_LRT_ALT_FULL = 0,
+    GEX_LRT_ALT_LAMBDA = 1
+} GexLRTAltMode;
+
 typedef struct {
     Matrix *corr;
     double *morans_i;
@@ -25,9 +35,11 @@ typedef struct {
 typedef struct {
     double *ll_null;
     double *ll_alt;
+    double *lambda_hat;
     double *lrt_stat;
     double *pvals;
     double *qvals;
+    GexLRTAltMode alt_mode;
     int n_genes;
     int n_significant;
 } GexLRTResult;
@@ -37,16 +49,6 @@ typedef enum {
     GEX_FILTER_LRT = 1,
     GEX_FILTER_BOTH = 2
 } GexFilterMode;
-
-typedef enum {
-    GEX_LRT_NULL_MONTECARLO = 0,
-    GEX_LRT_NULL_CHI2 = 1
-} GexLRTNullMode;
-
-typedef enum {
-    GEX_LRT_ALT_FULL = 0,
-    GEX_LRT_ALT_LAMBDA = 1
-} GexLRTAltMode;
 
 TreeNode **gex_read_nexus(const char *filename, int *n_trees);
 
