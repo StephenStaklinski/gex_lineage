@@ -471,15 +471,18 @@ static void gex_scale_tree_recursive(TreeNode *node, double scale) {
     gex_scale_tree_recursive(node->rchild, scale);
 }
 
+/* Determine if a gene should be kept based on the specified 
+filter mode and thresholds. */
 static int gex_keep_gene(GexMoransResult *morans,
                          GexLRTResult *lrt,
                          int gene_idx,
                          GexFilterMode mode,
                          double max_q,
                          double min_i) {
-    int keep_moran = 0;
-    int keep_lrt = 0;
+    int keep_moran = 0; /* Flag indicating if the gene passes the Moran's I filter */
+    int keep_lrt = 0;   /* Flag indicating if the gene passes the LRT filter */
 
+    /* Apply the filters based on if the provided objects are not NULL */
     if (morans != NULL)
         keep_moran = (morans->qvals[gene_idx] <= max_q &&
                       morans->morans_i[gene_idx] > min_i);
@@ -487,6 +490,7 @@ static int gex_keep_gene(GexMoransResult *morans,
         keep_lrt = (lrt->qvals[gene_idx] <= max_q &&
                     lrt->lrt_stat[gene_idx] > 0.0);
 
+    /* Return the appropriate filter result based on the filter mode */
     if (mode == GEX_FILTER_MORAN)
         return keep_moran;
     if (mode == GEX_FILTER_LRT)
@@ -1507,16 +1511,21 @@ void gex_free_lrt_result(GexLRTResult *res) {
     free(res);
 }
 
+/* Filter genes based on LRT and Moran's I results 
+to keep only those passing the filter(s) with the 
+given significance and signal strength thresholds.
+Returns a pointer to a new GexMatrix containing only 
+the filtered genes. */
 GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                                        GexMoransResult *morans,
                                        GexLRTResult *lrt,
                                        GexFilterMode mode,
                                        double max_q,
                                        double min_i) {
-    int i, j;
-    int out_j = 0;
-    int nkeep = 0;
-    GexMatrix *out = NULL;
+    int i, j;   /* Loop indices */
+    int out_j = 0;  /* Index for the output matrix */
+    int nkeep = 0;  /* Number of genes retained */
+    GexMatrix *out = NULL;  /* Output matrix */
 
     if (gex == NULL)
         return NULL;
@@ -1527,19 +1536,20 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
         (lrt == NULL || gex->n_genes != lrt->n_genes))
         return NULL;
 
+    /* Count how many genes pass the filter(s) to determine the size of the output matrix */
     for (j = 0; j < gex->n_genes; j++) {
         if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i))
             nkeep++;
     }
     if (nkeep <= 0) {
-        fprintf(stderr, "ERROR: selected gene filter removed all genes\n");
+        fprintf(stderr, "ERROR: no genes passed the filter(s)\n");
         return NULL;
     }
 
+    /* Initialize the output matrix */
     out = (GexMatrix *)calloc(1, sizeof(GexMatrix));
     if (out == NULL)
         return NULL;
-
     out->n_cells = gex->n_cells;
     out->n_genes = nkeep;
     out->X = mat_new(out->n_cells, out->n_genes);
@@ -1550,6 +1560,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
         return NULL;
     }
 
+    /* Copy cell names */
     for (i = 0; i < out->n_cells; i++) {
         out->cell_names[i] = gex_strdup(gex->cell_names[i]);
         if (out->cell_names[i] == NULL) {
@@ -1558,13 +1569,16 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
         }
     }
 
+    /* Fill the output matrix with passing genes  */
     for (j = 0; j < gex->n_genes; j++) {
         if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i)) {
+            /* Copy gene name that passed the filter(s) */
             out->gene_names[out_j] = gex_strdup(gex->gene_names[j]);
             if (out->gene_names[out_j] == NULL) {
                 gex_free_matrix_data(out);
                 return NULL;
             }
+            /* Copy expression values for the passing gene */
             for (i = 0; i < gex->n_cells; i++)
                 mat_set(out->X, i, out_j, mat_get(gex->X, i, j));
             out_j++;
