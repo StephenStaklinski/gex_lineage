@@ -45,8 +45,8 @@ static void usage(const char *progname) {
         "--expr <matrix.tsv> "
         "--outprefix <prefix> "
         "[--tree-total-time T] "
-        "[--filter-test moran|lrt|both] "
-        "[--lrt-alt full|lambda] "
+        "[--filter-test lrt|moran|both] "
+        "[--lrt-alt lambda|full] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
-    GexFilterMode filter_mode = GEX_FILTER_MORAN;   /* Which test(s) to use for filtering genes before modeling */
+    GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
     int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
-    GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_FULL;   /* Which alternative model to use for the Brownian LRT */
+    GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
