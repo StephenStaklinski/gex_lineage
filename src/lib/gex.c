@@ -302,9 +302,10 @@ static double gex_loglik_pagels_lambda_cov(double *y,
                                            Matrix *Sigma_lambda,
                                            Matrix *Sigma_inv,
                                            Matrix *L) {
-    int i, j, n;
-    double logdet_sigma = 0.0;
+    int i, j, n;    /* Loop indices */
+    double logdet_sigma = 0.0;  /* Log determinant of the lambda-transformed covariance matrix */
 
+    /* Get the number of rows in the covariance matrix */
     n = Sigma->nrows;
     if (lambda < 0.0 || lambda > 1.0)
         return -HUGE_VAL;
@@ -321,11 +322,13 @@ static double gex_loglik_pagels_lambda_cov(double *y,
         }
     }
 
+    /* Compute the inverse and Cholesky decomposition of the lambda-transformed covariance matrix */
     if (mat_invert(Sigma_inv, Sigma_lambda) != 0)
         return -HUGE_VAL;
     if (mat_cholesky(L, Sigma_lambda) != 0)
         return -HUGE_VAL;
 
+    /* Compute the log determinant of the lambda-transformed covariance matrix */
     for (i = 0; i < n; i++) {
         double diag = mat_get(L, i, i);
         if (diag <= 0.0)
@@ -362,20 +365,22 @@ static double gex_fit_pagels_lambda_loglik(double *y,
                                            Matrix *Sigma_inv,
                                            Matrix *L,
                                            double *lambda_hat) {
-    int i, status;
-    double diag_mean = 0.0;
-    double lambda;
-    double fx;
-    double fx0;
-    double fx1;
-    double best_lambda;
-    double best_fx;
-    GexPagelsLambdaOptData data;
+    int i, status;  /* Loop index and optimization status */
+    double diag_mean = 0.0; /* Mean of the diagonal elements of the covariance matrix */
+    double lambda;  /* Parameter for Pagel's lambda */
+    double fx;  /* Objective function value */
+    double fx0; /* Objective function value at lambda = 0 (null model) */
+    double fx1; /* Objective function value at lambda = 1 (full model) */
+    double best_lambda; /* Best lambda value found among boundary and interior evaluations */
+    double best_fx; /* Best objective function value found among boundary and interior evaluations */
+    GexPagelsLambdaOptData data;    /* Data structure to pass to the objective function for optimization */
 
+    /* Compute the mean of the diagonal elements of the covariance matrix */
     for (i = 0; i < Sigma->nrows; i++)
         diag_mean += mat_get(Sigma, i, i);
     diag_mean /= (double)Sigma->nrows;
 
+    /* Set up the data structure for optimization */
     data.y = y;
     data.Sigma = Sigma;
     data.Sigma_lambda = Sigma_lambda;
@@ -397,8 +402,11 @@ static double gex_fit_pagels_lambda_loglik(double *y,
         best_lambda = 1.0;
     }
 
+    /* Evaluate the objective function starting at an interior point */
     lambda = 0.5;
     fx = gex_pagels_lambda_negloglik(lambda, &data);
+
+    /* Optimize the objective function using Newton's method */
     status = opt_newton_1d(gex_pagels_lambda_negloglik,
                            &lambda,
                            &data,
@@ -410,6 +418,7 @@ static double gex_fit_pagels_lambda_loglik(double *y,
                            NULL,
                            NULL);
 
+    /* If the optimizer converges to a finite value that is better than the boundary values, update the best solution */
     if (isfinite(fx) && fx < best_fx) {
         best_fx = fx;
         best_lambda = lambda;
@@ -1517,7 +1526,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         /* Calculate the mean and variance of the gene expression data */
         calculate_mean_variance(y, n, &mu0, &sigma20);
 
-        /* Compute the log-likelihood under the null model */
+        /* Compute the log-likelihood under the null model, which is the same
+        independent of the alternative model */
         ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
         res->ll_null[j] = ll_null;
 
