@@ -1228,8 +1228,9 @@ int gex_write_morans_tsv(const char *filename,
    Monte Carlo simulation under the null. Returns a pointer to the result 
    structure or NULL on failure.
 
-   TODO: Implement the Pagel's Lambda version of the LRT where the alternative 
-   model is y ~ N(mu, sigma^2 * (lambda * Sigma + (1-lambda) * I))) This would 
+   TODO: Implement the Pagel's Lambda version of the LRT to allow detection of
+   partial phylogenetic signal in the data with the alternative model
+   as y ~ N(mu, sigma^2 * (lambda * Sigma + (1-lambda) * I))) This would 
    require numerical optimization to find the MLE of lambda for each gene, 
    which could be computationally intensive but eliminates the need for monte 
    carlo to estimate p-values, instead using the asymptotic mixture distribution 
