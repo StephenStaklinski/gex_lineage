@@ -584,12 +584,12 @@ int brownian_run_simulation_check(TreeNode *tree,
            n_tree_genes, tp, fn);
     printf("  negatives simulated: %d, rejected: %d, false positives: %d\n",
            n_null_genes, tn, fp);
-    printf("\n");
+
+    status = (fn == 0 && fp == 0);
 
     /* Free allocated memory */
     goto cleanup_simulation_check;
 
-    status = (fn == 0 && fp == 0);
     return status;    /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
 
     cleanup_simulation_check:
@@ -612,6 +612,7 @@ void print_covariance_summary(Matrix *Sigma, char **names, int n) {
         return;
     }
 
+    printf("\n");
     printf("First few entries of covariance matrix:\n");
     for (i = 0; i < n && i < 10; i++) {
         printf("%s", names[i]);
@@ -631,6 +632,7 @@ void print_weight_matrix_summary(Matrix *W) {
         return;
     }
 
+    printf("\n");
     printf("First few entries of covariance-based weight matrix:\n");
     for (i = 0; i < W->nrows && i < 10; i++) {
         for (j = 0; j < W->ncols && j < 10; j++)

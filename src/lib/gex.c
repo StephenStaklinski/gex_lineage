@@ -10,8 +10,7 @@
 #include <phast/numerical_opt.h>
 #include <phast/stringsplus.h>
 
-/* -------------------- helpers -------------------- */
-
+/* Duplicate a string. */
 static char *gex_strdup(const char *s) {
     size_t n;
     char *out;
@@ -729,6 +728,7 @@ TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
     }
 
     *n_trees = count;
+
     return trees;
 }
 
@@ -969,6 +969,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
     }
 
     fclose(f);
+
     return gex;
 }
 
@@ -1000,12 +1001,8 @@ void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
     int i;
     int n_print = 10; /* Number of variable entries to print in each summary */
 
-    printf("Loaded %d tree(s)\n", n_trees);
-
     if (gex != NULL && gex->X != NULL) {
-        printf("Loaded matrix with %d cell(s) and %d gene(s)\n",
-               gex->n_cells, gex->n_genes);
-
+        printf("\n");
         printf("First few cell names:\n");
         for (i = 0; i < gex->n_cells && i < n_print; i++)
             printf("  %s\n", gex->cell_names[i]);
@@ -1161,6 +1158,15 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 
     gex_free_string_ptr_list(tree_names);
     gex_free_string_ptr_list(keep_names);
+
+    /* Print result summary */
+    if (n_keep < gex->n_cells) {
+        printf("After reconciling mismatched tree and expression matrix names, %d tree tip(s) and %d expression cell(s) are shared and kept for downstream analysis.\n\n",
+            subset->n_cells, subset->n_cells);
+    } else {
+        printf("All tree tip names and expression cell names match in the input data.\n");
+    }
+
     return 0;
 }
 
@@ -1310,6 +1316,7 @@ void gex_print_morans_summary(GexMoransResult *res,
         return;
     }
 
+    printf("\n");
     printf("Computed Moran's I correlation matrix for %d gene(s)\n", res->n_genes);
     printf("Genes passing filter (q <= %.4f and I > %.4f): %d\n",
            max_q, min_i, gex_count_kept_genes(res, max_q, min_i));
@@ -1616,6 +1623,7 @@ void gex_print_lrt_summary(GexLRTResult *res,
         return;
     }
 
+    printf("\n");
     printf("Computed Brownian LRT for %d gene(s)\n", res->n_genes);
     printf("Genes passing LRT filter (q <= %.4f): %d\n",
            max_q, gex_count_kept_lrt_genes(res, max_q));

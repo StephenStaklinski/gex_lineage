@@ -294,6 +294,7 @@ void gex_print_pca_summary(GexPCA *pca) {
     }
 
     /* Report the variance explained by each component */
+    printf("\n");
     printf("PCA variance explained:\n");
     for (i = 0; i < pca->K; i++) {
         cumulative += pca->var_explained[i];
@@ -304,6 +305,7 @@ void gex_print_pca_summary(GexPCA *pca) {
                cumulative,
                100.0 * cumulative);
     }
+    printf("\n");
 }
 
 void gex_free_pca(GexPCA *pca) {
