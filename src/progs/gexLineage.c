@@ -25,20 +25,6 @@ static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
     return -1;
 }
 
-/* Parse the LRT p-value calculation null mode from a string. Sets pointer to mode_out.
-Returns 0 on success or -1 on failure. */
-static int parse_lrt_null_mode(const char *s, GexLRTNullMode *mode_out) {
-    if (strcmp(s, "montecarlo") == 0) {
-        *mode_out = GEX_LRT_NULL_MONTECARLO;
-        return 0;
-    }
-    if (strcmp(s, "chi2") == 0) {
-        *mode_out = GEX_LRT_NULL_CHI2;
-        return 0;
-    }
-    return -1;
-}
-
 /* Print command line usage information to stderr. */
 static void usage(const char *progname) {
     fprintf(stderr,
@@ -48,7 +34,6 @@ static void usage(const char *progname) {
         "--outprefix <prefix> "
         "[--tree-total-time T] "
         "[--filter-test moran|lrt|both] "
-        "[--lrt-null montecarlo|chi2] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -64,7 +49,6 @@ int main(int argc, char *argv[]) {
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
     GexFilterMode filter_mode = GEX_FILTER_MORAN;   /* Which test(s) to use for filtering genes before modeling */
-    GexLRTNullMode lrt_null_mode = GEX_LRT_NULL_CHI2;   /* Which null mode to use for LRT p-value calculation */
     int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
@@ -125,16 +109,6 @@ int main(int argc, char *argv[]) {
             }
             if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
                 fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt, both\n");
-                goto cleanup;
-            }
-        }
-        else if (strcmp(argv[i], "--lrt-null") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                goto cleanup;
-            }
-            if (parse_lrt_null_mode(argv[++i], &lrt_null_mode) != 0) {
-                fprintf(stderr, "ERROR: --lrt-null must be one of montecarlo, chi2\n");
                 goto cleanup;
             }
         }
@@ -258,7 +232,6 @@ int main(int argc, char *argv[]) {
                                        n_sims,
                                        n_sims,
                                        filter_mode,
-                                       lrt_null_mode,
                                        n_perms,
                                        max_q,
                                        moran_min_i,
@@ -292,7 +265,7 @@ int main(int argc, char *argv[]) {
 
     /* Run the phylogenetic LRT filter tests if requested */
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-        lrt = gex_compute_brownian_lrt(gex, Sigma, lrt_null_mode, n_perms, seed);
+        lrt = gex_compute_brownian_lrt(gex, Sigma, n_perms, seed);
         if (lrt == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics\n");
             goto cleanup;

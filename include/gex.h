@@ -79,7 +79,6 @@ void gex_free_morans_result(GexMoransResult *res);
 
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        Matrix *Sigma,
-                                       GexLRTNullMode null_mode,
                                        int n_mc,
                                        unsigned int seed);
 

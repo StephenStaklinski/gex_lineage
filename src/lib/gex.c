@@ -142,7 +142,7 @@ static double gex_uniform_open(unsigned int *state) {
 static double gex_rand_normal(unsigned int *state) {
     double u1 = gex_uniform_open(state);
     double u2 = gex_uniform_open(state);
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2); 
 }
 
 /* Shuffle an array of doubles in place using the Fisher-Yates algorithm. */
@@ -173,36 +173,12 @@ static double gex_weighted_quadratic(Matrix *W, double *x, int n) {
     return out;
 }
 
-static double gex_chisq1_sf(double x) {
-    if (x <= 0.0)
-        return 1.0;
-    return erfc(sqrt(0.5 * x));
-}
-
-static double gex_loglik_centered_gaussian_identity(double *y, int n) {
-    int i;
-    double mean = 0.0;
-    double sse = 0.0;
-    double sigma2;
-
-    for (i = 0; i < n; i++)
-        mean += y[i];
-    mean /= (double)n;
-
-    for (i = 0; i < n; i++) {
-        double d = y[i] - mean;
-        sse += d * d;
-    }
-
-    sigma2 = sse / (double)n;
-    if (sigma2 < 1e-12)
-        sigma2 = 1e-12;
-
+static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
     return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
 }
 
-/* Get the mean and variance of vector y. */
-static void gex_calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_out) {
+/* Get the mean and (population) variance of vector y. */
+static void calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_out) {
     int i;
     double mean = 0.0;
     double sse = 0.0;
@@ -224,21 +200,25 @@ static void gex_calculate_mean_variance(double *y, int n, double *mean_out, doub
         *sigma2_out = 1e-12;
 }
 
+/* Compute the log-likelihood of a centered Gaussian with a general covariance matrix.
+Returns the log-likelihood value. */
 static double gex_loglik_centered_gaussian_cov(double *y,
                                                Matrix *Sigma,
                                                Matrix *Sigma_inv,
                                                double logdet_sigma) {
     int i, j, n;
-    double *Sinv1 = NULL;
-    double *Sinvy = NULL;
-    double quad = 0.0;
-    double ones_Sinv_ones = 0.0;
-    double ones_Sinv_y = 0.0;
-    double muhat;
-    double sigma2;
-    double ll;
+    double *Sinv1 = NULL;   /* Temporary vector Sinv1  = Sigma^{-1} * 1 */
+    double *Sinvy = NULL;   /* Temporary vector Sinvy = Sigma^{-1} * y */
+    double quad = 0.0;  /* Quadratic form (y - mu)^T Sigma^{-1} (y - mu) */
+    double ones_Sinv_ones = 0.0;  /* Scalar used to compute GLS estimate of the mean: 1^T Sigma^{-1} 1 */
+    double ones_Sinv_y = 0.0;     /* Scalars used to compute GLS estimate of the mean: 1^T Sigma^{-1} y */
+    double muhat;     /* Maximum likelihood estimate (MLE) of the mean under correlated Gaussian */
+    double sigma2;    /* MLE of variance scale parameter */
+    double ll;        /* Log-likelihood value */
 
-    n = Sigma->nrows;
+    n = Sigma->nrows;   /* Number of rows (cells) in the covariance matrix */
+
+    /* Allocate temporary vectors */
     Sinv1 = (double *)calloc(n, sizeof(double));
     Sinvy = (double *)calloc(n, sizeof(double));
     if (Sinv1 == NULL || Sinvy == NULL) {
@@ -247,32 +227,49 @@ static double gex_loglik_centered_gaussian_cov(double *y,
         return -HUGE_VAL;
     }
 
+    /* Compute:
+         Sinv1 = Sigma^{-1} * 1
+         Sinvy = Sigma^{-1} * y
+       and accumulate:
+         1^T Sigma^{-1} 1
+         1^T Sigma^{-1} y
+    */
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++) {
-            Sinv1[i] += mat_get(Sigma_inv, i, j);
-            Sinvy[i] += mat_get(Sigma_inv, i, j) * y[j];
+            double Sinv_ij = mat_get(Sigma_inv, i, j);
+            Sinv1[i] += Sinv_ij;
+            Sinvy[i] += Sinv_ij * y[j];
         }
         ones_Sinv_ones += Sinv1[i];
         ones_Sinv_y += Sinvy[i];
     }
 
+    /* Check that denominator is valid (Sigma should be positive definite) */
     if (ones_Sinv_ones <= 0.0) {
         free(Sinv1);
         free(Sinvy);
         return -HUGE_VAL;
     }
 
+    /* GLS estimate of the mean mu_hat = (1^T Sigma^{-1} y) / (1^T Sigma^{-1} 1) */
     muhat = ones_Sinv_y / ones_Sinv_ones;
+
+    /* Compute quadratic form quad = (y - mu_hat)^T Sigma^{-1} (y - mu_hat) */
     for (i = 0; i < n; i++) {
         double yi = y[i] - muhat;
-        for (j = 0; j < n; j++)
+        for (j = 0; j < n; j++) {
             quad += yi * mat_get(Sigma_inv, i, j) * (y[j] - muhat);
+        }
     }
 
+    /* Analytical MLE of variance scale parameter sigma^2_hat = quad / n */
     sigma2 = quad / (double)n;
+
+    /* Numerical safeguard to avoid log(0) */
     if (sigma2 < 1e-12)
         sigma2 = 1e-12;
 
+    /* Log-likelihood at MLE is log L = -1/2 [ n log(2πσ^2) + log|Sigma| + n ] */
     ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
                  logdet_sigma +
                  (double)n);
@@ -310,7 +307,7 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
         for (i = 0; i < gex->n_cells; i++)
             col[i] = mat_get(gex->X, i, j);
 
-        gex_calculate_mean_variance(col, gex->n_cells, &mean, &var);
+        calculate_mean_variance(col, gex->n_cells, &mean, &var);
         sd = sqrt(var);
 
         /* If the standard deviation is very small, set all values to 0. Otherwise, standardize the values 
@@ -1219,21 +1216,27 @@ int gex_write_morans_tsv(const char *filename,
 /* Compute the Brownian LRT for a given expression matrix and phylogenetic covariance matrix.
    The LRT compares:
 
-     Null model:   y ~ N(mu, sigma^2 I)
-                   (no phylogenetic structure; independent residuals)
+     Null model:   y ~ N(mu, sigma^2 * I)
+                   (no phylogenetic structure; identity covariance used)
 
-     Alternative:  y ~ N(mu, Sigma)
-                   (Brownian motion on the tree; covariance given by Sigma)
+     Alternative:  y ~ N(mu, sigma^2 * Sigma)
+                   (Brownian motion on the tree; phylogenetic covariance used)
 
    For each gene, the function computes the log-likelihood under both models
    and forms the likelihood ratio statistic LRT = 2 * (logLik_alt - logLik_null).
    P-values are obtained either from a chi-squared(1) approximation or via
    Monte Carlo simulation under the null. Returns a pointer to the result 
    structure or NULL on failure.
+
+   TODO: Implement the Pagel's Lambda version of the LRT where the alternative 
+   model is y ~ N(mu, sigma^2 * (lambda * Sigma + (1-lambda) * I))) This would 
+   require numerical optimization to find the MLE of lambda for each gene, 
+   which could be computationally intensive but eliminates the need for monte 
+   carlo to estimate p-values, instead using the asymptotic mixture distribution 
+   of ((1/2) chi2 with dof=0) + ((1/2)chi2 with dof=1).
 */
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        Matrix *Sigma,
-                                       GexLRTNullMode null_mode,
                                        int n_mc,
                                        unsigned int seed) {
     int i, j;   /* Loop indices */
@@ -1250,12 +1253,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     unsigned int rng_state; /* Random number generator state */
 
     if (gex == NULL || gex->X == NULL || Sigma == NULL ||
-        Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells) {
+        Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells || n_mc <= 0) {
         fprintf(stderr, "ERROR: gex_compute_brownian_lrt got invalid input\n");
-        return NULL;
-    }
-    if (null_mode == GEX_LRT_NULL_MONTECARLO && n_mc <= 0) {
-        fprintf(stderr, "ERROR: Monte Carlo LRT requires positive n_mc\n");
         return NULL;
     }
 
@@ -1354,10 +1353,10 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
             y[i] = mat_get(gex->X, i, j);
 
         /* Calculate the mean and variance of the gene expression data */
-        gex_calculate_mean_variance(y, n, &mu0, &sigma20);
+        calculate_mean_variance(y, n, &mu0, &sigma20);
 
         /* Compute the log-likelihood under the null model */
-        ll_null = gex_loglik_centered_gaussian_identity(y, n);
+        ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
 
         /* Compute the log-likelihood under the alternative model */
         ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
@@ -1369,31 +1368,39 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         if (res->lrt_stat[j] < 0.0)
             res->lrt_stat[j] = 0.0;
 
-        /* Compute p-values */
-        if (null_mode == GEX_LRT_NULL_CHI2) {
-            res->pvals[j] = gex_chisq1_sf(res->lrt_stat[j]);
+        /* Estimate p-values by simulating data under the null model to
+        use a monte carlo estimate */
+        int ge_count = 0;
+        int rep;
+        for (rep = 0; rep < n_mc; rep++) {
+            double ll0_sim;
+            double ll1_sim;
+            double stat_sim;
+            for (i = 0; i < n; i++)
+                /* Draw simulated data independently from the null model N(μ0, σ20) */
+                y_sim[i] = mu0 + sqrt(sigma20) * gex_rand_normal(&rng_state);
+
+            /* Re-calculate the mean and variance of the simulated gene expression data.
+            This is necessary because we only simulate finite samples, so we are not guaranteed
+            to have the generating distribution mean and variance parameters exactly. */
+            calculate_mean_variance(y_sim, n, &mu0, &sigma20);
+
+            /* Compute the log-likelihood under the null model */
+            ll0_sim = gex_loglik_centered_gaussian_identity(n, sigma20);
+
+            /* Compute the log-likelihood under the alternative model */
+            ll1_sim = gex_loglik_centered_gaussian_cov(y_sim, Sigma_reg, Sigma_inv, logdet_sigma);
+
+            /* Compute the LRT statistic for the simulated data */
+            stat_sim = 2.0 * (ll1_sim - ll0_sim);
+            if (stat_sim < 0.0 && fabs(stat_sim) < 1e-10)
+                stat_sim = 0.0;
+            if (stat_sim < 0.0)
+                stat_sim = 0.0;
+            if (stat_sim >= res->lrt_stat[j])
+                ge_count++;
         }
-        else {
-            int ge_count = 0;
-            int rep;
-            for (rep = 0; rep < n_mc; rep++) {
-                double ll0_sim;
-                double ll1_sim;
-                double stat_sim;
-                for (i = 0; i < n; i++)
-                    y_sim[i] = mu0 + sqrt(sigma20) * gex_rand_normal(&rng_state);
-                ll0_sim = gex_loglik_centered_gaussian_identity(y_sim, n);
-                ll1_sim = gex_loglik_centered_gaussian_cov(y_sim, Sigma_reg, Sigma_inv, logdet_sigma);
-                stat_sim = 2.0 * (ll1_sim - ll0_sim);
-                if (stat_sim < 0.0 && fabs(stat_sim) < 1e-10)
-                    stat_sim = 0.0;
-                if (stat_sim < 0.0)
-                    stat_sim = 0.0;
-                if (stat_sim >= res->lrt_stat[j])
-                    ge_count++;
-            }
-            res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_mc + 1.0);
-        }
+        res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_mc + 1.0);
     }
 
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
