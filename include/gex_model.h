@@ -21,7 +21,8 @@ typedef struct {
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix *Sigma,
                                                       GexPCA *pca,
-                                                      unsigned int seed);
+                                                      unsigned int seed,
+                                                      const char *outprefix);
                                                       
 int gex_write_latent_brownian_model(const char *outprefix,
                                     GexLatentBrownianModel *model,

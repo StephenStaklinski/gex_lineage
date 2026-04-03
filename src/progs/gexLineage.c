@@ -340,7 +340,7 @@ int main(int argc, char *argv[]) {
     gex_print_pca_summary(pca);
 
     /* Fit the latent Brownian model */
-    model = gex_fit_latent_brownian_model(gex_filtered, Sigma, pca, seed);
+    model = gex_fit_latent_brownian_model(gex_filtered, Sigma, pca, seed, outprefix);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model\n");
         goto cleanup;

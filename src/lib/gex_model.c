@@ -205,15 +205,35 @@ static void gex_model_adam_update_vector(double *param,
     }
 }
 
+/* Compute the Frobenius norm of a matrix.
+Returns the Euclidean norm across all matrix entries. */
+static double gex_model_matrix_norm(Matrix *M) {
+    int i, j;
+    double ss = 0.0;
+
+    for (i = 0; i < M->nrows; i++) {
+        for (j = 0; j < M->ncols; j++)
+            ss += pow(mat_get(M, i, j), 2.0);
+    }
+
+    return sqrt(ss);
+}
+
 /* Main model entry point. Fit a latent Brownian model to the given gene expression data.
 Returns a pointer to the fitted model or NULL on failure. */
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix *Sigma,
                                                       GexPCA *pca,
-                                                      unsigned int seed) {
+                                                      unsigned int seed,
+                                                      const char *outprefix) {
     int i, j, d, n;    /* Loop indices */
     int step;   /* Optimization step */
-    int total_steps = 250;  /* Total number of optimization steps */
+    int max_steps = 100000;   /* Maximum number of optimization steps */
+    int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
+    int stable_steps_needed = 50;   /* Number of consecutive stable steps required for convergence */
+    int stable_steps = 0;   /* Running count of consecutive near-converged steps */
+    int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule */
+    int final_step = 0;   /* Final optimization step reached before termination */
     int k;  /* Number of latent dimensions */
     int n_cells = gex->n_cells;
     int n_genes = gex->n_genes;
@@ -236,9 +256,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
     double max_diag = 0.0;  /* Maximum diagonal element of Sigma */
     double jitter;  /* Diagonal jitter used for numerical stability */
+    double prev_objective = HUGE_VAL;   /* Objective value from the previous step */
+    double rel_objective_change = HUGE_VAL; /* Relative change in objective between consecutive steps */
+    const double objective_tol = 1e-4;  /* Relative objective tolerance used for convergence */
+    FILE *logf = NULL;  /* Optimization log file */
+    char log_path[4096]; /* Path to optimization log file */
 
     /* Input validation */
-    if (gex == NULL || gex->X == NULL || Sigma == NULL || pca == NULL || pca->K <= 0)
+    if (gex == NULL || gex->X == NULL || Sigma == NULL || pca == NULL ||
+        pca->K <= 0 || outprefix == NULL)
         return NULL;
     if (Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells)
         return NULL;
@@ -246,6 +272,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Initialize workspace containers for the centered data matrix and the
     inverse/log-determinant calculations based on the phylogenetic covariance. */
     memset(&ws, 0, sizeof(ws));
+
+    /* Open a log file to record the optimization trajectory while fitting
+    the latent Brownian model. */
+    snprintf(log_path, sizeof(log_path), "%s.model.log", outprefix);
+    logf = fopen(log_path, "w");
+    if (logf == NULL)
+        goto cleanup_fit_latent_brownian_model;
+    fprintf(logf, "step\tobjective\trel_objective_change\tgrad_norm\tsigma_obs");
+    for (i = 0; i < pca->K; i++)
+        fprintf(logf, "\tsigma_latent_LF%d", i + 1);
+    fprintf(logf, "\tZ_norm\tL_norm\tstable_steps\n");
 
     /* Center the expression matrix by subtracting the mean of each gene.
     This ensures the latent factor model is fit to the residual structure
@@ -402,8 +439,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     metrics.grad_norm = 0.0;
 
     /* Run gradient-based optimization of latent coordinates, gene loadings,
-    and the variance parameters using Adam updates. */
-    for (step = 1; step <= total_steps; step++) {
+    and the variance parameters using Adam updates until the objective and
+    gradient norm stabilize, while still enforcing a maximum number of steps. */
+    for (step = 1; step <= max_steps; step++) {
         int d;
 
         sched_next(sched, sched_state, (step == 1 ? NULL : &metrics), &directives);
@@ -421,6 +459,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
                                                 grad_log_sigma_latent,
                                                 grad_log_sigma_obs, k);
+        if (step > 1) {
+            rel_objective_change = fabs(model->objective - prev_objective) /
+                                   max(1.0, fabs(prev_objective));
+        }
+        else {
+            rel_objective_change = HUGE_VAL;
+        }
         if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
             double scale = directives.clip_norm / metrics.grad_norm;
             gex_model_scale_grads(grad_Z, grad_L, grad_log_sigma_latent,
@@ -445,7 +490,43 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             v_log_sigma_obs = v_arr[0];
         }
 
+        /* Track whether the optimizer has entered a stable regime where the
+        objective changes by less than the target relative tolerance from one
+        step to the next. Once this persists for enough consecutive steps
+        beyond the minimum step count, stop the optimization early. */
+        if (step >= min_steps && rel_objective_change < objective_tol) {
+            stable_steps++;
+        }
+        else {
+            stable_steps = 0;
+        }
+
+        /* Record the scalar parameters and compact summaries of Z and L at
+        each optimization step without writing the full matrices. */
+        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g",
+                step,
+                model->objective,
+                rel_objective_change,
+                metrics.grad_norm,
+                model->sigma2_obs);
+        for (d = 0; d < k; d++)
+            fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
+        fprintf(logf, "\t%.17g\t%.17g\t%d\n",
+                gex_model_matrix_norm(model->Z),
+                gex_model_matrix_norm(model->L),
+                stable_steps);
+        fflush(logf);
+
+        prev_objective = model->objective;
+        if (stable_steps >= stable_steps_needed) {
+            converged = 1;
+            final_step = step;
+            break;
+        }
+
     }
+    if (!converged)
+        final_step = max_steps;
     model->sigma2_obs = exp(log_sigma_obs);
     if (model->sigma2_obs < 1e-8) model->sigma2_obs = 1e-8;
     for (step = 0; step < k; step++) {
@@ -456,6 +537,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->objective = gex_model_objective_and_grad(model, &ws, grad_Z, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
+
+    /* Write a final footer line describing why optimization terminated and
+    the convergence settings used for the run. */
+    fprintf(logf, "# termination\t%s\tfinal_step\t%d\tstable_steps\t%d\tmin_steps\t%d\tstable_steps_needed\t%d\trel_objective_tol\t%.17g\n",
+            (converged ? "converged" : "max_steps_reached"),
+            final_step,
+            stable_steps,
+            min_steps,
+            stable_steps_needed,
+            objective_tol);
+    fflush(logf);
 
     success = 1;
 
@@ -473,6 +565,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (sched_state != NULL) free(sched_state);
     if (sched != NULL) free(sched);
     if (L != NULL) mat_free(L);
+    if (logf != NULL) fclose(logf);
     if (ws.Xc != NULL) mat_free(ws.Xc);
     if (ws.Sigma_reg != NULL) mat_free(ws.Sigma_reg);
     if (ws.Sigma_inv != NULL) mat_free(ws.Sigma_inv);
