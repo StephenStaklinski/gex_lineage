@@ -201,22 +201,25 @@ static double gex_loglik_centered_gaussian_identity(double *y, int n) {
     return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
 }
 
-static void gex_fit_gaussian_identity(double *y, int n, double *mean_out, double *sigma2_out) {
+/* Get the mean and variance of vector y. */
+static void gex_calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_out) {
     int i;
     double mean = 0.0;
     double sse = 0.0;
 
+    /* Compute the mean of the data */
     for (i = 0; i < n; i++)
         mean += y[i];
     mean /= (double)n;
 
+    /* Compute the sum of squared errors around the mean */
     for (i = 0; i < n; i++) {
         double d = y[i] - mean;
         sse += d * d;
     }
 
     *mean_out = mean;
-    *sigma2_out = sse / (double)n;
+    *sigma2_out = sse / (double)n;  /* Variance */
     if (*sigma2_out < 1e-12)
         *sigma2_out = 1e-12;
 }
@@ -284,6 +287,7 @@ subtracting the mean and dividing by the standard deviation */
 static Matrix *gex_standardize_columns(GexMatrix *gex) {
     int i, j;
     Matrix *Z;
+    double *col = NULL; /* Array to store column values from the expression matrix to use the helper function for mean and variance calculation */
 
     if (gex == NULL || gex->X == NULL)
         return NULL;
@@ -291,6 +295,11 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
     Z = mat_new(gex->n_cells, gex->n_genes);    /* Initialize the standardized matrix */
     if (Z == NULL)
         return NULL;
+    col = (double *)malloc(gex->n_cells * sizeof(double));
+    if (col == NULL) {
+        mat_free(Z);
+        return NULL;
+    }
 
     /* Standardize each column (gene) of the expression matrix */
     for (j = 0; j < gex->n_genes; j++) {
@@ -298,17 +307,10 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
         double var = 0.0;
         double sd;
 
-        /* Compute the mean of the column (gene j) */
         for (i = 0; i < gex->n_cells; i++)
-            mean += mat_get(gex->X, i, j);
-        mean /= (double)gex->n_cells;
+            col[i] = mat_get(gex->X, i, j);
 
-        /* Compute the variance of the column (gene j) */
-        for (i = 0; i < gex->n_cells; i++) {
-            double d = mat_get(gex->X, i, j) - mean;
-            var += d * d;
-        }
-        var /= (double)gex->n_cells;
+        gex_calculate_mean_variance(col, gex->n_cells, &mean, &var);
         sd = sqrt(var);
 
         /* If the standard deviation is very small, set all values to 0. Otherwise, standardize the values 
@@ -319,12 +321,13 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
         }
         else {
             for (i = 0; i < gex->n_cells; i++) {
-                double z = (mat_get(gex->X, i, j) - mean) / sd;
+                double z = (col[i] - mean) / sd;
                 mat_set(Z, i, j, z);
             }
         }
     }
 
+    free(col);
     return Z;
 }
 
@@ -1213,23 +1216,38 @@ int gex_write_morans_tsv(const char *filename,
     return 0;
 }
 
+/* Compute the Brownian LRT for a given expression matrix and phylogenetic covariance matrix.
+   The LRT compares:
+
+     Null model:   y ~ N(mu, sigma^2 I)
+                   (no phylogenetic structure; independent residuals)
+
+     Alternative:  y ~ N(mu, Sigma)
+                   (Brownian motion on the tree; covariance given by Sigma)
+
+   For each gene, the function computes the log-likelihood under both models
+   and forms the likelihood ratio statistic LRT = 2 * (logLik_alt - logLik_null).
+   P-values are obtained either from a chi-squared(1) approximation or via
+   Monte Carlo simulation under the null. Returns a pointer to the result 
+   structure or NULL on failure.
+*/
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        Matrix *Sigma,
                                        GexLRTNullMode null_mode,
                                        int n_mc,
                                        unsigned int seed) {
-    int i, j;
-    int n;
-    Matrix *Sigma_reg = NULL;
-    Matrix *Sigma_inv = NULL;
-    Matrix *L = NULL;
-    GexLRTResult *res = NULL;
-    double logdet_sigma = 0.0;
-    double max_diag = 0.0;
-    double jitter;
-    double *y = NULL;
-    double *y_sim = NULL;
-    unsigned int rng_state;
+    int i, j;   /* Loop indices */
+    int n;  /* Number of cells */
+    Matrix *Sigma_reg = NULL;   /* Regularized covariance matrix */
+    Matrix *Sigma_inv = NULL;   /* Inverse of the regularized covariance matrix */
+    Matrix *L = NULL;   /* Cholesky factor of the regularized covariance matrix */
+    GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
+    double logdet_sigma = 0.0;  /* Log determinant of the regularized covariance matrix */
+    double max_diag = 0.0;  /* Maximum diagonal element of the covariance matrix */
+    double jitter;  /* Jitter to add to the diagonal for numerical stability */
+    double *y = NULL;   /* Vector for storing the expression values */
+    double *y_sim = NULL;   /* Vector for storing simulated expression values */
+    unsigned int rng_state; /* Random number generator state */
 
     if (gex == NULL || gex->X == NULL || Sigma == NULL ||
         Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells) {
@@ -1241,6 +1259,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         return NULL;
     }
 
+    /* Initialize matrices */
     n = gex->n_cells;
     Sigma_reg = mat_new(n, n);
     Sigma_inv = mat_new(n, n);
@@ -1252,6 +1271,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         return NULL;
     }
 
+    /* Determine the relative jitter to add to the diagonal of Sigma for numerical stability in inversion and Cholesky decomposition */
     for (i = 0; i < n; i++) {
         double d = mat_get(Sigma, i, i);
         if (d > max_diag)
@@ -1259,12 +1279,14 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     }
     jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
 
+    /* Regularize Sigma by adding jitter to the diagonal and copy to Sigma_reg */
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++)
             mat_set(Sigma_reg, i, j, mat_get(Sigma, i, j));
         mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
     }
 
+    /* Invert the regularized covariance matrix */
     if (mat_invert(Sigma_inv, Sigma_reg) != 0) {
         fprintf(stderr, "ERROR: failed to invert Brownian covariance matrix for LRT\n");
         mat_free(Sigma_reg);
@@ -1280,6 +1302,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         return NULL;
     }
 
+    /* Compute the log determinant of the regularized covariance matrix */
     for (i = 0; i < n; i++) {
         double diag = mat_get(L, i, i);
         if (diag <= 0.0) {
@@ -1291,6 +1314,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         logdet_sigma += 2.0 * log(diag);
     }
 
+    /* Initialize result structure and temporary vectors for the LRT computation */
     res = (GexLRTResult *)calloc(1, sizeof(GexLRTResult));
     y = (double *)malloc(n * sizeof(double));
     y_sim = (double *)malloc(n * sizeof(double));
@@ -1303,7 +1327,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         mat_free(L);
         return NULL;
     }
-
     res->lrt_stat = (double *)calloc(gex->n_genes, sizeof(double));
     res->pvals = (double *)calloc(gex->n_genes, sizeof(double));
     res->qvals = (double *)calloc(gex->n_genes, sizeof(double));
@@ -1318,24 +1341,35 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         return NULL;
     }
 
+    /* Run the LRT on each gene */
     rng_state = (seed == 0u ? 1u : seed);
     for (j = 0; j < gex->n_genes; j++) {
-        double ll_null;
-        double ll_alt;
-        double mu0;
-        double sigma20;
+        double ll_null; /* Log-likelihood under the null model */
+        double ll_alt;  /* Log-likelihood under the alternative model */
+        double mu0; /* Mean under the null model (estimated from the data) */
+        double sigma20; /* Variance under the null model (estimated from the data) */
+
+        /* Extract gene expression data for the current gene across all cells */
         for (i = 0; i < n; i++)
             y[i] = mat_get(gex->X, i, j);
 
-        gex_fit_gaussian_identity(y, n, &mu0, &sigma20);
+        /* Calculate the mean and variance of the gene expression data */
+        gex_calculate_mean_variance(y, n, &mu0, &sigma20);
+
+        /* Compute the log-likelihood under the null model */
         ll_null = gex_loglik_centered_gaussian_identity(y, n);
+
+        /* Compute the log-likelihood under the alternative model */
         ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
+
+        /* Compute the LRT statistic */
         res->lrt_stat[j] = 2.0 * (ll_alt - ll_null);
         if (res->lrt_stat[j] < 0.0 && fabs(res->lrt_stat[j]) < 1e-10)
             res->lrt_stat[j] = 0.0;
         if (res->lrt_stat[j] < 0.0)
             res->lrt_stat[j] = 0.0;
 
+        /* Compute p-values */
         if (null_mode == GEX_LRT_NULL_CHI2) {
             res->pvals[j] = gex_chisq1_sf(res->lrt_stat[j]);
         }
@@ -1362,8 +1396,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         }
     }
 
-    gex_bh_adjust(res->pvals, res->qvals, res->n_genes);
-    res->n_significant = gex_count_kept_lrt_genes(res, 0.05);
+    gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
+    res->n_significant = gex_count_kept_lrt_genes(res, 0.05);   /* Number of significant genes to keep*/
 
     free(y);
     free(y_sim);

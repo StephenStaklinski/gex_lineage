@@ -270,7 +270,7 @@ int main(int argc, char *argv[]) {
         printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree\n\n");
     }
 
-    /* Run the phylogenetic autocorrelation filter tests if needed */
+    /* Run the phylogenetic autocorrelation filter tests if requested */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
         morans = gex_compute_morans_i(gex, W, n_perms, seed);
         if (morans == NULL) {
@@ -290,7 +290,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Optionally run the phylogenetic LRT filter */
+    /* Run the phylogenetic LRT filter tests if requested */
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
         lrt = gex_compute_brownian_lrt(gex, Sigma, lrt_null_mode, n_perms, seed);
         if (lrt == NULL) {
