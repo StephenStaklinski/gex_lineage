@@ -1327,11 +1327,14 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         mat_free(L);
         return NULL;
     }
+    res->ll_null = (double *)calloc(gex->n_genes, sizeof(double));
+    res->ll_alt = (double *)calloc(gex->n_genes, sizeof(double));
     res->lrt_stat = (double *)calloc(gex->n_genes, sizeof(double));
     res->pvals = (double *)calloc(gex->n_genes, sizeof(double));
     res->qvals = (double *)calloc(gex->n_genes, sizeof(double));
     res->n_genes = gex->n_genes;
-    if (res->lrt_stat == NULL || res->pvals == NULL || res->qvals == NULL) {
+    if (res->lrt_stat == NULL || res->pvals == NULL || res->qvals == NULL || 
+        res->ll_null == NULL || res->ll_alt == NULL) {
         gex_free_lrt_result(res);
         free(y);
         free(y_sim);
@@ -1358,16 +1361,14 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
 
         /* Compute the log-likelihood under the null model */
         ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
+        res->ll_null[j] = ll_null;
 
         /* Compute the log-likelihood under the alternative model */
         ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
+        res->ll_alt[j] = ll_alt;
 
         /* Compute the LRT statistic */
         res->lrt_stat[j] = 2.0 * (ll_alt - ll_null);
-        if (res->lrt_stat[j] < 0.0 && fabs(res->lrt_stat[j]) < 1e-10)
-            res->lrt_stat[j] = 0.0;
-        if (res->lrt_stat[j] < 0.0)
-            res->lrt_stat[j] = 0.0;
 
         /* Estimate p-values by simulating data under the null model to
         use a monte carlo estimate */
@@ -1394,10 +1395,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
 
             /* Compute the LRT statistic for the simulated data */
             stat_sim = 2.0 * (ll1_sim - ll0_sim);
-            if (stat_sim < 0.0 && fabs(stat_sim) < 1e-10)
-                stat_sim = 0.0;
-            if (stat_sim < 0.0)
-                stat_sim = 0.0;
             if (stat_sim >= res->lrt_stat[j])
                 ge_count++;
         }
@@ -1460,11 +1457,13 @@ int gex_write_lrt_tsv(const char *filename,
         return -1;
     }
 
-    fprintf(out, "gene\tlrt_stat\tp_value\tq_value\tkeep\n");
+    fprintf(out, "gene\tll_null\tll_alt\tlrt_stat\tp_value\tq_value\tkeep\n");
     for (i = 0; i < res->n_genes; i++) {
         int keep = (res->qvals[i] <= max_q && res->lrt_stat[i] > 0.0);
-        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%s\n",
+        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
                 gex->gene_names[i],
+                res->ll_null[i],
+                res->ll_alt[i],
                 res->lrt_stat[i],
                 res->pvals[i],
                 res->qvals[i],
@@ -1501,7 +1500,10 @@ void gex_free_lrt_result(GexLRTResult *res) {
         free(res->pvals);
     if (res->qvals != NULL)
         free(res->qvals);
-
+    if (res->ll_null != NULL)
+        free(res->ll_null);
+    if (res->ll_alt != NULL)
+        free(res->ll_alt);
     free(res);
 }
 

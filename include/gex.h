@@ -23,6 +23,8 @@ typedef struct {
 } GexMoransResult;
 
 typedef struct {
+    double *ll_null;
+    double *ll_alt;
     double *lrt_stat;
     double *pvals;
     double *qvals;

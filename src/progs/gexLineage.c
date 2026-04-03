@@ -38,6 +38,7 @@ static void usage(const char *progname) {
         "[--n-perms N] "
         "[--max-q Q] "
         "[--moran-min-i I] "
+        "[--filter-only] "
         "[--seed S]\n",
         progname);
 }
@@ -55,6 +56,7 @@ int main(int argc, char *argv[]) {
     double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
+    int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
 
@@ -146,6 +148,9 @@ int main(int argc, char *argv[]) {
                 goto cleanup;
             }
             seed = (unsigned int)strtoul(argv[++i], NULL, 10);
+        }
+        else if (strcmp(argv[i], "--filter-only") == 0) {
+            filter_only = 1;
         }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
@@ -281,6 +286,12 @@ int main(int argc, char *argv[]) {
             }
             printf("Wrote LRT correlation results to %s\n", lrt_path);
         }
+    }
+
+    if (filter_only) {
+        printf("Done\n");
+        status = 0;
+        goto cleanup;
     }
 
     /* Filter genes based on the results of the correlation and/or LRT test(s) */
