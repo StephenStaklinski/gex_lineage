@@ -239,16 +239,19 @@ int main(int argc, char *argv[]) {
     }
     print_covariance_summary(Sigma, gex->cell_names, gex->n_cells);
 
-    /* Calculate the weight matrix from the phylogenetic covariance matrix */
-    W = weight_matrix_from_covariance(Sigma);
-    if (W == NULL) {
-        fprintf(stderr, "ERROR: failed to compute Brownian weight matrix\n");
-        goto cleanup;
+    /* Calculate the weight matrix from the phylogenetic covariance matrix if
+    needed for phylogenetic autocorrelation tests */
+    if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
+        W = weight_matrix_from_covariance(Sigma);
+        if (W == NULL) {
+            fprintf(stderr, "ERROR: failed to compute Brownian weight matrix\n");
+            goto cleanup;
+        }
+        print_weight_matrix_summary(W);
     }
-    print_weight_matrix_summary(W);
     
-    /* Test the phylogenetic signal filter(s) on simulated data to understand
-    performance for the provided tree. */
+    /* Test the phylogenetic signal filter(s) with simulated data to understand
+    the performance on the provided tree. */
     if (!brownian_run_simulation_check(trees[0],
                                        gex->cell_names,
                                        gex->n_cells,
@@ -267,7 +270,7 @@ int main(int argc, char *argv[]) {
         printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree\n\n");
     }
 
-    /* Optionally run the phylogenetic autocorrelation filter */
+    /* Run the phylogenetic autocorrelation filter tests if needed */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
         morans = gex_compute_morans_i(gex, W, n_perms, seed);
         if (morans == NULL) {
