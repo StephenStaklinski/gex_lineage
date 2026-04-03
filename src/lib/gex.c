@@ -145,17 +145,22 @@ static double gex_rand_normal(unsigned int *state) {
     return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
 }
 
+/* Shuffle an array of doubles in place using the Fisher-Yates algorithm. */
 static void gex_shuffle_double(double *x, int n, unsigned int *state) {
     int i;
 
+    /* Loop backwards from the last element to the second */
     for (i = n - 1; i > 0; i--) {
-        int j = (int)(gex_rand_u32(state) % (unsigned int)(i + 1));
+        int j = (int)(gex_rand_u32(state) % (unsigned int)(i + 1)); /* Pick a random index */
+        /* Swap elements at indices i and j */
         double tmp = x[i];
         x[i] = x[j];
         x[j] = tmp;
     }
 }
 
+/* Compute the weighted quadratic form (x^T * W * x) for a symmetric matrix W 
+and vector x.*/
 static double gex_weighted_quadratic(Matrix *W, double *x, int n) {
     int i, j;
     double out = 0.0;
@@ -274,6 +279,8 @@ static double gex_loglik_centered_gaussian_cov(double *y,
     return ll;
 }
 
+/* Standardize the columns of a gene expression matrix by
+subtracting the mean and dividing by the standard deviation */
 static Matrix *gex_standardize_columns(GexMatrix *gex) {
     int i, j;
     Matrix *Z;
@@ -281,19 +288,22 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
     if (gex == NULL || gex->X == NULL)
         return NULL;
 
-    Z = mat_new(gex->n_cells, gex->n_genes);
+    Z = mat_new(gex->n_cells, gex->n_genes);    /* Initialize the standardized matrix */
     if (Z == NULL)
         return NULL;
 
+    /* Standardize each column (gene) of the expression matrix */
     for (j = 0; j < gex->n_genes; j++) {
         double mean = 0.0;
         double var = 0.0;
         double sd;
 
+        /* Compute the mean of the column (gene j) */
         for (i = 0; i < gex->n_cells; i++)
             mean += mat_get(gex->X, i, j);
         mean /= (double)gex->n_cells;
 
+        /* Compute the variance of the column (gene j) */
         for (i = 0; i < gex->n_cells; i++) {
             double d = mat_get(gex->X, i, j) - mean;
             var += d * d;
@@ -301,6 +311,8 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
         var /= (double)gex->n_cells;
         sd = sqrt(var);
 
+        /* If the standard deviation is very small, set all values to 0. Otherwise, standardize the values 
+        by subtracting the mean and dividing by the standard deviation */
         if (sd < 1e-12) {
             for (i = 0; i < gex->n_cells; i++)
                 mat_set(Z, i, j, 0.0);
@@ -316,11 +328,14 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
     return Z;
 }
 
+/* Adjust p-values for multiple testing using the Benjamini-Hochberg procedure.
+Fills the qvals array with the adjusted p-values. */
 static void gex_bh_adjust(double *pvals, double *qvals, int n) {
     GexPvalPair *pairs;
     int i;
     double running;
 
+    /* Initialize the pairs array */
     pairs = (GexPvalPair *)malloc(n * sizeof(GexPvalPair));
     if (pairs == NULL) {
         for (i = 0; i < n; i++)
@@ -328,19 +343,27 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
         return;
     }
 
+    /* Fill the pairs array with p-values and their original indices */
     for (i = 0; i < n; i++) {
         pairs[i].pval = pvals[i];
         pairs[i].idx = i;
     }
 
+    /* Sort the pairs array in ascending order of p-values */
     qsort(pairs, n, sizeof(GexPvalPair), gex_cmp_pval_asc);
 
+    /* Adjust p-values using the Benjamini-Hochberg procedure.
+    For sorted p-values p_(i), compute (n / i) * p_(i),
+   then apply a reverse cumulative minimum to ensure
+   the adjusted p-values are non-decreasing. */
     running = 1.0;
     for (i = n - 1; i >= 0; i--) {
         double rank = (double)(i + 1);
         double val = pairs[i].pval * (double)n / rank;
-        if (val > 1.0) val = 1.0;
-        if (val < running) running = val;
+        if (val > 1.0) 
+            val = 1.0;
+        if (val < running) 
+            running = val;
         qvals[pairs[i].idx] = running;
     }
 
@@ -983,45 +1006,51 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     return 0;
 }
 
+/* Compute Moran's I for each gene in the expression matrix.
+Moran's I is a measure of spatial autocorrelation, which is 
+calculated here as Z^T * W * Z where z is the column-wise standardized 
+gene expression matrix and W is the input weight matrix. Returns a pointer 
+to the result structure. */
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
                                       Matrix *W,
                                       int n_perm,
                                       unsigned int seed) {
-    int i, j, k;
-    int n_cells;
-    int n_genes;
-    unsigned int rng_state;
-    Matrix *Z = NULL;
-    Matrix *B = NULL;
-    GexMoransResult *res = NULL;
-    double *zcol = NULL;
-    double *perm = NULL;
+    int i, j, k;    /* Loop indices */
+    int success = 0;    /* Whether computation finished successfully */
+    int n_cells;    /* Number of cells (rows in the expression matrix) */
+    int n_genes;    /* Number of genes (columns in the expression matrix) */
+    unsigned int rng_state; /* State for the random number generator used in permutation testing */
+    Matrix *Z = NULL;   /* Standardized gene expression matrix (n_cells x n_genes) */
+    Matrix *B = NULL;   /* Intermediate matrix for W * Z (n_cells x n_genes) */
+    GexMoransResult *res = NULL;    /* Result structure for Moran's I computation */
+    double *zcol = NULL;    /* Temporary array to hold a single column of the standardized matrix for permutation testing */
+    double *perm = NULL;    /* Temporary array to hold the permuted version of the column for permutation testing */
 
+    /* Validate input parameters */
     if (gex == NULL || gex->X == NULL || W == NULL || n_perm <= 0) {
         fprintf(stderr, "ERROR: gex_compute_morans_i got invalid input\n");
         return NULL;
     }
-
     n_cells = gex->n_cells;
     n_genes = gex->n_genes;
-
     if (W->nrows != n_cells || W->ncols != n_cells) {
         fprintf(stderr, "ERROR: weight matrix dimensions do not match number of cells\n");
         return NULL;
     }
 
+    /* Normalize the gene expression matrix */
     Z = gex_standardize_columns(gex);
     if (Z == NULL) {
         fprintf(stderr, "ERROR: failed to standardize gene expression matrix\n");
         return NULL;
     }
 
+    /* Compute W * Z */
     B = mat_new(n_cells, n_genes);
     if (B == NULL) {
         mat_free(Z);
         return NULL;
     }
-
     for (i = 0; i < n_cells; i++) {
         for (j = 0; j < n_genes; j++) {
             double sum = 0.0;
@@ -1031,13 +1060,11 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
         }
     }
 
+    /* Initialize the result structure */
     res = (GexMoransResult *)calloc(1, sizeof(GexMoransResult));
     if (res == NULL) {
-        mat_free(Z);
-        mat_free(B);
-        return NULL;
+        goto cleanup_compute_morans_i;
     }
-
     res->corr = mat_new(n_genes, n_genes);
     res->morans_i = (double *)calloc(n_genes, sizeof(double));
     res->pvals = (double *)calloc(n_genes, sizeof(double));
@@ -1045,12 +1072,10 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     res->n_genes = n_genes;
     if (res->corr == NULL || res->morans_i == NULL ||
         res->pvals == NULL || res->qvals == NULL) {
-        gex_free_morans_result(res);
-        mat_free(Z);
-        mat_free(B);
-        return NULL;
+        goto cleanup_compute_morans_i;
     }
 
+    /* Compute the Moran's I correlation matrix from Z^T x B */
     for (j = 0; j < n_genes; j++) {
         for (k = j; k < n_genes; k++) {
             double sum = 0.0;
@@ -1062,17 +1087,14 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
         res->morans_i[j] = mat_get(res->corr, j, j);
     }
 
+    /* Initialize temporary arrays for permutation testing */
     zcol = (double *)malloc(n_cells * sizeof(double));
     perm = (double *)malloc(n_cells * sizeof(double));
     if (zcol == NULL || perm == NULL) {
-        free(zcol);
-        free(perm);
-        gex_free_morans_result(res);
-        mat_free(Z);
-        mat_free(B);
-        return NULL;
+        goto cleanup_compute_morans_i;
     }
 
+    /* Run permutation tests per gene */
     rng_state = (seed == 0u ? 1u : seed);
     for (j = 0; j < n_genes; j++) {
         int ge_count = 0;
@@ -1084,24 +1106,37 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
 
         for (k = 0; k < n_perm; k++) {
             double perm_i;
-            memcpy(perm, zcol, n_cells * sizeof(double));
-            gex_shuffle_double(perm, n_cells, &rng_state);
-            perm_i = gex_weighted_quadratic(W, perm, n_cells);
-            if (perm_i >= res->morans_i[j])
+            memcpy(perm, zcol, n_cells * sizeof(double));   /* Copy the column */
+            gex_shuffle_double(perm, n_cells, &rng_state);  /* Shuffle the column */
+            perm_i = gex_weighted_quadratic(W, perm, n_cells);  /* Compute the weighted quadratic form */
+            if (perm_i >= res->morans_i[j]) /* Track permutations with higher or equal Moran's I */
                 ge_count++;
         }
 
-        res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_perm + 1.0);
+        res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_perm + 1.0);  /* Compute the p-value */
     }
 
+    /* Adjust p-values for multiple testing and count significant genes */
     gex_bh_adjust(res->pvals, res->qvals, n_genes);
     res->n_significant = gex_count_kept_genes(res, 0.05, 0.0);
+    success = 1;
 
-    free(zcol);
-    free(perm);
-    mat_free(Z);
-    mat_free(B);
-    return res;
+    goto cleanup_compute_morans_i;
+
+    cleanup_compute_morans_i:
+        if (zcol != NULL)
+            free(zcol);
+        if (perm != NULL)
+            free(perm);
+        if (Z != NULL)
+            mat_free(Z);
+        if (B != NULL)
+            mat_free(B);
+        if (!success) {
+            gex_free_morans_result(res);
+            res = NULL;
+        }
+        return res;
 }
 
 void gex_print_morans_summary(GexMoransResult *res,
