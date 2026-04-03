@@ -247,8 +247,8 @@ int main(int argc, char *argv[]) {
     }
     print_weight_matrix_summary(W);
     
-    /* Test the gene-tree correlation or lrt filter on simulated data to understand
-    performance for the provided tree. Pass pre-calculated Sigma and W. */
+    /* Test the phylogenetic signal filter(s) on simulated data to understand
+    performance for the provided tree. */
     if (!brownian_run_simulation_check(trees[0],
                                        gex->cell_names,
                                        gex->n_cells,

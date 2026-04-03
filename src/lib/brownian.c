@@ -278,9 +278,11 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     return Sigma;
 }
 
-/* Calculate the covariance-based weight matrix from a phylogenetic covariance matrix.
-The weight matrix is calculated as W_ij = 1/(d_ij + eps) where d_ij is the covariance-based 
-distance between tips i and j (d_ij = Sigma_ii + Sigma_jj - 2*Sigma_ij) and eps is a small 
+/* Calculate the weight matrix from a phylogenetic covariance matrix.
+This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
+Nature Genetics (PMID: 39317739) and is calculated as the element-wise inverse pairwise distance matrix.
+The weight W_ij = 1/(d_ij + eps) where d_ij is the pairwise distance between tips i and j which can be
+calculated from the covariance matrix as d_ij = Sigma_ii + Sigma_jj - 2*Sigma_ij and eps is a small 
 constant to avoid division by zero. The weight matrix is then normalized to sum to 1.
 Returns a pointer to the allocated weight matrix or NULL on failure. */
 Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
@@ -296,42 +298,51 @@ Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
         return NULL;
     }
 
-    n = Sigma->nrows;
+    /* Allocate the weight matrix with the same dimensions as the covariance matrix*/
+    n = Sigma->nrows;  
     W = mat_new(n, n);
     if (W == NULL) {
         fprintf(stderr, "ERROR: failed to allocate weight matrix\n");
         return NULL;
     }
 
+    /* Calculate the maximum pairwise distance from the covariance matrix to use for setting eps
+    and simultaneously fill the weight matrix with initial pairwise distance values */
     for (i = 0; i < n; i++) {
+        mat_set(W, i, i, 0.0);  /* Set diagonal elements (comparing each tip to itself) to zero pairwise distance */
         for (j = i + 1; j < n; j++) {
             double dij = mat_get(Sigma, i, i) + mat_get(Sigma, j, j) -
-                         2.0 * mat_get(Sigma, i, j);
-            if (dij < 0.0 && fabs(dij) < 1e-12)
-                dij = 0.0;
-            if (dij > max_dist)
-                max_dist = dij;
-        }
-    }
+                         (2.0 * mat_get(Sigma, i, j));
 
-    eps = (max_dist > 0.0 ? 1e-8 * max_dist : 1e-8);
-
-    for (i = 0; i < n; i++) {
-        mat_set(W, i, i, 0.0);
-        for (j = i + 1; j < n; j++) {
-            double dij = mat_get(Sigma, i, i) + mat_get(Sigma, j, j) -
-                         2.0 * mat_get(Sigma, i, j);
-            double wij;
-
-            if (dij < 0.0 && fabs(dij) < 1e-12)
-                dij = 0.0;
             if (dij < 0.0) {
                 fprintf(stderr, "ERROR: covariance implied negative distance\n");
                 mat_free(W);
                 return NULL;
             }
 
-            wij = 1.0 / (dij + eps);
+            /* Handle numerical precision issues */
+            if (dij < 0.0 && fabs(dij) < 1e-12)
+                dij = 0.0;
+            
+            /* Update the maximum distance for setting relative eps */
+            if (dij > max_dist)
+                max_dist = dij;
+
+            /* Store the pairwise distance in the weight matrix temporarily for now, will convert to weights after setting eps */
+            mat_set(W, i, j, dij);
+            mat_set(W, j, i, dij);
+        }
+    }
+
+    /* Set the epsilon value as a relative tolerance based on the maximum distance */
+    eps = (max_dist > 0.0 ? 1e-8 * max_dist : 1e-8);
+
+    /* Fill the weight matrix */
+    for (i = 0; i < n; i++) {
+        mat_set(W, i, i, 0.0);
+        for (j = i + 1; j < n; j++) {
+            double dij = mat_get(W, i, j);
+            double wij = 1.0 / (dij + eps);
             mat_set(W, i, j, wij);
             mat_set(W, j, i, wij);
             total += 2.0 * wij;
@@ -344,6 +355,7 @@ Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
         return NULL;
     }
 
+    /* Normalize the weight matrix to sum to 1 */
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++)
             mat_set(W, i, j, mat_get(W, i, j) / total);
