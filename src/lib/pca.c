@@ -258,8 +258,6 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
 
     success = 1; /* Mark as successful */
 
-    goto cleanup_compute_pca;
-
     cleanup_compute_pca:
         if (pairs != NULL)
             free(pairs);

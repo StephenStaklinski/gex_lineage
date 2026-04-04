@@ -1285,8 +1285,6 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     res->n_significant = gex_count_kept_genes(res, 0.05, 0.0);
     success = 1;
 
-    goto cleanup_compute_morans_i;
-
     cleanup_compute_morans_i:
         if (zcol != NULL)
             free(zcol);

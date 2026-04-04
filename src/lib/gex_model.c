@@ -219,8 +219,15 @@ static double gex_model_matrix_norm(Matrix *M) {
     return sqrt(ss);
 }
 
-/* Main model entry point. Fit a latent Brownian model to the given gene expression data.
-Returns a pointer to the fitted model or NULL on failure. */
+/* Main model entry point. Fit a low-rank factorization of the centered gene
+expression matrix that is regularized by a phylogenetic Brownian-motion prior.
+The data are modeled as X ≈ ZL + E, where Z (cells × latent factors) contains
+latent factors whose values across cells are constrained to vary smoothly
+according to a Brownian-motion Gaussian prior with phylogenetic covariance
+matrix Sigma and factor-specific variance parameters, L (latent factors × genes)
+is the gene loading matrix that defines the factors, and E is Gaussian observation 
+noise capturing variation not explained by the low-rank structure. Returns a 
+pointer to the fitted model or NULL on failure. */
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix *Sigma,
                                                       GexPCA *pca,
@@ -373,106 +380,81 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
     model->sigma2_obs = 1.0;    /* Initialize the observation variance parameter to 1.0 */
 
-    /* Initialize the latent coordinates from the centered data matrix using
-    simple standardized gene-derived starting vectors. This provides a stable
-    non-degenerate starting point for the optimizer. */
+    /* Initialize the factor loading matrix directly from the retained PCA
+    components, then initialize latent coordinates as the corresponding PCA
+    scores Z = X_centered * L^T. */
     for (d = 0; d < model->k; d++) {
-        int src_gene = d % model->n_genes;  /* Select a gene to initialize the latent factor */
-        double mean = 0.0;
-        double var = 0.0;
-        /* Compute the mean and variance of the selected gene (already centered) across all cells */
-        for (i = 0; i < model->n_cells; i++)
-            mean += mat_get(ws.Xc, i, src_gene);
-        mean /= (double)model->n_cells;
-        for (i = 0; i < model->n_cells; i++) {
-            double z = mat_get(ws.Xc, i, src_gene) - mean;
-            mat_set(model->Z, i, d, z);
-            var += z * z;
-        }
-        var /= (double)model->n_cells;
+        for (j = 0; j < model->n_genes; j++)
+            mat_set(model->L, d, j, mat_get(pca->components, d, j));
+    }
 
-        /* If the variance of the selected gene is very small, initialize the latent factor 
-        to a simple binary vector to avoid numerical issues. Otherwise, standardize 
-        the latent factor to have unit variance. */
-        if (var < 1e-8) {
-            for (i = 0; i < model->n_cells; i++)
-                mat_set(model->Z, i, d, (i == d % model->n_cells) ? 1.0 : 0.0);
-        }
-        else {
-            double scale = 1.0 / sqrt(var);
-            for (i = 0; i < model->n_cells; i++)
-                mat_set(model->Z, i, d, mat_get(model->Z, i, d) * scale);
+    for (i = 0; i < model->n_cells; i++) {
+        for (d = 0; d < model->k; d++) {
+            double score = 0.0;
+            for (j = 0; j < model->n_genes; j++)
+                score += mat_get(ws.Xc, i, j) * mat_get(model->L, d, j);
+            mat_set(model->Z, i, d, score);
         }
     }
 
-    /* Initialize the loading matrix by regressing each gene onto each latent
-    factor independently. This gives a reasonable first approximation to the
-    low-rank reconstruction before joint optimization. */
-    for (d = 0; d < model->k; d++) {
-        double denom = 1e-8;
-        for (i = 0; i < model->n_cells; i++) {
-            double zid = mat_get(model->Z, i, d);
-            denom += zid * zid;
-        }
+    /* Compute the residual sum of squares for the observation variance parameter.
+    This accounts for the difference between the observed and predicted values given
+    the retention of only a subset of PCA components. If all components were retained,
+    the residual sum of squares would be zero here. */
+    double sse = 0.0;
+    for (i = 0; i < model->n_cells; i++) {
         for (j = 0; j < model->n_genes; j++) {
-            double numer = 0.0;
-            for (i = 0; i < model->n_cells; i++)
-                numer += mat_get(model->Z, i, d) * mat_get(ws.Xc, i, j);
-            mat_set(model->L, d, j, numer / denom);
+            double pred = 0.0;
+            for (d = 0; d < model->k; d++)
+                pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);
+            sse += pow(mat_get(ws.Xc, i, j) - pred, 2.0);
         }
     }
-    {
-        double sse = 0.0;
-        for (i = 0; i < model->n_cells; i++) {
-            for (j = 0; j < model->n_genes; j++) {
-                double pred = 0.0;
-                for (d = 0; d < model->k; d++)
-                    pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);
-                sse += pow(mat_get(ws.Xc, i, j) - pred, 2.0);
-            }
-        }
-        model->sigma2_obs = sse / ((double)model->n_cells * model->n_genes);
-        if (model->sigma2_obs < 1e-6)
-            model->sigma2_obs = 1e-6;
-    }
+    model->sigma2_obs = sse / ((double)model->n_cells * model->n_genes);
+    if (model->sigma2_obs < 1e-6)
+        model->sigma2_obs = 1e-6;
 
-    /* Allocate gradients, optimizer state, and log-variance parameterization
-    used during Adam optimization of the model parameters. */
-    log_sigma_obs = log(model->sigma2_obs);
-    log_sigma_latent = (double *)calloc(k, sizeof(double));
-    grad_log_sigma_latent = (double *)calloc(k, sizeof(double));
-    m_log_sigma_latent = (double *)calloc(k, sizeof(double));
-    v_log_sigma_latent = (double *)calloc(k, sizeof(double));
-    grad_Z = mat_new(model->n_cells, k);
-    grad_L = mat_new(k, model->n_genes);
-    mZ = mat_new(model->n_cells, k);
-    vZ = mat_new(model->n_cells, k);
-    mL = mat_new(k, model->n_genes);
-    vL = mat_new(k, model->n_genes);
+    /* Allocate gradients, moments, and variances that Adam needs for each parameter.
+    Use a log-variance parameterization during optimization for the variance parameters 
+    to enforce positivity and for numerical stability. */
+    log_sigma_obs = log(model->sigma2_obs); /* Log of observation variance, since we optimize in log-space */
+    log_sigma_latent = (double *)calloc(k, sizeof(double)); /* Log of latent variances, since we optimize in log-space */
+    grad_log_sigma_latent = (double *)calloc(k, sizeof(double));    /* Gradient of log latent variances */
+    m_log_sigma_latent = (double *)calloc(k, sizeof(double));   /* First moment of log latent variances */
+    v_log_sigma_latent = (double *)calloc(k, sizeof(double));   /* Second moment of log latent variances */
+    grad_Z = mat_new(model->n_cells, k);    /* Gradient of latent coordinates */
+    grad_L = mat_new(k, model->n_genes);    /* Gradient of factor loadings */
+    mZ = mat_new(model->n_cells, k);    /* First moment of latent coordinates */
+    vZ = mat_new(model->n_cells, k);    /* Second moment of latent coordinates */
+    mL = mat_new(k, model->n_genes);    /* First moment of factor loadings */
+    vL = mat_new(k, model->n_genes);    /* Second moment of factor loadings */
     if (log_sigma_latent == NULL || grad_log_sigma_latent == NULL ||
         m_log_sigma_latent == NULL || v_log_sigma_latent == NULL ||
         grad_Z == NULL || grad_L == NULL || mZ == NULL || vZ == NULL ||
         mL == NULL || vL == NULL)
         goto cleanup_fit_latent_brownian_model;
 
+    /* Initialize history arrays for running averages of the objective function */
     objective_hist_long = (double *)calloc(running_avg_window_long, sizeof(double));
     objective_hist_short = (double *)calloc(running_avg_window_short, sizeof(double));
     if (objective_hist_long == NULL || objective_hist_short == NULL)
         goto cleanup_fit_latent_brownian_model;
 
+    /* Initialize the log-variance parameters from the initial variance values. */
     for (step = 0; step < k; step++)
         log_sigma_latent[step] = log(model->sigma2_latent[step]);
 
+    /* Zero the gradient matrices. */
     mat_zero(mZ); mat_zero(vZ); mat_zero(mL); mat_zero(vL);
     (void)seed;
 
     /* Initialize the scheduler that controls learning-rate and clipping
-    directives across optimization steps. */
-    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5);
+    directives across optimization steps.*/
+    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5); /* Parameter order: n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
     sched_state = sched_new_state(sched);
     if (sched == NULL || sched_state == NULL)
         goto cleanup_fit_latent_brownian_model;
-    metrics.grad_norm = 0.0;
+    metrics.grad_norm = 0.0;    /* Initialize the gradient norm */
 
     /* Run gradient-based optimization of latent coordinates, gene loadings,
     and the variance parameters using Adam updates until the objective and
@@ -480,25 +462,32 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     for (step = 1; step <= max_steps; step++) {
         int d;
 
+        /* Update the learning rate and clipping directives for this optimization step. */
         sched_next(sched, sched_state, (step == 1 ? NULL : &metrics), &directives);
 
+        /* Update the variance parameters in the model object from their log-space 
+        optimization representations. */
         model->sigma2_obs = exp(log_sigma_obs);
-        if (model->sigma2_obs < 1e-8) model->sigma2_obs = 1e-8;
+        if (model->sigma2_obs < 1e-8) 
+            model->sigma2_obs = 1e-8;
         for (d = 0; d < k; d++) {
             model->sigma2_latent[d] = exp(log_sigma_latent[d]);
-            if (model->sigma2_latent[d] < 1e-8) model->sigma2_latent[d] = 1e-8;
+            if (model->sigma2_latent[d] < 1e-8) 
+                model->sigma2_latent[d] = 1e-8;
         }
 
+        /* Compute the objective function and gradients */
         model->objective = gex_model_objective_and_grad(model, &ws, grad_Z, grad_L,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
+        
+        /* Compute the gradient norm */
         metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
                                                 grad_log_sigma_latent,
                                                 grad_log_sigma_obs, k);
 
         /* Compare the short and long running averages of the objective so
-        that convergence is judged using denoised trends at two time scales
-        rather than noisy single-iteration values. */
+        that convergence is judged using denoised trends at two time scales. */
         if (objective_hist_size_long > 0)
             running_objective_avg_long = running_objective_sum_long / (double)objective_hist_size_long;
         else
@@ -516,6 +505,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         else {
             rel_objective_change = HUGE_VAL;
         }
+
+        /* Scale the gradients if their norm exceeds the clipping threshold. */
         if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
             double scale = directives.clip_norm / metrics.grad_norm;
             gex_model_scale_grads(grad_Z, grad_L, grad_log_sigma_latent,
@@ -523,11 +514,14 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             metrics.grad_norm = directives.clip_norm;
         }
 
+        /* Update the model parameters using Adam optimization steps. */
         gex_model_adam_update_matrix(model->Z, grad_Z, mZ, vZ, step, directives.lr);
         gex_model_adam_update_matrix(model->L, grad_L, mL, vL, step, directives.lr);
         gex_model_adam_update_vector(log_sigma_latent, grad_log_sigma_latent,
                                      m_log_sigma_latent, v_log_sigma_latent,
                                      k, step, directives.lr);
+        
+        /* Update the log-space variance parameters. */
         {
             double grad_arr[1], m_arr[1], v_arr[1], param_arr[1];
             grad_arr[0] = grad_log_sigma_obs;
@@ -551,7 +545,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             stable_steps = 0;
         }
 
-        /* Record the scalar parameters and compact summaries of Z and L at
+        /* Log the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
         fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g",
                 step,
@@ -569,8 +563,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 gex_model_matrix_norm(model->L));
         fflush(logf);
 
-        /* Update both moving-average histories online in O(1) time so the
-        denoised convergence diagnostics do not slow optimization. */
+        /* Update both moving-average histories. */
         if (objective_hist_size_long < running_avg_window_long) {
             objective_hist_long[objective_hist_idx_long] = model->objective;
             running_objective_sum_long += model->objective;
@@ -595,6 +588,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
         objective_hist_idx_short = (objective_hist_idx_short + 1) % running_avg_window_short;
 
+        /* Check the convergence rule and break if satisfied. */
         if (stable_steps >= stable_steps_needed) {
             converged = 1;
             final_step = step;
@@ -602,8 +596,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
 
     }
+    /* Mark if convergence was not achieved and we reached the maximum number of steps specified */
     if (!converged)
         final_step = max_steps;
+    
+    /* Update the model object with the final variance parameter values from their log-space 
+    representations. */
     model->sigma2_obs = exp(log_sigma_obs);
     if (model->sigma2_obs < 1e-8) model->sigma2_obs = 1e-8;
     for (step = 0; step < k; step++) {
@@ -611,12 +609,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         if (model->sigma2_latent[step] < 1e-8)
             model->sigma2_latent[step] = 1e-8;
     }
+
+    /* Compute the final state objective and gradients. */
     model->objective = gex_model_objective_and_grad(model, &ws, grad_Z, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
 
-    /* Write a final footer line describing why optimization terminated and
-    the convergence settings used for the run. */
+    /* Write a final footer line describing why optimization terminated. */
     fprintf(logf, "# termination\t%s\tfinal_step\t%d\tstable_steps\t%d\tstable_steps_needed\t%d\tmin_steps\t%d\trel_objective_tol\t%.17g\n",
             (converged ? "converged" : "max_steps_reached"),
             final_step,
@@ -629,33 +628,33 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     success = 1;
 
     cleanup_fit_latent_brownian_model:
-    free(log_sigma_latent);
-    free(grad_log_sigma_latent);
-    free(m_log_sigma_latent);
-    free(v_log_sigma_latent);
-    free(objective_hist_long);
-    free(objective_hist_short);
-    if (grad_Z != NULL) mat_free(grad_Z);
-    if (grad_L != NULL) mat_free(grad_L);
-    if (mZ != NULL) mat_free(mZ);
-    if (vZ != NULL) mat_free(vZ);
-    if (mL != NULL) mat_free(mL);
-    if (vL != NULL) mat_free(vL);
-    if (sched_state != NULL) free(sched_state);
-    if (sched != NULL) free(sched);
-    if (L != NULL) mat_free(L);
-    if (logf != NULL) fclose(logf);
-    if (ws.Xc != NULL) mat_free(ws.Xc);
-    if (ws.Sigma_reg != NULL) mat_free(ws.Sigma_reg);
-    if (ws.Sigma_inv != NULL) mat_free(ws.Sigma_inv);
+        free(log_sigma_latent);
+        free(grad_log_sigma_latent);
+        free(m_log_sigma_latent);
+        free(v_log_sigma_latent);
+        free(objective_hist_long);
+        free(objective_hist_short);
+        if (grad_Z != NULL) mat_free(grad_Z);
+        if (grad_L != NULL) mat_free(grad_L);
+        if (mZ != NULL) mat_free(mZ);
+        if (vZ != NULL) mat_free(vZ);
+        if (mL != NULL) mat_free(mL);
+        if (vL != NULL) mat_free(vL);
+        if (sched_state != NULL) free(sched_state);
+        if (sched != NULL) free(sched);
+        if (L != NULL) mat_free(L);
+        if (logf != NULL) fclose(logf);
+        if (ws.Xc != NULL) mat_free(ws.Xc);
+        if (ws.Sigma_reg != NULL) mat_free(ws.Sigma_reg);
+        if (ws.Sigma_inv != NULL) mat_free(ws.Sigma_inv);
 
-    if (!success) {
-        if (model != NULL)
-            gex_free_latent_brownian_model(model);
-        return NULL;
-    }
+        if (!success) {
+            if (model != NULL)
+                gex_free_latent_brownian_model(model);
+            return NULL;
+        }
 
-    return model;
+        return model;
 }
 
 int gex_write_latent_brownian_model(const char *outprefix,

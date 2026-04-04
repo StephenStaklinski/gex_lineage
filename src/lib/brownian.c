@@ -585,12 +585,7 @@ int brownian_run_simulation_check(TreeNode *tree,
     printf("  negatives simulated: %d, rejected: %d, false positives: %d\n",
            n_null_genes, tn, fp);
 
-    status = (fn == 0 && fp == 0);
-
-    /* Free allocated memory */
-    goto cleanup_simulation_check;
-
-    return status;    /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
+    status = (fn == 0 && fp == 0); /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
 
     cleanup_simulation_check:
         gex_free_matrix_data(sim);
