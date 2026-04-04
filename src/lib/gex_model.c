@@ -630,16 +630,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
         if (m_log_sigma_latent != NULL) free(m_log_sigma_latent);
         if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
-            objective_tol);
-    fflush(logf);
-
-    success = 1;
-
-    cleanup_fit_latent_brownian_model:
-        if (log_sigma_latent != NULL) free(log_sigma_latent);
-        if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
-        if (m_log_sigma_latent != NULL) free(m_log_sigma_latent);
-        if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
         if (objective_hist_long != NULL) free(objective_hist_long);
         if (objective_hist_short != NULL) free(objective_hist_short);
         if (grad_Z != NULL) mat_free(grad_Z);
