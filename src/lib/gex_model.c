@@ -206,8 +206,9 @@ static void gex_model_adam_update_vector(double *param,
 }
 
 /* Compute the Frobenius norm of a matrix.
-Returns the Euclidean norm across all matrix entries. */
-static double gex_model_matrix_norm(Matrix *M) {
+This is equivalent to the Euclidean (l2) norm of all entries
+treated as a single vector. */
+static double frobenius_norm(Matrix *M) {
     int i, j;
     double ss = 0.0;
 
@@ -365,17 +366,20 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Allocate the model object and its core parameter matrices. */
     model = (GexLatentBrownianModel *)calloc(1, sizeof(GexLatentBrownianModel));
-    if (model == NULL)
+    if (model == NULL) {
         printf("ERROR: failed to allocate memory for the model object.\n");
         goto cleanup_fit_latent_brownian_model;
+    }
     model->n_cells = n_cells;
     model->n_genes = n_genes;
     model->k = k;
     model->Z = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
     model->sigma2_latent = (double *)calloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    if (model->Z == NULL || model->L == NULL || model->sigma2_latent == NULL)
+    if (model->L == NULL || model->Z == NULL || model->sigma2_latent == NULL) {
+        printf("ERROR: failed to allocate memory for the model parameter matrices.\n");
         goto cleanup_fit_latent_brownian_model;
+    }
     for (i = 0; i < k; i++)
         model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
     model->sigma2_obs = 1.0;    /* Initialize the observation variance parameter to 1.0 */
@@ -559,8 +563,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
         fprintf(logf, "\t%.17g\t%.17g\n",
-                gex_model_matrix_norm(model->Z),
-                gex_model_matrix_norm(model->L));
+                frobenius_norm(model->Z),
+                frobenius_norm(model->L));
         fflush(logf);
 
         /* Update both moving-average histories. */
@@ -616,12 +620,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     &grad_log_sigma_obs);
 
     /* Write a final footer line describing why optimization terminated. */
-    fprintf(logf, "# termination\t%s\tfinal_step\t%d\tstable_steps\t%d\tstable_steps_needed\t%d\tmin_steps\t%d\trel_objective_tol\t%.17g\n",
-            (converged ? "converged" : "max_steps_reached"),
-            final_step,
-            stable_steps,
-            stable_steps_needed,
-            min_steps,
+    fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
+    fflush(logf);
+
+    success = 1;
+
+    cleanup_fit_latent_brownian_model:
+        if (log_sigma_latent != NULL) free(log_sigma_latent);
+        if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
+        if (m_log_sigma_latent != NULL) free(m_log_sigma_latent);
+        if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
             objective_tol);
     fflush(logf);
 
