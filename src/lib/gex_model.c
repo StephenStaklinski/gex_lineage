@@ -226,7 +226,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       GexPCA *pca,
                                                       unsigned int seed,
                                                       const char *outprefix) {
-    int i, j, d, n;    /* Loop indices */
+    /* Optimization related */
     int step;   /* Optimization step */
     int max_steps = 100000;   /* Maximum number of optimization steps */
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
@@ -236,28 +236,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int stable_steps = 0;   /* Running count of consecutive near-converged steps */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule */
     int final_step = 0;   /* Final optimization step reached before termination */
-    int k;  /* Number of latent dimensions */
-    int n_cells = gex->n_cells;
-    int n_genes = gex->n_genes;
-    int success = 0;   /* Whether the model fitting completed successfully */
-    double log_sigma_obs;   /* Log of observation noise standard deviation */
-    double *log_sigma_latent = NULL;    /* Log of latent noise standard deviations */
-    double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
-    double *m_log_sigma_latent = NULL;  /* Adam optimizer moment estimates for latent noise */
-    double *v_log_sigma_latent = NULL;  /* Adam optimizer variance estimates for latent noise */
-    double grad_log_sigma_obs = 0.0;    /* Gradient of log observation noise standard deviation */
-    double m_log_sigma_obs = 0.0;   /* Adam optimizer moment estimate for observation noise */
-    double v_log_sigma_obs = 0.0;   /* Adam optimizer variance estimate for observation noise */
-    GexLatentBrownianWorkspace ws;  /* Workspace for precomputed matrices and intermediate calculations */
-    GexLatentBrownianModel *model = NULL;   /* Fitted model */
-    Matrix *grad_Z = NULL, *grad_L = NULL, *mZ = NULL, *vZ = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
     Scheduler *sched = NULL;    /* Scheduler for managing optimization steps */
     SchedState *sched_state = NULL; /* State for the scheduler */
     SchedDirectives directives; /* Directives for each optimization step */
     SchedMetrics metrics;   /* Metrics for each optimization step */
-    Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
-    double max_diag = 0.0;  /* Maximum diagonal element of Sigma */
-    double jitter;  /* Diagonal jitter used for numerical stability */
     double running_objective_avg_long = HUGE_VAL; /* Running average over the long objective window */
     double running_objective_avg_short = HUGE_VAL; /* Running average over the short objective window */
     double rel_objective_change = HUGE_VAL; /* Relative difference between the short and long running averages */
@@ -270,6 +252,33 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int objective_hist_idx_long = 0;    /* Next insertion position in the long history buffer */
     int objective_hist_idx_short = 0;    /* Next insertion position in the short history buffer */
     const double objective_tol = 1e-4;  /* Relative objective tolerance used for convergence */
+
+    /* Model related */
+    int k;  /* Number of latent dimensions */
+    int n_cells = gex->n_cells;
+    int n_genes = gex->n_genes;
+    GexLatentBrownianWorkspace ws;  /* Workspace for precomputed matrices and intermediate calculations */
+    GexLatentBrownianModel *model = NULL;   /* Fitted model */
+
+    /* Gradients */
+    double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
+    double grad_log_sigma_obs = 0.0;    /* Gradient of log observation noise standard deviation */
+
+    /* Distribution summary stats */
+    double *m_log_sigma_latent = NULL;  /* Adam optimizer moment estimates for latent noise */
+    double *v_log_sigma_latent = NULL;  /* Adam optimizer variance estimates for latent noise */
+    double m_log_sigma_obs = 0.0;   /* Adam optimizer moment estimate for observation noise */
+    double v_log_sigma_obs = 0.0;   /* Adam optimizer variance estimate for observation noise */
+    double log_sigma_obs;   /* Log of observation noise standard deviation */
+    double *log_sigma_latent = NULL;    /* Log of latent noise standard deviations */
+    Matrix *grad_Z = NULL, *grad_L = NULL, *mZ = NULL, *vZ = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
+
+    /* Other */
+    int i, j, d, n;    /* Loop indices */
+    int success = 0;   /* Whether the model fitting completed successfully */
+    Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
+    double max_diag = 0.0;  /* Maximum diagonal element of Sigma */
+    double jitter;  /* Diagonal jitter used for numerical stability */
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
 
@@ -311,6 +320,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (ws.Sigma_reg == NULL || ws.Sigma_inv == NULL || L == NULL)
         goto cleanup_fit_latent_brownian_model;
 
+    /* Find the maximum diagonal element of the covariance matrix */
     for (i = 0; i < n; i++) {
         double d = mat_get(Sigma, i, i);
         if (d > max_diag)
@@ -318,16 +328,19 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
     jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
 
+    /* Regularize the covariance matrix by adding jitter to the diagonal */
     for (i = 0; i < n; i++) {
         for (j = 0; j < n; j++)
             mat_set(ws.Sigma_reg, i, j, mat_get(Sigma, i, j));
         mat_set(ws.Sigma_reg, i, i, mat_get(ws.Sigma_reg, i, i) + jitter);
     }
 
+    /* Compute the inverse and Cholesky decomposition of the regularized covariance matrix */
     if (mat_invert(ws.Sigma_inv, ws.Sigma_reg) != 0 ||
         mat_cholesky(L, ws.Sigma_reg) != 0)
         goto cleanup_fit_latent_brownian_model;
 
+    /* Compute the log-determinant of the regularized covariance matrix from the Cholesky factor */
     ws.logdet_sigma = 0.0;
     for (i = 0; i < n; i++) {
         double diag = mat_get(L, i, i);
@@ -336,6 +349,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         ws.logdet_sigma += 2.0 * log(diag);
     }
 
+    /* Free the Cholesky factor since we only needed it for the log-determinant calculation. */
     mat_free(L);
     L = NULL;
 
@@ -345,26 +359,28 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Allocate the model object and its core parameter matrices. */
     model = (GexLatentBrownianModel *)calloc(1, sizeof(GexLatentBrownianModel));
     if (model == NULL)
+        printf("ERROR: failed to allocate memory for the model object.\n");
         goto cleanup_fit_latent_brownian_model;
     model->n_cells = n_cells;
     model->n_genes = n_genes;
     model->k = k;
-    model->Z = mat_new(n_cells, k);
-    model->L = mat_new(k, n_genes);
-    model->sigma2_latent = (double *)calloc(k, sizeof(double));
+    model->Z = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
+    model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
+    model->sigma2_latent = (double *)calloc(k, sizeof(double)); /* Allocate latent variance parameters */
     if (model->Z == NULL || model->L == NULL || model->sigma2_latent == NULL)
         goto cleanup_fit_latent_brownian_model;
     for (i = 0; i < k; i++)
         model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
-    model->sigma2_obs = 1.0;
+    model->sigma2_obs = 1.0;    /* Initialize the observation variance parameter to 1.0 */
 
     /* Initialize the latent coordinates from the centered data matrix using
     simple standardized gene-derived starting vectors. This provides a stable
     non-degenerate starting point for the optimizer. */
     for (d = 0; d < model->k; d++) {
-        int src_gene = d % model->n_genes;
+        int src_gene = d % model->n_genes;  /* Select a gene to initialize the latent factor */
         double mean = 0.0;
         double var = 0.0;
+        /* Compute the mean and variance of the selected gene (already centered) across all cells */
         for (i = 0; i < model->n_cells; i++)
             mean += mat_get(ws.Xc, i, src_gene);
         mean /= (double)model->n_cells;
@@ -374,6 +390,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             var += z * z;
         }
         var /= (double)model->n_cells;
+
+        /* If the variance of the selected gene is very small, initialize the latent factor 
+        to a simple binary vector to avoid numerical issues. Otherwise, standardize 
+        the latent factor to have unit variance. */
         if (var < 1e-8) {
             for (i = 0; i < model->n_cells; i++)
                 mat_set(model->Z, i, d, (i == d % model->n_cells) ? 1.0 : 0.0);
