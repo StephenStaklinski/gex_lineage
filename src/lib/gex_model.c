@@ -242,8 +242,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int running_avg_window_long = 500;   /* Number of recent steps used for the long running objective average */
     int running_avg_window_short = 100;   /* Number of recent steps used for the short running objective average */
     int stable_steps = 0;   /* Running count of consecutive near-converged steps */
-    int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule */
-    int final_step = 0;   /* Final optimization step reached before termination */
+    int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
     Scheduler *sched = NULL;    /* Scheduler for managing optimization steps */
     SchedState *sched_state = NULL; /* State for the scheduler */
     SchedDirectives directives; /* Directives for each optimization step */
@@ -595,14 +594,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         /* Check the convergence rule and break if satisfied. */
         if (stable_steps >= stable_steps_needed) {
             converged = 1;
-            final_step = step;
             break;
         }
 
     }
-    /* Mark if convergence was not achieved and we reached the maximum number of steps specified */
-    if (!converged)
-        final_step = max_steps;
     
     /* Update the model object with the final variance parameter values from their log-space 
     representations. */
