@@ -268,6 +268,7 @@ int main(int argc, char *argv[]) {
     
     /* Test the phylogenetic signal filter(s) with simulated data to understand
     the performance on the provided tree. */
+    printf("Running a simulation check of the phylogenetic signal filter(s) for the provided tree(s)...\n");
     if (!brownian_run_simulation_check(trees[0],
                                        gex->cell_names,
                                        gex->n_cells,
@@ -290,6 +291,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    printf("Applying the phylogenetic signal filter(s) to the real input gene expression matrix data...\n");
     /* Run the phylogenetic autocorrelation filter tests if requested */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
         morans = gex_compute_morans_i(gex, W, n_perms, seed);
@@ -358,6 +360,7 @@ int main(int argc, char *argv[]) {
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
+    printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
     pca = gex_compute_pca(gex_filtered, pca_var_threshold);
     if (pca == NULL) {
         fprintf(stderr, "ERROR: PCA failed.\n");
