@@ -500,12 +500,45 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
     return gex;
 }
 
+/* Add a simulated gene expression matrix to an existing matrix in place element-wise. */
+static int brownian_add_simulation_in_place(GexMatrix *dest, GexMatrix *src) {
+    int i, j;
+
+    if (dest == NULL || src == NULL || dest->X == NULL || src->X == NULL ||
+        dest->n_cells != src->n_cells || dest->n_genes != src->n_genes)
+        return -1;
+
+    for (i = 0; i < dest->n_cells; i++) {
+        for (j = 0; j < dest->n_genes; j++) {
+            mat_set(dest->X, i, j, mat_get(dest->X, i, j) + mat_get(src->X, i, j));
+        }
+    }
+
+    return 0;
+}
+
+/* Scale a simulated gene expression matrix in place element-wise. */
+static int brownian_scale_simulation_in_place(GexMatrix *gex, double factor) {
+    int i, j;
+
+    if (gex == NULL || gex->X == NULL)
+        return -1;
+
+    for (i = 0; i < gex->n_cells; i++) {
+        for (j = 0; j < gex->n_genes; j++) {
+            mat_set(gex->X, i, j, factor * mat_get(gex->X, i, j));
+        }
+    }
+
+    return 0;
+}
+
 /* Run a simulation check to evaluate the performance of the phylogenetic signal filter(s). 
 Sets up a simulation with the specified number of tree and null genes, runs the specified 
 filter(s), and evaluates how many tree genes are correctly identified as true positives and how 
 many null genes are incorrectly identified as false positives. Prints a summary of the results.
 Returns 1 if successful, 0 if failed. */
-int brownian_run_simulation_check(TreeNode *tree,
+int brownian_run_simulation_check(TreeNode **trees,
                                   char **names,
                                   int n,
                                   int n_tree_genes,
@@ -519,18 +552,49 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   int n_sigmas,
                                   unsigned int seed) {
     int status = 0;   /* Assume failure to start */
-    int j;
+    int i, j;
     int tp = 0, fn = 0, fp = 0, tn = 0;
     GexMatrix *sim = NULL;  /* Simulated gene expression matrix */
+    GexMatrix *tree_sim = NULL; /* Per-tree simulated matrix */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation on simulated data */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation on simulated data */
 
-    /* Run the Brownian simulation to generate the gene expression matrix with 
-    phylogenetic signal for the tree genes and no signal for the null genes. */
-    sim = brownian_simulate_expression(tree, names, n,
-                                       n_tree_genes, n_null_genes, seed);
-    if (sim == NULL)
+    if (trees == NULL || n_sigmas <= 0) {
+        fprintf(stderr, "ERROR: brownian_run_simulation_check got invalid tree set\n");
         return 0;
+    }
+
+    /* Run the Brownian simulation on each tree and average the resulting expression
+    matrices to form the expected simulated matrix under the tree set. */
+    for (i = 0; i < n_sigmas; i++) {
+        if (trees[i] == NULL) {
+            fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL tree at index %d\n", i);
+            goto cleanup_simulation_check;
+        }
+
+        tree_sim = brownian_simulate_expression(trees[i], names, n,
+                                                n_tree_genes, n_null_genes,
+                                                seed + (unsigned int)(104729u * i));
+        if (tree_sim == NULL)
+            goto cleanup_simulation_check;
+
+        if (sim == NULL) {
+            sim = tree_sim;
+            tree_sim = NULL;
+        } else {
+            if (brownian_add_simulation_in_place(sim, tree_sim) != 0) {
+                fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
+                goto cleanup_simulation_check;
+            }
+            gex_free_matrix_data(tree_sim);
+            tree_sim = NULL;
+        }
+    }
+
+    if (sim == NULL || brownian_scale_simulation_in_place(sim, 1.0 / (double)n_sigmas) != 0) {
+        fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
+        goto cleanup_simulation_check;
+    }
 
     /* Run the specified filter(s) on the simulated data. */
     if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
@@ -589,6 +653,7 @@ int brownian_run_simulation_check(TreeNode *tree,
     status = (fn == 0 && fp == 0); /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
 
     cleanup_simulation_check:
+        gex_free_matrix_data(tree_sim);
         gex_free_matrix_data(sim);
         gex_free_morans_result(morans);
         gex_free_lrt_result(lrt);

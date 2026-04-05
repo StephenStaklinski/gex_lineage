@@ -17,7 +17,7 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
                                         int n_null_genes,
                                         unsigned int seed);
 
-int brownian_run_simulation_check(TreeNode *tree,
+int brownian_run_simulation_check(TreeNode **trees,
                                   char **names,
                                   int n,
                                   int n_tree_genes,

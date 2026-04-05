@@ -289,7 +289,7 @@ int main(int argc, char *argv[]) {
     /* Test the phylogenetic signal filter(s) with simulated data to understand
     the performance on the provided tree. */
     printf("Running a simulation check of the phylogenetic signal filter(s) for the provided tree(s)...\n");
-    if (!brownian_run_simulation_check(trees[0],
+    if (!brownian_run_simulation_check(trees,
                                        gex->cell_names,
                                        gex->n_cells,
                                        n_sims,
