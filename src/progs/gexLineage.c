@@ -285,10 +285,12 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
-    if (n_filter_trees <= 0) {
-        fprintf(stderr, "ERROR: --n-filter-trees must be positive\n");
+    if (n_filter_trees < 0) {
+        fprintf(stderr, "ERROR: --n-filter-trees must be nonnegative (0 means use all trees)\n");
         goto cleanup;
     }
+    if (n_filter_trees == 0)
+        n_filter_trees = n_trees;
     if (n_filter_trees > n_trees) {
         fprintf(stderr, "ERROR: --n-filter-trees (%d) cannot exceed the number of loaded trees (%d)\n",
                 n_filter_trees, n_trees);
@@ -353,13 +355,17 @@ int main(int argc, char *argv[]) {
     if (verbose) {
         printf("Computed phylogenetic covariance matrix for the first tree:\n");
         print_covariance_summary(Sigmas[0], gex->cell_names, gex->n_cells);
-        printf("Using the first %d tree(s) for the phylogenetic filter calculations.\n",
-               n_filter_trees);
     }
 
     /* Test the phylogenetic signal filter(s) with simulated data to understand
-    the performance on the provided tree. */
-    printf("Running a simulation check of the phylogenetic signal filter(s) for the provided tree(s)...\n");
+    the performance on the tree subset used for filtering. */
+    if (n_filter_trees == n_trees) {
+        printf("Running a simulation check of the phylogenetic signal gene filter(s) using all %d tree(s)...\n",
+               n_filter_trees);
+    } else {
+        printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
+               n_filter_trees);
+    }
     if (!brownian_run_simulation_check(trees,
                                        gex->cell_names,
                                        gex->n_cells,
@@ -382,7 +388,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("Applying the phylogenetic signal filter(s) to the real input gene expression matrix data...\n");
+    
+    if (n_filter_trees == n_trees) {
+        printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using all %d tree(s)...\n", n_filter_trees);
+    } else {
+        printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the first %d tree(s)...\n",
+                n_filter_trees);
+    }
     /* Run the phylogenetic autocorrelation filter tests if requested */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
         morans = gex_compute_morans_i(gex, Sigmas, n_filter_trees, n_perms, seed);
