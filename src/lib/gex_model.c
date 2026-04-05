@@ -9,11 +9,44 @@
 #include <string.h>
 
 typedef struct {
-    Matrix *Xc;
-    Matrix *Sigma_reg;
     Matrix *Sigma_inv;
     double logdet_sigma;
+} GexLatentBrownianTreePrior;
+
+typedef struct {
+    Matrix *Xc;
+    GexLatentBrownianTreePrior *tree_priors;
+    int n_tree_priors;
+    double *prior_log_terms;
+    double *prior_weights;
 } GexLatentBrownianWorkspace;
+
+/* Compute log(sum_i exp(x[i])) in a numerically stable way using the
+log-sum-exp trick: max(x) + log(sum_i exp(x[i] - max(x))). */
+static double gex_model_logsumexp(double *x, int n) {
+    int i;
+    double max_x = -HUGE_VAL;
+    double sum = 0.0;
+
+    /* Find the maximum value in the array */
+    for (i = 0; i < n; i++) {
+        if (x[i] > max_x)
+            max_x = x[i];
+    }
+    if (!isfinite(max_x))
+        return max_x;
+
+    /* Sum the exponentials */
+    for (i = 0; i < n; i++)
+        sum += exp(x[i] - max_x);
+
+    /* Unlikely numerical stability check */
+    if (sum <= 0.0)
+        return -HUGE_VAL;
+
+    /* Return the log-sum-exp */
+    return max_x + log(sum);
+}
 
 /* Center the columns of a matrix by subtracting the mean of each column.
 Returns a newly allocated centered matrix or NULL on failure. */
@@ -53,15 +86,16 @@ latent Brownian factor model:
     X ≈ ZL + ε,      ε_ij ~ N(0, sigma2_obs)
     z_d ~ N(0, sigma2_latent[d] * Sigma) independently for each latent factor d
 
-The objective (up to constants) is the sum of three terms for the data likelihood, 
+The objective (up to constants) is the sum of three terms for the data likelihood,
 the latent factor Brownian prior, and the L2 regularization on loadings L:
     Matrix factorization data term (Gaussian likelihood):
     (1 / (2 sigma2_obs)) ||X - ZL||_F^2 + (np/2) log(sigma2_obs)
 
-    Brownian motion prior on latent factors z_d as columns in Z (cells x latent factors):
-    sum_d [ (1 / (2 sigma2_d)) z_d^T Sigma^{-1} z_d
-            + (n/2) log(sigma2_d)
-            + (1/2) log|Sigma| ]
+    Brownian motion prior on latent factors z_d as columns in Z (cells x latent factors),
+    marginalized over a set of trees:
+    sum_d [ (n/2) log(sigma2_d)
+            - log sum_t exp( - (1 / (2 sigma2_d)) z_d^T Sigma_t^{-1} z_d
+                             - (1/2) log|Sigma_t| ) ]
 
     L2 regularization on loadings to encourage distributed latent factors (prevents 
     overfitting to few genes):
@@ -128,25 +162,85 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
         }
     }
 
-    /* Add the Brownian motion multivariate Gaussian prior on Z for each latent dimension z_d:
-    z_d ~ N(0, sigma2_latent[d] * Sigma), and accumulate its
-    contribution to the objective and gradients. */
+    /* Add the Brownian motion multivariate Gaussian prior on Z for each latent
+   dimension z_d as z_d ~ N(0, sigma2_latent[d] * Sigma), marginalized over
+   a set of trees (mixture of Gaussians prior). */
     for (d = 0; d < k; d++) {
-        double quad = 0.0;
         double sigma2_d = model->sigma2_latent[d];
+        double log_mix;  /* log-sum-exp of per-tree log prior terms */
+        double expected_quad_over_sigma2 = 0.0;  /* E_t[ z_d^T Σ_t^{-1} z_d / sigma2_d ] under posterior tree weights */
 
-        for (i = 0; i < n; i++) {
-            double val = 0.0;
-            /* Compute (Sigma^{-1} z_d)_i */
-            for (t = 0; t < n; t++)
-                val += mat_get(ws->Sigma_inv, i, t) * mat_get(model->Z, t, d);
-            quad += mat_get(model->Z, i, d) * val;  /* Accumulate quadratic form z_d^T Sigma^{-1} z_d */
-            mat_set(grad_Z, i, d, mat_get(grad_Z, i, d) + val / sigma2_d);  /* Add prior gradient w.r.t. Z: (1/sigma2_d) * Sigma^{-1} z_d */
+        /* Compute per-tree log prior contributions (up to constants) */
+        for (t = 0; t < ws->n_tree_priors; t++) {
+            double quad = 0.0;  /* Quadratic form z_d^T Σ_t^{-1} z_d */
+            Matrix *Sigma_inv = ws->tree_priors[t].Sigma_inv;
+
+            for (i = 0; i < n; i++) {
+                double val = 0.0;
+                int ii;
+
+                /* Compute (Σ_t^{-1} z_d)_i */
+                for (ii = 0; ii < n; ii++)
+                    val += mat_get(Sigma_inv, i, ii) * mat_get(model->Z, ii, d);
+
+                /* Accumulate quadratic form */
+                quad += mat_get(model->Z, i, d) * val;
+            }
+
+            /* Store log prior (excluding (n/2) log sigma2_d, which is shared across trees):
+            log p(z_d | T_t) ∝ -1/(2σ²) z_d^T Σ_t^{-1} z_d - (1/2) log|Σ_t| */
+            ws->prior_log_terms[t] = -0.5 * quad / sigma2_d
+                                - 0.5 * ws->tree_priors[t].logdet_sigma;
         }
-        obj += 0.5 * quad / sigma2_d;   /* Quadratic term: (1/2 sigma2_d) * z_d^T Sigma^{-1} z_d */
-        obj += 0.5 * (double)n * log(sigma2_d); /* Log-determinant first term: (n/2) log(sigma2_d) */
-        obj += 0.5 * ws->logdet_sigma;  /* Log-determinant second term: (1/2) log|Sigma| */
-        grad_log_sigma_latent[d] = -0.5 * quad / sigma2_d + 0.5 * (double)n;    /* Gradient w.r.t. log(sigma2_d) */
+
+        /* Combine trees via log-sum-exp to marginalize over tree uncertainty */
+        log_mix = gex_model_logsumexp(ws->prior_log_terms, ws->n_tree_priors);
+
+        /* Numerical safety check */
+        if (!isfinite(log_mix)) {
+            mat_free(resid);
+            return HUGE_VAL;
+        }
+
+        /* Add marginal prior contribution:
+        -log sum_t p(z_d | T_t) + (n/2) log sigma2_d */
+        obj += 0.5 * (double)n * log(sigma2_d) - log_mix;
+
+        /* Compute gradients via responsibility-weighted average over trees */
+        for (t = 0; t < ws->n_tree_priors; t++) {
+            /* Posterior weight of tree t given current z_d:
+            w_t ∝ p(z_d | T_t) */
+            double weight = exp(ws->prior_log_terms[t] - log_mix);
+
+            Matrix *Sigma_inv = ws->tree_priors[t].Sigma_inv;
+            double quad = 0.0;
+
+            ws->prior_weights[t] = weight;
+
+            for (i = 0; i < n; i++) {
+                double val = 0.0;
+                int ii;
+
+                /* Compute (Σ_t^{-1} z_d)_i again for gradient */
+                for (ii = 0; ii < n; ii++)
+                    val += mat_get(Sigma_inv, i, ii) * mat_get(model->Z, ii, d);
+
+                /* Accumulate quadratic form (for sigma gradient) */
+                quad += mat_get(model->Z, i, d) * val;
+
+                /* Add weighted gradient contribution:
+                ∇_z_d = E_t[ (1/σ²) Σ_t^{-1} z_d ] */
+                mat_set(grad_Z, i, d,
+                        mat_get(grad_Z, i, d) + weight * val / sigma2_d);
+            }
+
+            /* Accumulate expected quadratic form under tree posterior */
+            expected_quad_over_sigma2 += weight * quad / sigma2_d;
+        }
+
+        /* Gradient w.r.t. log(sigma2_d):
+        (n/2) - (1/2) E_t[ z_d^T Σ_t^{-1} z_d / σ² ] */
+        grad_log_sigma_latent[d] = 0.5 * (double)n - 0.5 * expected_quad_over_sigma2;
     }
 
     /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization. */
@@ -303,7 +397,8 @@ is the gene loading matrix that defines the factors, and E is Gaussian observati
 noise capturing variation not explained by the low-rank structure. Returns a 
 pointer to the fitted model or NULL on failure. */
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
-                                                      Matrix *Sigma,
+                                                      Matrix **Sigmas,
+                                                      int n_sigmas,
                                                       GexPCA *pca,
                                                       unsigned int seed,
                                                       const char *outprefix) {
@@ -357,16 +452,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int i, j, d, n;    /* Loop indices */
     int success = 0;   /* Whether the model fitting completed successfully */
     Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
-    double max_diag = 0.0;  /* Maximum diagonal element of Sigma */
-    double jitter;  /* Diagonal jitter used for numerical stability */
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
 
     /* Input validation */
-    if (gex == NULL || gex->X == NULL || Sigma == NULL || pca == NULL ||
+    if (gex == NULL || gex->X == NULL || Sigmas == NULL || n_sigmas <= 0 || pca == NULL ||
         pca->K <= 0 || outprefix == NULL)
-        return NULL;
-    if (Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells)
         return NULL;
 
     /* Initialize workspace containers for the centered data matrix and the
@@ -391,47 +482,62 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (ws.Xc == NULL)
         goto cleanup_fit_latent_brownian_model;
 
-    /* Build a regularized version of the phylogenetic covariance matrix and
-    precompute its inverse and log-determinant for repeated use during fitting. */
-    n = Sigma->nrows;
-    ws.Sigma_reg = mat_new(n, n);
-    ws.Sigma_inv = mat_new(n, n);
-    L = mat_new(n, n);
-    if (ws.Sigma_reg == NULL || ws.Sigma_inv == NULL || L == NULL)
+    /* Build regularized versions of the phylogenetic covariance matrices and
+    precompute the inverse and log-determinant for each tree. */
+    n = gex->n_cells;
+    ws.tree_priors = (GexLatentBrownianTreePrior *)calloc(n_sigmas, sizeof(GexLatentBrownianTreePrior));
+    ws.prior_log_terms = (double *)calloc(n_sigmas, sizeof(double));
+    ws.prior_weights = (double *)calloc(n_sigmas, sizeof(double));
+    if (ws.tree_priors == NULL || ws.prior_log_terms == NULL || ws.prior_weights == NULL)
         goto cleanup_fit_latent_brownian_model;
+    ws.n_tree_priors = n_sigmas;
 
-    /* Find the maximum diagonal element of the covariance matrix */
-    for (i = 0; i < n; i++) {
-        double d = mat_get(Sigma, i, i);
-        if (d > max_diag)
-            max_diag = d;
-    }
-    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+    for (i = 0; i < n_sigmas; i++) {
+        Matrix *Sigma_reg = NULL;
+        double max_diag = 0.0;
+        double jitter;
 
-    /* Regularize the covariance matrix by adding jitter to the diagonal */
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            mat_set(ws.Sigma_reg, i, j, mat_get(Sigma, i, j));
-        mat_set(ws.Sigma_reg, i, i, mat_get(ws.Sigma_reg, i, i) + jitter);
-    }
-
-    /* Compute the inverse and Cholesky decomposition of the regularized covariance matrix */
-    if (mat_invert(ws.Sigma_inv, ws.Sigma_reg) != 0 ||
-        mat_cholesky(L, ws.Sigma_reg) != 0)
-        goto cleanup_fit_latent_brownian_model;
-
-    /* Compute the log-determinant of the regularized covariance matrix from the Cholesky factor */
-    ws.logdet_sigma = 0.0;
-    for (i = 0; i < n; i++) {
-        double diag = mat_get(L, i, i);
-        if (diag <= 0.0)
+        if (Sigmas[i] == NULL || Sigmas[i]->nrows != n || Sigmas[i]->ncols != n)
             goto cleanup_fit_latent_brownian_model;
-        ws.logdet_sigma += 2.0 * log(diag);
-    }
 
-    /* Free the Cholesky factor since we only needed it for the log-determinant calculation. */
-    mat_free(L);
-    L = NULL;
+        ws.tree_priors[i].Sigma_inv = mat_new(n, n);
+        Sigma_reg = mat_create_copy(Sigmas[i]);
+        L = mat_new(n, n);
+        if (ws.tree_priors[i].Sigma_inv == NULL || Sigma_reg == NULL || L == NULL) {
+            if (Sigma_reg != NULL) mat_free(Sigma_reg);
+            goto cleanup_fit_latent_brownian_model;
+        }
+
+        for (j = 0; j < n; j++) {
+            double d = mat_get(Sigmas[i], j, j);
+            if (d > max_diag)
+                max_diag = d;
+        }
+        jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+
+        for (j = 0; j < n; j++)
+            mat_set(Sigma_reg, j, j, mat_get(Sigma_reg, j, j) + jitter);
+
+        if (mat_invert(ws.tree_priors[i].Sigma_inv, Sigma_reg) != 0 ||
+            mat_cholesky(L, Sigma_reg) != 0) {
+            mat_free(Sigma_reg);
+            goto cleanup_fit_latent_brownian_model;
+        }
+
+        ws.tree_priors[i].logdet_sigma = 0.0;
+        for (j = 0; j < n; j++) {
+            double diag = mat_get(L, j, j);
+            if (diag <= 0.0) {
+                mat_free(Sigma_reg);
+                goto cleanup_fit_latent_brownian_model;
+            }
+            ws.tree_priors[i].logdet_sigma += 2.0 * log(diag);
+        }
+
+        mat_free(Sigma_reg);
+        mat_free(L);
+        L = NULL;
+    }
 
     /* Use the number of input PCA components as the number of latent dimensions */
     k = pca->K; 
@@ -711,8 +817,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         if (L != NULL) mat_free(L);
         if (logf != NULL) fclose(logf);
         if (ws.Xc != NULL) mat_free(ws.Xc);
-        if (ws.Sigma_reg != NULL) mat_free(ws.Sigma_reg);
-        if (ws.Sigma_inv != NULL) mat_free(ws.Sigma_inv);
+        if (ws.tree_priors != NULL) {
+            for (i = 0; i < ws.n_tree_priors; i++) {
+                if (ws.tree_priors[i].Sigma_inv != NULL)
+                    mat_free(ws.tree_priors[i].Sigma_inv);
+            }
+            free(ws.tree_priors);
+        }
+        if (ws.prior_log_terms != NULL) free(ws.prior_log_terms);
+        if (ws.prior_weights != NULL) free(ws.prior_weights);
 
         if (!success) {
             if (model != NULL)

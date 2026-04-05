@@ -7,6 +7,68 @@
 #include "pca.h"
 #include "brownian.h"
 
+static unsigned int gexlineage_rand_u32(unsigned int *state) {
+    *state = (*state * 1664525u) + 1013904223u;
+    return *state;
+}
+
+static void gexlineage_shuffle_ints(int *x, int n, unsigned int *state) {
+    int i;
+
+    for (i = n - 1; i > 0; i--) {
+        int j = (int)(gexlineage_rand_u32(state) % (unsigned int)(i + 1));
+        int tmp = x[i];
+        x[i] = x[j];
+        x[j] = tmp;
+    }
+}
+
+static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
+                                               int n_sigmas,
+                                               int n_keep,
+                                               unsigned int seed,
+                                               int *n_selected_out) {
+    int i;
+    Matrix **selected = NULL;
+    int *indices = NULL;
+    unsigned int rng_state;
+
+    if (Sigmas == NULL || n_sigmas <= 0 || n_selected_out == NULL)
+        return NULL;
+
+    if (n_keep <= 0 || n_keep >= n_sigmas)
+        n_keep = n_sigmas;
+
+    selected = (Matrix **)calloc(n_keep, sizeof(Matrix *));
+    if (selected == NULL)
+        return NULL;
+
+    if (n_keep == n_sigmas) {
+        for (i = 0; i < n_sigmas; i++)
+            selected[i] = Sigmas[i];
+        *n_selected_out = n_keep;
+        return selected;
+    }
+
+    indices = (int *)malloc(n_sigmas * sizeof(int));
+    if (indices == NULL) {
+        free(selected);
+        return NULL;
+    }
+
+    for (i = 0; i < n_sigmas; i++)
+        indices[i] = i;
+
+    rng_state = (seed == 0u ? 1u : seed);
+    gexlineage_shuffle_ints(indices, n_sigmas, &rng_state);
+    for (i = 0; i < n_keep; i++)
+        selected[i] = Sigmas[indices[i]];
+
+    free(indices);
+    *n_selected_out = n_keep;
+    return selected;
+}
+
 /* Parse the filter mode from a string. Sets pointer to mode_out.
 Returns 0 on success or -1 on failure. */
 static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
@@ -46,6 +108,7 @@ static void usage(const char *progname) {
         "--outprefix <prefix> "
         "[--tree-total-time T] "
         "[--n-filter-trees N] "
+        "[--n-model-trees N] "
         "[--filter-test lrt|moran|both] "
         "[--lrt-alt lambda|full] "
         "[--pca-var-threshold V] "
@@ -69,6 +132,7 @@ int main(int argc, char *argv[]) {
     int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     int n_filter_trees = 1;  /* Number of trees to use when computing phylogenetic filter expectations */
+    int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
@@ -84,11 +148,13 @@ int main(int argc, char *argv[]) {
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
+    Matrix **model_Sigmas = NULL; /* Selected covariance matrices for latent model fitting */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     GexPCA *pca = NULL; /* PCA results */
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
     int n_trees = 0;    /* Number of input trees */
+    int n_model_sigmas = 0; /* Number of covariance matrices selected for latent model fitting */
     int i;  /* Pre-allocated generic loop index variable */
     int status = 1; /* Assume failure by default */
     
@@ -128,6 +194,13 @@ int main(int argc, char *argv[]) {
                 goto cleanup;
             }
             n_filter_trees = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--n-model-trees") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                goto cleanup;
+            }
+            n_model_trees = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
@@ -232,6 +305,15 @@ int main(int argc, char *argv[]) {
                 n_filter_trees, n_trees);
         goto cleanup;
     }
+    if (n_model_trees < 0) {
+        fprintf(stderr, "ERROR: --n-model-trees must be nonnegative (0 means use all trees)\n");
+        goto cleanup;
+    }
+    if (n_model_trees > n_trees) {
+        fprintf(stderr, "ERROR: --n-model-trees (%d) cannot exceed the number of loaded trees (%d)\n",
+                n_model_trees, n_trees);
+        goto cleanup;
+    }
 
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
@@ -285,6 +367,16 @@ int main(int argc, char *argv[]) {
         printf("Using the first %d tree(s) for the phylogenetic filter calculations.\n",
                n_filter_trees);
     }
+
+    model_Sigmas = gexlineage_select_model_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u, &n_model_sigmas);
+    if (model_Sigmas == NULL) {
+        fprintf(stderr, "ERROR: failed to select covariance matrices for latent model fitting.\n");
+        goto cleanup;
+    }
+    n_model_trees = n_model_sigmas;
+    printf("Using %d tree(s) for latent model fitting%s.\n",
+           n_model_trees,
+           (n_model_trees < n_trees ? " after random downsampling" : ""));
 
     /* Test the phylogenetic signal filter(s) with simulated data to understand
     the performance on the provided tree. */
@@ -394,7 +486,7 @@ int main(int argc, char *argv[]) {
 
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
-    model = gex_fit_latent_brownian_model(gex_filtered, Sigmas[0], pca, seed, outprefix);
+    model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees, pca, seed, outprefix);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model.\n");
         goto cleanup;
@@ -425,6 +517,7 @@ int main(int argc, char *argv[]) {
         gex_free_lrt_result(lrt);
         gex_free_pca(pca);
         gex_free_latent_brownian_model(model);
+        free(model_Sigmas);
         if (Sigmas != NULL) {
             for (i = 0; i < n_trees; i++) {
                 if (Sigmas[i] != NULL)

@@ -19,7 +19,8 @@ typedef struct {
 } GexLatentBrownianModel;
 
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
-                                                      Matrix *Sigma,
+                                                      Matrix **Sigmas,
+                                                      int n_sigmas,
                                                       GexPCA *pca,
                                                       unsigned int seed,
                                                       const char *outprefix);
