@@ -69,7 +69,8 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
                                       GexMatrix **gex_ptr);
 
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
-                                      Matrix *Sigma,
+                                      Matrix **Sigmas,
+                                      int n_sigmas,
                                       int n_perm,
                                       unsigned int seed);
 
@@ -87,7 +88,8 @@ int gex_write_morans_tsv(const char *filename,
 void gex_free_morans_result(GexMoransResult *res);
 
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
-                                       Matrix *Sigma,
+                                       Matrix **Sigmas,
+                                       int n_sigmas,
                                        int n_mc,
                                        unsigned int seed,
                                        GexLRTAltMode alt_mode);

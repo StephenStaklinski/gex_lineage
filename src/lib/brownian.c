@@ -515,7 +515,8 @@ int brownian_run_simulation_check(TreeNode *tree,
                                   int n_perm,
                                   double max_q,
                                   double min_i,
-                                  Matrix *Sigma,
+                                  Matrix **Sigmas,
+                                  int n_sigmas,
                                   unsigned int seed) {
     int status = 0;   /* Assume failure to start */
     int j;
@@ -533,15 +534,16 @@ int brownian_run_simulation_check(TreeNode *tree,
 
     /* Run the specified filter(s) on the simulated data. */
     if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
-        morans = (Sigma == NULL ? NULL : gex_compute_morans_i(sim, Sigma, n_perm, seed + 17u));
+        morans = (Sigmas == NULL ? NULL : gex_compute_morans_i(sim, Sigmas, n_sigmas, n_perm, seed + 17u));
     
     if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
-        lrt = (Sigma == NULL ? NULL : gex_compute_brownian_lrt(sim, Sigma,
+        lrt = (Sigmas == NULL ? NULL : gex_compute_brownian_lrt(sim, Sigmas,
+                                                               n_sigmas,
                                                                n_perm,
                                                                seed + 31u,
                                                                lrt_alt_mode));
 
-    if (Sigma == NULL ||
+    if (Sigmas == NULL || n_sigmas <= 0 ||
         ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && morans == NULL) ||
         ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) && lrt == NULL)) {
         goto cleanup_simulation_check;

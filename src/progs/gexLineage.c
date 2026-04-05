@@ -45,6 +45,7 @@ static void usage(const char *progname) {
         "--expr <matrix.tsv> "
         "--outprefix <prefix> "
         "[--tree-total-time T] "
+        "[--n-filter-trees N] "
         "[--filter-test lrt|moran|both] "
         "[--lrt-alt lambda|full] "
         "[--pca-var-threshold V] "
@@ -67,6 +68,7 @@ int main(int argc, char *argv[]) {
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
     int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
+    int n_filter_trees = 1;  /* Number of trees to use when computing phylogenetic filter expectations */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
@@ -119,6 +121,13 @@ int main(int argc, char *argv[]) {
                 goto cleanup;
             }
             tree_total_time = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--n-filter-trees") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                goto cleanup;
+            }
+            n_filter_trees = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
@@ -214,6 +223,16 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
+    if (n_filter_trees <= 0) {
+        fprintf(stderr, "ERROR: --n-filter-trees must be positive\n");
+        goto cleanup;
+    }
+    if (n_filter_trees > n_trees) {
+        fprintf(stderr, "ERROR: --n-filter-trees (%d) cannot exceed the number of loaded trees (%d)\n",
+                n_filter_trees, n_trees);
+        goto cleanup;
+    }
+
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
         goto cleanup;
@@ -263,6 +282,8 @@ int main(int argc, char *argv[]) {
     if (verbose) {
         printf("Computed phylogenetic covariance matrix for the first tree:\n");
         print_covariance_summary(Sigmas[0], gex->cell_names, gex->n_cells);
+        printf("Using the first %d tree(s) for the phylogenetic filter calculations.\n",
+               n_filter_trees);
     }
 
     /* Test the phylogenetic signal filter(s) with simulated data to understand
@@ -278,7 +299,8 @@ int main(int argc, char *argv[]) {
                                        n_perms,
                                        max_q,
                                        moran_min_i,
-                                       Sigmas[0],
+                                       Sigmas,
+                                       n_filter_trees,
                                        seed)) {
         if (verbose) {
             printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
@@ -292,7 +314,7 @@ int main(int argc, char *argv[]) {
     printf("Applying the phylogenetic signal filter(s) to the real input gene expression matrix data...\n");
     /* Run the phylogenetic autocorrelation filter tests if requested */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
-        morans = gex_compute_morans_i(gex, Sigmas[0], n_perms, seed);
+        morans = gex_compute_morans_i(gex, Sigmas, n_filter_trees, n_perms, seed);
         if (morans == NULL) {
             fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
             goto cleanup;
@@ -317,7 +339,7 @@ int main(int argc, char *argv[]) {
 
     /* Run the phylogenetic LRT filter tests if requested */
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-        lrt = gex_compute_brownian_lrt(gex, Sigmas[0], n_perms, seed, lrt_alt_mode);
+        lrt = gex_compute_brownian_lrt(gex, Sigmas, n_filter_trees, n_perms, seed, lrt_alt_mode);
         if (lrt == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
             goto cleanup;

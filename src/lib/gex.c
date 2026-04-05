@@ -1209,62 +1209,72 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 
 /* Compute Moran's I for each gene in the expression matrix.
 Moran's I is a measure of spatial autocorrelation, which is
-calculated here as Z^T * W * Z where z is the column-wise standardized
-gene expression matrix and W is derived internally from the Brownian
-covariance matrix Sigma. Returns a pointer to the result structure. */
+calculated here as the expectation over trees of Z^T * W_t * Z,
+where z is the column-wise standardized gene expression matrix and
+W_t is derived internally from the Brownian covariance matrix Sigma_t.
+Returns a pointer to the result structure. */
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
-                                      Matrix *Sigma,
+                                      Matrix **Sigmas,
+                                      int n_sigmas,
                                       int n_perm,
                                       unsigned int seed) {
-    int i, j, k;    /* Loop indices */
+    int i, j, k, t;    /* Loop indices */
     int success = 0;    /* Whether computation finished successfully */
     int n_cells;    /* Number of cells (rows in the expression matrix) */
     int n_genes;    /* Number of genes (columns in the expression matrix) */
     unsigned int rng_state; /* State for the random number generator used in permutation testing */
     Matrix *Z = NULL;   /* Standardized gene expression matrix (n_cells x n_genes) */
-    Matrix *W = NULL;   /* Weight matrix derived from the Brownian covariance matrix */
-    Matrix *B = NULL;   /* Intermediate matrix for W * Z (n_cells x n_genes) */
+    Matrix **Ws = NULL; /* Weight matrices derived from the Brownian covariance matrices */
+    Matrix *B = NULL;   /* Intermediate matrix for E[W] * Z (n_cells x n_genes) */
     GexMoransResult *res = NULL;    /* Result structure for Moran's I computation */
     double *zcol = NULL;    /* Temporary array to hold a single column of the standardized matrix for permutation testing */
     double *perm = NULL;    /* Temporary array to hold the permuted version of the column for permutation testing */
 
     /* Validate input parameters */
-    if (gex == NULL || gex->X == NULL || Sigma == NULL || n_perm <= 0) {
+    if (gex == NULL || gex->X == NULL || Sigmas == NULL || n_sigmas <= 0 || n_perm <= 0) {
         fprintf(stderr, "ERROR: gex_compute_morans_i got invalid input\n");
         return NULL;
     }
     n_cells = gex->n_cells;
     n_genes = gex->n_genes;
-    if (Sigma->nrows != n_cells || Sigma->ncols != n_cells) {
-        fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells\n");
+    Ws = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
+    if (Ws == NULL)
         return NULL;
-    }
-
-    W = weight_matrix_from_covariance(Sigma);
-    if (W == NULL) {
-        fprintf(stderr, "ERROR: failed to derive Moran weight matrix from covariance\n");
-        return NULL;
+    for (t = 0; t < n_sigmas; t++) {
+        if (Sigmas[t] == NULL ||
+            Sigmas[t]->nrows != n_cells ||
+            Sigmas[t]->ncols != n_cells) {
+            fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells\n");
+            goto cleanup_compute_morans_i;
+        }
+        Ws[t] = weight_matrix_from_covariance(Sigmas[t]);
+        if (Ws[t] == NULL) {
+            fprintf(stderr, "ERROR: failed to derive Moran weight matrix from covariance\n");
+            goto cleanup_compute_morans_i;
+        }
     }
 
     /* Normalize the gene expression matrix */
     Z = gex_standardize_columns(gex);
     if (Z == NULL) {
         fprintf(stderr, "ERROR: failed to standardize gene expression matrix\n");
-        return NULL;
+        goto cleanup_compute_morans_i;
     }
 
-    /* Compute W * Z */
+    /* Compute E[W * Z] across the tree set. */
     B = mat_new(n_cells, n_genes);
     if (B == NULL) {
-        mat_free(Z);
-        return NULL;
+        goto cleanup_compute_morans_i;
     }
+    mat_zero(B);
     for (i = 0; i < n_cells; i++) {
         for (j = 0; j < n_genes; j++) {
             double sum = 0.0;
-            for (k = 0; k < n_cells; k++)
-                sum += mat_get(W, i, k) * mat_get(Z, k, j);
-            mat_set(B, i, j, sum);
+            for (t = 0; t < n_sigmas; t++) {
+                for (k = 0; k < n_cells; k++)
+                    sum += mat_get(Ws[t], i, k) * mat_get(Z, k, j);
+            }
+            mat_set(B, i, j, sum / (double)n_sigmas);
         }
     }
 
@@ -1316,7 +1326,10 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
             double perm_i;
             memcpy(perm, zcol, n_cells * sizeof(double));   /* Copy the column */
             gex_shuffle_double(perm, n_cells, &rng_state);  /* Shuffle the column */
-            perm_i = gex_weighted_quadratic(W, perm, n_cells);  /* Compute the weighted quadratic form */
+            perm_i = 0.0;
+            for (t = 0; t < n_sigmas; t++)
+                perm_i += gex_weighted_quadratic(Ws[t], perm, n_cells);
+            perm_i /= (double)n_sigmas;  /* Compute the expected weighted quadratic form */
             if (perm_i >= res->morans_i[j]) /* Track permutations with higher or equal Moran's I */
                 ge_count++;
         }
@@ -1336,8 +1349,13 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
             free(perm);
         if (Z != NULL)
             mat_free(Z);
-        if (W != NULL)
-            mat_free(W);
+        if (Ws != NULL) {
+            for (t = 0; t < n_sigmas; t++) {
+                if (Ws[t] != NULL)
+                    mat_free(Ws[t]);
+            }
+            free(Ws);
+        }
         if (B != NULL)
             mat_free(B);
         if (!success) {
@@ -1422,14 +1440,15 @@ int gex_write_morans_tsv(const char *filename,
     return 0;
 }
 
-/* Compute the Brownian LRT for a given expression matrix and phylogenetic covariance matrix.
+/* Compute the Brownian LRT for a given expression matrix and tree-set of phylogenetic covariance matrices.
    The LRT compares:
 
      Null model:   y ~ N(mu, sigma^2 * I)
                    (no phylogenetic structure; identity covariance used)
 
-     Alternative:  y ~ N(mu, sigma^2 * Sigma)
-                   (Brownian motion on the tree; phylogenetic covariance used)
+     Alternative:  y ~ N(mu, sigma^2 * Sigma_t)
+                   (Brownian motion on each tree t; the alternative log-likelihood
+                   is averaged across the supplied tree set)
 
    For each gene, the function computes the log-likelihood under both models
    and forms the likelihood ratio statistic LRT = 2 * (logLik_alt - logLik_null).
@@ -1439,93 +1458,92 @@ int gex_write_morans_tsv(const char *filename,
    alternative. Returns a pointer to the result structure or NULL on failure.
 */
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
-                                       Matrix *Sigma,
+                                       Matrix **Sigmas,
+                                       int n_sigmas,
                                        int n_mc,
                                        unsigned int seed,
                                        GexLRTAltMode alt_mode) {
-    int i, j;   /* Loop indices */
+    int i, j, t;   /* Loop indices */
     int n;  /* Number of cells */
-    Matrix *Sigma_reg = NULL;   /* Regularized covariance matrix */
-    Matrix *Sigma_inv = NULL;   /* Inverse of the regularized covariance matrix */
-    Matrix *L = NULL;   /* Cholesky factor of the regularized covariance matrix */
-    Matrix *Sigma_lambda = NULL;   /* Lambda-transformed covariance matrix */
+    Matrix **Sigma_regs = NULL;   /* Regularized covariance matrices */
+    Matrix **Sigma_invs = NULL;   /* Inverses of regularized covariance matrices */
+    Matrix **Ls = NULL;   /* Cholesky factors of regularized covariance matrices */
+    Matrix **Sigma_lambdas = NULL;   /* Lambda-transformed covariance matrices */
     GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
-    double logdet_sigma = 0.0;  /* Log determinant of the regularized covariance matrix */
-    double max_diag = 0.0;  /* Maximum diagonal element of the covariance matrix */
-    double jitter;  /* Jitter to add to the diagonal for numerical stability */
+    double *logdet_sigmas = NULL;   /* Log determinants of the regularized covariance matrices */
+    double *jitters = NULL;   /* Per-tree diagonal jitters for numerical stability */
     double *y = NULL;   /* Vector for storing the expression values */
     double *y_sim = NULL;   /* Vector for storing simulated expression values */
     unsigned int rng_state; /* Random number generator state */
 
-    if (gex == NULL || gex->X == NULL || Sigma == NULL ||
-        Sigma->nrows != Sigma->ncols || Sigma->nrows != gex->n_cells ||
+    if (gex == NULL || gex->X == NULL || Sigmas == NULL || n_sigmas <= 0 ||
         alt_mode < GEX_LRT_ALT_FULL || alt_mode > GEX_LRT_ALT_LAMBDA ||
         (alt_mode == GEX_LRT_ALT_FULL && n_mc <= 0)) {
         fprintf(stderr, "ERROR: gex_compute_brownian_lrt got invalid input\n");
         return NULL;
     }
 
-    /* Initialize matrices */
     n = gex->n_cells;
-    Sigma_reg = mat_new(n, n);
-    Sigma_inv = mat_new(n, n);
-    L = mat_new(n, n);
+    Sigma_regs = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
+    Sigma_invs = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
+    Ls = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
+    logdet_sigmas = (double *)calloc(n_sigmas, sizeof(double));
+    jitters = (double *)calloc(n_sigmas, sizeof(double));
     if (alt_mode == GEX_LRT_ALT_LAMBDA)
-        Sigma_lambda = mat_new(n, n);
-    if (Sigma_reg == NULL || Sigma_inv == NULL || L == NULL ||
-        (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambda == NULL)) {
-        if (Sigma_reg != NULL) mat_free(Sigma_reg);
-        if (Sigma_inv != NULL) mat_free(Sigma_inv);
-        if (L != NULL) mat_free(L);
-        if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
-        return NULL;
+        Sigma_lambdas = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
+    if (Sigma_regs == NULL || Sigma_invs == NULL || Ls == NULL ||
+        logdet_sigmas == NULL || jitters == NULL ||
+        (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambdas == NULL)) {
+        goto cleanup_compute_brownian_lrt;
     }
 
-    /* Determine the relative jitter to add to the diagonal of Sigma for numerical stability in inversion and Cholesky decomposition */
-    for (i = 0; i < n; i++) {
-        double d = mat_get(Sigma, i, i);
-        if (d > max_diag)
-            max_diag = d;
-    }
-    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+    for (t = 0; t < n_sigmas; t++) {
+        double max_diag = 0.0;
 
-    /* Regularize Sigma by adding jitter to the diagonal and copy to Sigma_reg */
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            mat_set(Sigma_reg, i, j, mat_get(Sigma, i, j));
-        mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
-    }
-
-    if (alt_mode == GEX_LRT_ALT_FULL) {
-        /* Invert the regularized covariance matrix */
-        if (mat_invert(Sigma_inv, Sigma_reg) != 0) {
-            fprintf(stderr, "ERROR: failed to invert Brownian covariance matrix for LRT\n");
-            mat_free(Sigma_reg);
-            mat_free(Sigma_inv);
-            mat_free(L);
-            if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
-            return NULL;
-        }
-        if (mat_cholesky(L, Sigma_reg) != 0) {
-            fprintf(stderr, "ERROR: failed to Cholesky Brownian covariance matrix for LRT\n");
-            mat_free(Sigma_reg);
-            mat_free(Sigma_inv);
-            mat_free(L);
-            if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
-            return NULL;
+        if (Sigmas[t] == NULL || Sigmas[t]->nrows != n || Sigmas[t]->ncols != n) {
+            fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells for tree %d\n",
+                    t + 1);
+            goto cleanup_compute_brownian_lrt;
         }
 
-        /* Compute the log determinant of the regularized covariance matrix */
+        Sigma_regs[t] = mat_new(n, n);
+        Sigma_invs[t] = mat_new(n, n);
+        Ls[t] = mat_new(n, n);
+        if (alt_mode == GEX_LRT_ALT_LAMBDA)
+            Sigma_lambdas[t] = mat_new(n, n);
+        if (Sigma_regs[t] == NULL || Sigma_invs[t] == NULL || Ls[t] == NULL ||
+            (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambdas[t] == NULL)) {
+            goto cleanup_compute_brownian_lrt;
+        }
+
         for (i = 0; i < n; i++) {
-            double diag = mat_get(L, i, i);
-            if (diag <= 0.0) {
-                mat_free(Sigma_reg);
-                mat_free(Sigma_inv);
-                mat_free(L);
-                if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
-                return NULL;
+            double d = mat_get(Sigmas[t], i, i);
+            if (d > max_diag)
+                max_diag = d;
+        }
+        jitters[t] = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+
+        for (i = 0; i < n; i++) {
+            for (j = 0; j < n; j++)
+                mat_set(Sigma_regs[t], i, j, mat_get(Sigmas[t], i, j));
+            mat_set(Sigma_regs[t], i, i, mat_get(Sigma_regs[t], i, i) + jitters[t]);
+        }
+
+        if (alt_mode == GEX_LRT_ALT_FULL) {
+            if (mat_invert(Sigma_invs[t], Sigma_regs[t]) != 0 ||
+                mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
+                fprintf(stderr, "ERROR: failed to initialize Brownian covariance matrices for LRT tree %d\n",
+                        t + 1);
+                goto cleanup_compute_brownian_lrt;
             }
-            logdet_sigma += 2.0 * log(diag);
+            for (i = 0; i < n; i++) {
+                double diag = mat_get(Ls[t], i, i);
+                if (diag <= 0.0) {
+                    fprintf(stderr, "ERROR: invalid Cholesky factor for LRT tree %d\n", t + 1);
+                    goto cleanup_compute_brownian_lrt;
+                }
+                logdet_sigmas[t] += 2.0 * log(diag);
+            }
         }
     }
 
@@ -1535,14 +1553,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     if (alt_mode == GEX_LRT_ALT_FULL)
         y_sim = (double *)malloc(n * sizeof(double));
     if (res == NULL || y == NULL || (alt_mode == GEX_LRT_ALT_FULL && y_sim == NULL)) {
-        free(y);
-        free(y_sim);
-        free(res);
-        mat_free(Sigma_reg);
-        mat_free(Sigma_inv);
-        mat_free(L);
-        if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
-        return NULL;
+        goto cleanup_compute_brownian_lrt;
     }
     res->ll_null = (double *)calloc(gex->n_genes, sizeof(double));
     res->ll_alt = (double *)calloc(gex->n_genes, sizeof(double));
@@ -1557,13 +1568,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         res->ll_null == NULL || res->ll_alt == NULL ||
         (alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat == NULL)) {
         gex_free_lrt_result(res);
-        free(y);
-        free(y_sim);
-        mat_free(Sigma_reg);
-        mat_free(Sigma_inv);
-        mat_free(L);
-        if (Sigma_lambda != NULL) mat_free(Sigma_lambda);
-        return NULL;
+        res = NULL;
+        goto cleanup_compute_brownian_lrt;
     }
 
     /* Run the LRT on each gene */
@@ -1588,18 +1594,31 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
 
         /* Compute the log-likelihood under the alternative model */
         if (alt_mode == GEX_LRT_ALT_FULL) {
-            ll_alt = gex_loglik_centered_gaussian_cov(y, Sigma_reg, Sigma_inv, logdet_sigma);
+            ll_alt = 0.0;
+            for (t = 0; t < n_sigmas; t++) {
+                ll_alt += gex_loglik_centered_gaussian_cov(y,
+                                                           Sigma_regs[t],
+                                                           Sigma_invs[t],
+                                                           logdet_sigmas[t]);
+            }
+            ll_alt /= (double)n_sigmas;
         }
         else {
-            double lambda_hat = 0.0;
-            ll_alt = gex_fit_pagels_lambda_loglik(y,
-                                                  Sigma,
-                                                  jitter,
-                                                  Sigma_lambda,
-                                                  Sigma_inv,
-                                                  L,
-                                                  &lambda_hat);
-            res->lambda_hat[j] = lambda_hat;
+            double lambda_hat_sum = 0.0;
+            ll_alt = 0.0;
+            for (t = 0; t < n_sigmas; t++) {
+                double lambda_hat = 0.0;
+                ll_alt += gex_fit_pagels_lambda_loglik(y,
+                                                       Sigmas[t],
+                                                       jitters[t],
+                                                       Sigma_lambdas[t],
+                                                       Sigma_invs[t],
+                                                       Ls[t],
+                                                       &lambda_hat);
+                lambda_hat_sum += lambda_hat;
+            }
+            ll_alt /= (double)n_sigmas;
+            res->lambda_hat[j] = lambda_hat_sum / (double)n_sigmas;
         }
         res->ll_alt[j] = ll_alt;
 
@@ -1627,8 +1646,15 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                 /* Compute the log-likelihood under the null model */
                 ll0_sim = gex_loglik_centered_gaussian_identity(n, sigma20);
 
-                /* Compute the log-likelihood under the alternative model */
-                ll1_sim = gex_loglik_centered_gaussian_cov(y_sim, Sigma_reg, Sigma_inv, logdet_sigma);
+                /* Compute the expected log-likelihood under the alternative model */
+                ll1_sim = 0.0;
+                for (t = 0; t < n_sigmas; t++) {
+                    ll1_sim += gex_loglik_centered_gaussian_cov(y_sim,
+                                                                Sigma_regs[t],
+                                                                Sigma_invs[t],
+                                                                logdet_sigmas[t]);
+                }
+                ll1_sim /= (double)n_sigmas;
 
                 /* Compute the LRT statistic for the simulated data */
                 stat_sim = 2.0 * (ll1_sim - ll0_sim);
@@ -1647,13 +1673,39 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
     res->n_significant = gex_count_kept_lrt_genes(res, 0.05);   /* Number of significant genes to keep*/
 
+cleanup_compute_brownian_lrt:
     free(y);
     free(y_sim);
-    mat_free(Sigma_reg);
-    mat_free(Sigma_inv);
-    mat_free(L);
-    if (Sigma_lambda != NULL)
-        mat_free(Sigma_lambda);
+    if (Sigma_regs != NULL) {
+        for (t = 0; t < n_sigmas; t++) {
+            if (Sigma_regs[t] != NULL)
+                mat_free(Sigma_regs[t]);
+        }
+        free(Sigma_regs);
+    }
+    if (Sigma_invs != NULL) {
+        for (t = 0; t < n_sigmas; t++) {
+            if (Sigma_invs[t] != NULL)
+                mat_free(Sigma_invs[t]);
+        }
+        free(Sigma_invs);
+    }
+    if (Ls != NULL) {
+        for (t = 0; t < n_sigmas; t++) {
+            if (Ls[t] != NULL)
+                mat_free(Ls[t]);
+        }
+        free(Ls);
+    }
+    if (Sigma_lambdas != NULL) {
+        for (t = 0; t < n_sigmas; t++) {
+            if (Sigma_lambdas[t] != NULL)
+                mat_free(Sigma_lambdas[t]);
+        }
+        free(Sigma_lambdas);
+    }
+    free(logdet_sigmas);
+    free(jitters);
     return res;
 }
 
