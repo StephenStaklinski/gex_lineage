@@ -7,6 +7,19 @@
 #include <mvn.h>
 
 typedef struct {
+    Matrix *Sigma_inv;
+    double logdet_sigma;
+} GexLatentBrownianTreePrior;
+
+typedef struct {
+    Matrix *Xc;
+    GexLatentBrownianTreePrior *tree_priors;
+    int n_tree_priors;
+    double *prior_log_terms;
+    double *prior_weights;
+} GexLatentBrownianWorkspace;
+
+typedef struct {
     int n_cells;
     int n_genes;
     int k;
