@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     TreeNode **trees = NULL;    /* Array of tree pointers */
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
-    Matrix *Sigma = NULL;   /* Phylogenetic covariance matrix */
+    Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     GexPCA *pca = NULL; /* PCA results */
@@ -247,17 +247,22 @@ int main(int argc, char *argv[]) {
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
 
-    /* Use first tree only (for initial testing) for the steps here below. 
-    TODO: Make these steps somewhat Bayesian by integrating over the set of all trees */
-
-    /* Calculate the phylogenetic covariance matrix */
-    Sigma = covariance_from_tree(trees[0], gex->cell_names, gex->n_cells);
-    if (Sigma == NULL) {
-        fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix.\n");
+    /* Calculate the phylogenetic covariance matrix for each input tree. */
+    Sigmas = (Matrix **)calloc(n_trees, sizeof(Matrix *));
+    if (Sigmas == NULL) {
+        fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix list.\n");
         goto cleanup;
     }
+    for (i = 0; i < n_trees; i++) {
+        Sigmas[i] = covariance_from_tree(trees[i], gex->cell_names, gex->n_cells);
+        if (Sigmas[i] == NULL) {
+            fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
+            goto cleanup;
+        }
+    }
     if (verbose) {
-        print_covariance_summary(Sigma, gex->cell_names, gex->n_cells);
+        printf("Computed phylogenetic covariance matrix for the first tree:\n");
+        print_covariance_summary(Sigmas[0], gex->cell_names, gex->n_cells);
     }
 
     /* Test the phylogenetic signal filter(s) with simulated data to understand
@@ -273,7 +278,7 @@ int main(int argc, char *argv[]) {
                                        n_perms,
                                        max_q,
                                        moran_min_i,
-                                       Sigma,
+                                       Sigmas[0],
                                        seed)) {
         if (verbose) {
             printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
@@ -287,7 +292,7 @@ int main(int argc, char *argv[]) {
     printf("Applying the phylogenetic signal filter(s) to the real input gene expression matrix data...\n");
     /* Run the phylogenetic autocorrelation filter tests if requested */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
-        morans = gex_compute_morans_i(gex, Sigma, n_perms, seed);
+        morans = gex_compute_morans_i(gex, Sigmas[0], n_perms, seed);
         if (morans == NULL) {
             fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
             goto cleanup;
@@ -312,7 +317,7 @@ int main(int argc, char *argv[]) {
 
     /* Run the phylogenetic LRT filter tests if requested */
     if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-        lrt = gex_compute_brownian_lrt(gex, Sigma, n_perms, seed, lrt_alt_mode);
+        lrt = gex_compute_brownian_lrt(gex, Sigmas[0], n_perms, seed, lrt_alt_mode);
         if (lrt == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
             goto cleanup;
@@ -367,7 +372,7 @@ int main(int argc, char *argv[]) {
 
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
-    model = gex_fit_latent_brownian_model(gex_filtered, Sigma, pca, seed, outprefix);
+    model = gex_fit_latent_brownian_model(gex_filtered, Sigmas[0], pca, seed, outprefix);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model.\n");
         goto cleanup;
@@ -398,7 +403,12 @@ int main(int argc, char *argv[]) {
         gex_free_lrt_result(lrt);
         gex_free_pca(pca);
         gex_free_latent_brownian_model(model);
-        if (Sigma != NULL)
-            mat_free(Sigma);
+        if (Sigmas != NULL) {
+            for (i = 0; i < n_trees; i++) {
+                if (Sigmas[i] != NULL)
+                    mat_free(Sigmas[i]);
+            }
+            free(Sigmas);
+        }
         return status;
 }
