@@ -7,22 +7,8 @@
 #include "pca.h"
 #include "brownian.h"
 
-static unsigned int gexlineage_rand_u32(unsigned int *state) {
-    *state = (*state * 1664525u) + 1013904223u;
-    return *state;
-}
-
-static void gexlineage_shuffle_ints(int *x, int n, unsigned int *state) {
-    int i;
-
-    for (i = n - 1; i > 0; i--) {
-        int j = (int)(gexlineage_rand_u32(state) % (unsigned int)(i + 1));
-        int tmp = x[i];
-        x[i] = x[j];
-        x[j] = tmp;
-    }
-}
-
+/* Select a subset of covariance matrices (trees) for latent model fitting
+by sampling without replacement. */
 static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
                                                int n_sigmas,
                                                int n_keep,
@@ -30,7 +16,7 @@ static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
     int i;
     Matrix **selected = NULL;
     int *indices = NULL;
-    unsigned int rng_state;
+    unsigned int rng_state = (seed == 0u ? 1u : seed);
 
     if (Sigmas == NULL || n_sigmas <= 0)
         return NULL;
@@ -57,10 +43,17 @@ static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
     for (i = 0; i < n_sigmas; i++)
         indices[i] = i;
 
-    rng_state = (seed == 0u ? 1u : seed);
-    gexlineage_shuffle_ints(indices, n_sigmas, &rng_state);
-    for (i = 0; i < n_keep; i++)
+    for (i = 0; i < n_keep; i++) {
+        int j;
+        int tmp;
+
+        rng_state = (rng_state * 1664525u) + 1013904223u;
+        j = i + (int)(rng_state % (unsigned int)(n_sigmas - i));
+        tmp = indices[i];
+        indices[i] = indices[j];
+        indices[j] = tmp;
         selected[i] = Sigmas[indices[i]];
+    }
 
     free(indices);
     return selected;
@@ -477,12 +470,10 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: failed to select covariance matrices for latent model fitting.\n");
             goto cleanup;
         }
-        printf("Using %d tree(s) for latent model fitting%s.\n",
-            n_model_trees, " after random downsampling without replacement.");
+        printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.", n_model_trees);
     } else {
         model_Sigmas = Sigmas;
         n_model_trees = n_trees;
-        printf("Using all %d tree(s) for latent model fitting.\n", n_trees);
     }
 
     /* Fit the latent Brownian model */
