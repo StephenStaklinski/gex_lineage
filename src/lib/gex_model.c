@@ -48,46 +48,77 @@ static Matrix *gex_model_center_matrix(Matrix *X) {
     return Xc;
 }
 
+/* Compute the negative log-posterior objective and its gradients for the
+latent Brownian factor model:
+    X ≈ ZL + ε,      ε_ij ~ N(0, sigma2_obs)
+    z_d ~ N(0, sigma2_latent[d] * Sigma) independently for each latent factor d
+
+The objective (up to constants) is the sum of three terms for the data likelihood, 
+the latent factor Brownian prior, and the L2 regularization on loadings L:
+    Matrix factorization data term (Gaussian likelihood):
+    (1 / (2 sigma2_obs)) ||X - ZL||_F^2 + (np/2) log(sigma2_obs)
+
+    Brownian motion prior on latent factors z_d as columns in Z (cells x latent factors):
+    sum_d [ (1 / (2 sigma2_d)) z_d^T Sigma^{-1} z_d
+            + (n/2) log(sigma2_d)
+            + (1/2) log|Sigma| ]
+
+    L2 regularization on loadings to encourage distributed latent factors (prevents 
+    overfitting to few genes):
+    (lambda_L / 2) ||L||_F^2
+
+Returns the total objective value (negative log-posterior) and fills gradients for
+Z, L, log(sigma2_latent), and log(sigma2_obs). */
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            GexLatentBrownianWorkspace *ws,
                                            Matrix *grad_Z,
                                            Matrix *grad_L,
                                            double *grad_log_sigma_latent,
                                            double *grad_log_sigma_obs) {
-    const double lambda_L = 1e-3;
-    int i, j, d, t;
-    int n = model->n_cells;
-    int p = model->n_genes;
-    int k = model->k;
-    double sigma2_obs = model->sigma2_obs;
-    double obj = 0.0;
-    Matrix *resid = NULL;
+    const double lambda_L = 1e-3;   /* L2 regularization strength for L */
+    int i, j, d, t; /* Loop indices */
+    int n = model->n_cells; /* Number of cells */
+    int p = model->n_genes; /* Number of genes */
+    int k = model->k;   /* Number of latent factors */
+    double sigma2_obs = model->sigma2_obs;  /* Observation noise variance */
+    double obj = 0.0;   /* Objective function value */
+    Matrix *resid = NULL;   /* Residual matrix */
 
+    /* Initialize the residual matrix as cells x genes */
     resid = mat_new(n, p);
     if (resid == NULL)
         return HUGE_VAL;
 
+    /* Initialize and zero the gradients for Z, L, log(sigma2_latent) for all 
+    latent factors, and log(sigma2_obs) */
     mat_zero(grad_Z);
     mat_zero(grad_L);
     for (d = 0; d < k; d++)
         grad_log_sigma_latent[d] = 0.0;
     *grad_log_sigma_obs = 0.0;
 
+    /* Gaussian observation model X_ij ~ N((ZL)_ij, sigma2_obs).
+    Compute residuals r_ij = X_ij - (ZL)_ij and accumulate the
+    negative log-likelihood and its gradient w.r.t. log(sigma2_obs). */
     for (i = 0; i < n; i++) {
         for (j = 0; j < p; j++) {
             double pred = 0.0;
             double r;
+
             for (d = 0; d < k; d++)
-                pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);
-            r = mat_get(ws->Xc, i, j) - pred;
-            mat_set(resid, i, j, r);
-            obj += 0.5 * r * r / sigma2_obs;
-            *grad_log_sigma_obs += -0.5 * r * r / sigma2_obs;
+                pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);  /* Compute predicted value (ZL)_ij */
+            r = mat_get(ws->Xc, i, j) - pred;   /* Residual is observed minus predicted */
+            mat_set(resid, i, j, r);    /* Store residual for later use */
+            obj += 0.5 * r * r / sigma2_obs;    /* Quadratic term of Gaussian negative log-likelihood: (1/2σ²) r^2 */
+            *grad_log_sigma_obs += -0.5 * r * r / sigma2_obs;   /* Gradient contribution w.r.t. log(sigma2_obs) from quadratic term */
         }
     }
+    /* Log-determinant term of Gaussian likelihood: (np/2) log(σ²) */
     obj += 0.5 * (double)(n * p) * log(sigma2_obs);
+    /* Gradient contribution from log(σ²) term */
     *grad_log_sigma_obs += 0.5 * (double)(n * p);
 
+    /* Compute gradient w.r.t. Z */
     for (i = 0; i < n; i++) {
         for (d = 0; d < k; d++) {
             double gz = 0.0;
@@ -97,29 +128,41 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
         }
     }
 
+    /* Add the Brownian motion multivariate Gaussian prior on Z for each latent dimension z_d:
+    z_d ~ N(0, sigma2_latent[d] * Sigma), and accumulate its
+    contribution to the objective and gradients. */
     for (d = 0; d < k; d++) {
         double quad = 0.0;
         double sigma2_d = model->sigma2_latent[d];
+
         for (i = 0; i < n; i++) {
             double val = 0.0;
+            /* Compute (Sigma^{-1} z_d)_i */
             for (t = 0; t < n; t++)
                 val += mat_get(ws->Sigma_inv, i, t) * mat_get(model->Z, t, d);
-            quad += mat_get(model->Z, i, d) * val;
-            mat_set(grad_Z, i, d, mat_get(grad_Z, i, d) + val / sigma2_d);
+            quad += mat_get(model->Z, i, d) * val;  /* Accumulate quadratic form z_d^T Sigma^{-1} z_d */
+            mat_set(grad_Z, i, d, mat_get(grad_Z, i, d) + val / sigma2_d);  /* Add prior gradient w.r.t. Z: (1/sigma2_d) * Sigma^{-1} z_d */
         }
-        obj += 0.5 * quad / sigma2_d;
-        obj += 0.5 * (double)n * log(sigma2_d);
-        obj += 0.5 * ws->logdet_sigma;
-        grad_log_sigma_latent[d] = -0.5 * quad / sigma2_d + 0.5 * (double)n;
+        obj += 0.5 * quad / sigma2_d;   /* Quadratic term: (1/2 sigma2_d) * z_d^T Sigma^{-1} z_d */
+        obj += 0.5 * (double)n * log(sigma2_d); /* Log-determinant first term: (n/2) log(sigma2_d) */
+        obj += 0.5 * ws->logdet_sigma;  /* Log-determinant second term: (1/2) log|Sigma| */
+        grad_log_sigma_latent[d] = -0.5 * quad / sigma2_d + 0.5 * (double)n;    /* Gradient w.r.t. log(sigma2_d) */
     }
 
+    /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization. */
     for (d = 0; d < k; d++) {
         for (j = 0; j < p; j++) {
             double gl = 0.0;
+
+            /* Accumulate gradient from data likelihood: -(1/sigma2_obs) * sum_i Z_{i,d} * r_{i,j} where r_{i,j} = X_{i,j} - (ZL)_{i,j} */
             for (i = 0; i < n; i++)
-                gl += -mat_get(model->Z, i, d) * mat_get(resid, i, j) / sigma2_obs;
-            gl += lambda_L * mat_get(model->L, d, j);
-            mat_set(grad_L, d, j, gl);
+                gl += -mat_get(model->Z, i, d) *
+                    mat_get(resid, i, j) / sigma2_obs;
+
+            gl += lambda_L * mat_get(model->L, d, j);   /* Add L2 regularization gradient: lambda_L * L_{d,j} */
+            mat_set(grad_L, d, j, gl);  /* Store gradient for L_{d,j} */
+
+            /* Add L2 penalty to objective: (lambda_L / 2) * L_{d,j}^2 */
             obj += 0.5 * lambda_L * mat_get(model->L, d, j) * mat_get(model->L, d, j);
         }
     }
@@ -128,6 +171,9 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
+/* Compute the L2 (Euclidean) norm of the gradient ||g||_2 = sqrt( sum_i g_i^2 ),
+treating all parameter gradients (Z, L, log(sigma2_latent), log(sigma2_obs))
+as a single concatenated vector g. Returns the overall gradient magnitude. */
 static double gex_model_grad_norm(Matrix *grad_Z,
                                   Matrix *grad_L,
                                   double *grad_log_sigma_latent,
@@ -135,18 +181,23 @@ static double gex_model_grad_norm(Matrix *grad_Z,
                                   int k) {
     int i, j;
     double ss = 0.0;
+    /* Add the squared gradients for Z */
     for (i = 0; i < grad_Z->nrows; i++)
         for (j = 0; j < grad_Z->ncols; j++)
             ss += pow(mat_get(grad_Z, i, j), 2.0);
+    /* Add the squared gradients for L */
     for (i = 0; i < grad_L->nrows; i++)
         for (j = 0; j < grad_L->ncols; j++)
             ss += pow(mat_get(grad_L, i, j), 2.0);
+    /* Add the squared gradients for log(sigma2_latent) for all latent factors */
     for (i = 0; i < k; i++)
         ss += pow(grad_log_sigma_latent[i], 2.0);
+    /* Add the squared gradient for log(sigma2_obs) */
     ss += grad_log_sigma_obs * grad_log_sigma_obs;
     return sqrt(ss);
 }
 
+/* Scale all gradients by a constant factor. */
 static void gex_model_scale_grads(Matrix *grad_Z,
                                   Matrix *grad_L,
                                   double *grad_log_sigma_latent,
@@ -165,6 +216,17 @@ static void gex_model_scale_grads(Matrix *grad_Z,
     *grad_log_sigma_obs *= scale;
 }
 
+/* Perform one Adam optimization update for a matrix parameter.
+
+For each entry (i,j), update the first moment (m) and second moment (v)
+estimates using the current gradient, apply bias correction to obtain
+mhat and vhat, and then update the parameter using:
+
+    param -= lr * mhat / (sqrt(vhat) + eps)
+
+where m tracks the exponential moving average of gradients,
+v tracks the exponential moving average of squared gradients,
+and bias correction accounts for initialization at early steps. */
 static void gex_model_adam_update_matrix(Matrix *param,
                                          Matrix *grad,
                                          Matrix *m,
@@ -186,6 +248,17 @@ static void gex_model_adam_update_matrix(Matrix *param,
     }
 }
 
+/* Perform one Adam optimization update for a vector parameter.
+
+For each element i, update the first moment (m[i]) and second moment (v[i])
+estimates using the current gradient, apply bias correction to obtain
+mhat and vhat, and update the parameter using:
+
+    param[i] -= lr * mhat / (sqrt(vhat) + eps)
+
+where m stores the exponential moving average of gradients,
+v stores the exponential moving average of squared gradients,
+and bias correction accounts for initialization at early steps. */
 static void gex_model_adam_update_vector(double *param,
                                          double *grad,
                                          double *m,
@@ -509,7 +582,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             rel_objective_change = HUGE_VAL;
         }
 
-        /* Scale the gradients if their norm exceeds the clipping threshold. */
+        /* Re-scale the gradients if their norm exceeds the clipping threshold. */
         if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
             double scale = directives.clip_norm / metrics.grad_norm;
             gex_model_scale_grads(grad_Z, grad_L, grad_log_sigma_latent,
