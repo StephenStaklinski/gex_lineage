@@ -48,6 +48,7 @@ static void usage(const char *progname) {
         "[--filter-test lrt|moran|both] "
         "[--lrt-alt lambda|full] "
         "[--pca-var-threshold V] "
+        "[--n-sims N] "
         "[--n-perms N] "
         "[--max-q Q] "
         "[--moran-min-i I] "
@@ -146,6 +147,13 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "ERROR: --lrt-alt must be one of full, lambda\n");
                 goto cleanup;
             }
+        }
+        else if (strcmp(argv[i], "--n-sims") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                goto cleanup;
+            }
+            n_sims = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-perms") == 0) {
             if (i + 1 >= argc) {
