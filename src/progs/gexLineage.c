@@ -82,7 +82,6 @@ int main(int argc, char *argv[]) {
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix *Sigma = NULL;   /* Phylogenetic covariance matrix */
-    Matrix *W = NULL;   /* Phylogenetic covariance-based weight matrix */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     GexPCA *pca = NULL; /* PCA results */
@@ -261,19 +260,6 @@ int main(int argc, char *argv[]) {
         print_covariance_summary(Sigma, gex->cell_names, gex->n_cells);
     }
 
-    /* Calculate the weight matrix from the phylogenetic covariance matrix if
-    needed for phylogenetic autocorrelation tests */
-    if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
-        W = weight_matrix_from_covariance(Sigma);
-        if (W == NULL) {
-            fprintf(stderr, "ERROR: failed to compute Brownian weight matrix.\n");
-            goto cleanup;
-        }
-        if (verbose) {
-            print_weight_matrix_summary(W);
-        }
-    }
-    
     /* Test the phylogenetic signal filter(s) with simulated data to understand
     the performance on the provided tree. */
     printf("Running a simulation check of the phylogenetic signal filter(s) for the provided tree(s)...\n");
@@ -288,7 +274,6 @@ int main(int argc, char *argv[]) {
                                        max_q,
                                        moran_min_i,
                                        Sigma,
-                                       W,
                                        seed)) {
         if (verbose) {
             printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
@@ -302,7 +287,7 @@ int main(int argc, char *argv[]) {
     printf("Applying the phylogenetic signal filter(s) to the real input gene expression matrix data...\n");
     /* Run the phylogenetic autocorrelation filter tests if requested */
     if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
-        morans = gex_compute_morans_i(gex, W, n_perms, seed);
+        morans = gex_compute_morans_i(gex, Sigma, n_perms, seed);
         if (morans == NULL) {
             fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
             goto cleanup;
@@ -415,7 +400,5 @@ int main(int argc, char *argv[]) {
         gex_free_latent_brownian_model(model);
         if (Sigma != NULL)
             mat_free(Sigma);
-        if (W != NULL)
-            mat_free(W);
         return status;
 }

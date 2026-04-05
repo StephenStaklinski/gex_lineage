@@ -1,4 +1,5 @@
 #include "gex.h"
+#include "brownian.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1171,12 +1172,12 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 }
 
 /* Compute Moran's I for each gene in the expression matrix.
-Moran's I is a measure of spatial autocorrelation, which is 
-calculated here as Z^T * W * Z where z is the column-wise standardized 
-gene expression matrix and W is the input weight matrix. Returns a pointer 
-to the result structure. */
+Moran's I is a measure of spatial autocorrelation, which is
+calculated here as Z^T * W * Z where z is the column-wise standardized
+gene expression matrix and W is derived internally from the Brownian
+covariance matrix Sigma. Returns a pointer to the result structure. */
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
-                                      Matrix *W,
+                                      Matrix *Sigma,
                                       int n_perm,
                                       unsigned int seed) {
     int i, j, k;    /* Loop indices */
@@ -1185,20 +1186,27 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     int n_genes;    /* Number of genes (columns in the expression matrix) */
     unsigned int rng_state; /* State for the random number generator used in permutation testing */
     Matrix *Z = NULL;   /* Standardized gene expression matrix (n_cells x n_genes) */
+    Matrix *W = NULL;   /* Weight matrix derived from the Brownian covariance matrix */
     Matrix *B = NULL;   /* Intermediate matrix for W * Z (n_cells x n_genes) */
     GexMoransResult *res = NULL;    /* Result structure for Moran's I computation */
     double *zcol = NULL;    /* Temporary array to hold a single column of the standardized matrix for permutation testing */
     double *perm = NULL;    /* Temporary array to hold the permuted version of the column for permutation testing */
 
     /* Validate input parameters */
-    if (gex == NULL || gex->X == NULL || W == NULL || n_perm <= 0) {
+    if (gex == NULL || gex->X == NULL || Sigma == NULL || n_perm <= 0) {
         fprintf(stderr, "ERROR: gex_compute_morans_i got invalid input\n");
         return NULL;
     }
     n_cells = gex->n_cells;
     n_genes = gex->n_genes;
-    if (W->nrows != n_cells || W->ncols != n_cells) {
-        fprintf(stderr, "ERROR: weight matrix dimensions do not match number of cells\n");
+    if (Sigma->nrows != n_cells || Sigma->ncols != n_cells) {
+        fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells\n");
+        return NULL;
+    }
+
+    W = weight_matrix_from_covariance(Sigma);
+    if (W == NULL) {
+        fprintf(stderr, "ERROR: failed to derive Moran weight matrix from covariance\n");
         return NULL;
     }
 
@@ -1292,6 +1300,8 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
             free(perm);
         if (Z != NULL)
             mat_free(Z);
+        if (W != NULL)
+            mat_free(W);
         if (B != NULL)
             mat_free(B);
         if (!success) {

@@ -69,7 +69,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
                                       GexMatrix **gex_ptr);
 
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
-                                      Matrix *W,
+                                      Matrix *Sigma,
                                       int n_perm,
                                       unsigned int seed);
 
