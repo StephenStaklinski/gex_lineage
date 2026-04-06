@@ -289,6 +289,47 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     return Sigma;
 }
 
+Matrix *gex_average_tree_covariance(TreeNode **trees,
+                                    int n_trees,
+                                    char **names,
+                                    int n_names) {
+    int i;
+    Matrix *avg = NULL;
+
+    if (trees == NULL || n_trees <= 0 || names == NULL || n_names <= 0)
+        return NULL;
+
+    avg = mat_new(n_names, n_names);
+    if (avg == NULL)
+        return NULL;
+    mat_zero(avg);
+
+    for (i = 0; i < n_trees; i++) {
+        int r, c;
+        Matrix *Sigma = NULL;
+
+        if (trees[i] == NULL) {
+            mat_free(avg);
+            return NULL;
+        }
+
+        Sigma = covariance_from_tree(trees[i], names, n_names);
+        if (Sigma == NULL) {
+            mat_free(avg);
+            return NULL;
+        }
+
+        for (r = 0; r < n_names; r++) {
+            for (c = 0; c < n_names; c++)
+                mat_set(avg, r, c, mat_get(avg, r, c) + mat_get(Sigma, r, c));
+        }
+        mat_free(Sigma);
+    }
+
+    mat_scale(avg, 1.0 / (double)n_trees);
+    return avg;
+}
+
 /* Calculate the weight matrix from a phylogenetic covariance matrix.
 This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
 Nature Genetics (PMID: 39317739) and is calculated as the element-wise inverse pairwise distance matrix.
@@ -500,6 +541,142 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
     return gex;
 }
 
+/* Simulate expression directly from a covariance matrix.  This is used when
+we want the average covariance across trees to define the simulation instead
+of averaging a separate simulation from each tree. */
+GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
+                                                        char **names,
+                                                        int n,
+                                                        int n_tree_genes,
+                                                        int n_null_genes,
+                                                        unsigned int seed) {
+    int i, j;
+    int ngenes;
+    GexMatrix *gex = NULL;
+    Matrix *Sigma_reg = NULL;
+    Matrix *chol = NULL;
+    double *std_normals = NULL;
+    unsigned int rng_state = (seed == 0u ? 1u : seed);
+    double max_diag = 0.0;
+    double jitter;
+
+    if (Sigma == NULL || names == NULL || n <= 0 ||
+        Sigma->nrows != n || Sigma->ncols != n ||
+        n_tree_genes < 0 || n_null_genes < 0) {
+        fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid input\n");
+        return NULL;
+    }
+
+    ngenes = n_tree_genes + n_null_genes;
+    if (ngenes <= 0) {
+        fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance needs at least one gene\n");
+        return NULL;
+    }
+
+    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    Sigma_reg = mat_create_copy(Sigma);
+    chol = mat_new(n, n);
+    if (gex == NULL || Sigma_reg == NULL || chol == NULL) {
+        gex_free_matrix_data(gex);
+        if (Sigma_reg != NULL)
+            mat_free(Sigma_reg);
+        if (chol != NULL)
+            mat_free(chol);
+        return NULL;
+    }
+
+    for (i = 0; i < n; i++) {
+        double diag = mat_get(Sigma, i, i);
+        if (diag > max_diag)
+            max_diag = diag;
+    }
+    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+    for (i = 0; i < n; i++)
+        mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
+    if (mat_cholesky(chol, Sigma_reg) != 0) {
+        fprintf(stderr, "ERROR: covariance-based simulation failed because the covariance was not positive definite enough\n");
+        gex_free_matrix_data(gex);
+        mat_free(Sigma_reg);
+        mat_free(chol);
+        return NULL;
+    }
+
+    gex->n_cells = n;
+    gex->n_genes = ngenes;
+    gex->X = mat_new(n, ngenes);
+    gex->cell_names = (char **)calloc(n, sizeof(char *));
+    gex->gene_names = (char **)calloc(ngenes, sizeof(char *));
+    if (gex->X == NULL || gex->cell_names == NULL || gex->gene_names == NULL) {
+        gex_free_matrix_data(gex);
+        mat_free(Sigma_reg);
+        mat_free(chol);
+        return NULL;
+    }
+
+    for (i = 0; i < n; i++) {
+        gex->cell_names[i] = brownian_strdup(names[i]);
+        if (gex->cell_names[i] == NULL) {
+            gex_free_matrix_data(gex);
+            mat_free(Sigma_reg);
+            mat_free(chol);
+            return NULL;
+        }
+    }
+    for (j = 0; j < n_tree_genes; j++) {
+        char gene_name[64];
+        snprintf(gene_name, sizeof(gene_name), "sim_pos_%02d", j + 1);
+        gex->gene_names[j] = brownian_strdup(gene_name);
+        if (gex->gene_names[j] == NULL) {
+            gex_free_matrix_data(gex);
+            mat_free(Sigma_reg);
+            mat_free(chol);
+            return NULL;
+        }
+    }
+    for (j = 0; j < n_null_genes; j++) {
+        char gene_name[64];
+        snprintf(gene_name, sizeof(gene_name), "sim_neg_%02d", j + 1);
+        gex->gene_names[n_tree_genes + j] = brownian_strdup(gene_name);
+        if (gex->gene_names[n_tree_genes + j] == NULL) {
+            gex_free_matrix_data(gex);
+            mat_free(Sigma_reg);
+            mat_free(chol);
+            return NULL;
+        }
+    }
+
+    std_normals = (double *)calloc(n, sizeof(double));
+    if (std_normals == NULL) {
+        gex_free_matrix_data(gex);
+        mat_free(Sigma_reg);
+        mat_free(chol);
+        return NULL;
+    }
+
+    for (j = 0; j < n_tree_genes; j++) {
+        for (i = 0; i < n; i++)
+            std_normals[i] = brownian_rand_normal(&rng_state);
+        for (i = 0; i < n; i++) {
+            double sum = 0.0;
+            int m;
+            for (m = 0; m <= i; m++)
+                sum += mat_get(chol, i, m) * std_normals[m];
+            mat_set(gex->X, i, j, sum);
+        }
+    }
+
+    for (j = 0; j < n_null_genes; j++) {
+        int col = n_tree_genes + j;
+        for (i = 0; i < n; i++)
+            mat_set(gex->X, i, col, brownian_rand_normal(&rng_state));
+    }
+
+    free(std_normals);
+    mat_free(Sigma_reg);
+    mat_free(chol);
+    return gex;
+}
+
 /* Add a simulated gene expression matrix to an existing matrix in place element-wise. */
 static int brownian_add_simulation_in_place(GexMatrix *dest, GexMatrix *src) {
     int i, j;
@@ -559,41 +736,57 @@ int brownian_run_simulation_check(TreeNode **trees,
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation on simulated data */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation on simulated data */
 
-    if (trees == NULL || n_sigmas <= 0) {
-        fprintf(stderr, "ERROR: brownian_run_simulation_check got invalid tree set\n");
+    if (Sigmas == NULL || n_sigmas <= 0) {
+        fprintf(stderr, "ERROR: brownian_run_simulation_check got invalid covariance set\n");
         return 0;
     }
 
-    /* Run the Brownian simulation on each tree and average the resulting expression
-    matrices to form the expected simulated matrix under the tree set. */
-    for (i = 0; i < n_sigmas; i++) {
-        if (trees[i] == NULL) {
-            fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL tree at index %d\n", i);
+    /* There are two supported simulation modes:
+    1. trees != NULL: simulate on each tree separately and average the results.
+    2. trees == NULL: simulate once from the supplied covariance matrix directly. */
+    if (trees == NULL) {
+        if (n_sigmas != 1) {
+            fprintf(stderr, "ERROR: covariance-only simulation check expects exactly one covariance matrix\n");
             goto cleanup_simulation_check;
         }
-
-        tree_sim = brownian_simulate_expression(trees[i], names, n,
-                                                n_tree_genes, n_null_genes,
-                                                seed + (unsigned int)(104729u * i));
-        if (tree_sim == NULL)
+        sim = brownian_simulate_expression_from_covariance(Sigmas[0], names, n,
+                                                           n_tree_genes, n_null_genes,
+                                                           seed);
+        if (sim == NULL)
             goto cleanup_simulation_check;
-
-        if (sim == NULL) {
-            sim = tree_sim;
-            tree_sim = NULL;
-        } else {
-            if (brownian_add_simulation_in_place(sim, tree_sim) != 0) {
-                fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
+    }
+    else {
+        /* Run the Brownian simulation on each tree and average the resulting
+        expression matrices to form the expected simulated matrix. */
+        for (i = 0; i < n_sigmas; i++) {
+            if (trees[i] == NULL) {
+                fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL tree at index %d\n", i);
                 goto cleanup_simulation_check;
             }
-            gex_free_matrix_data(tree_sim);
-            tree_sim = NULL;
-        }
-    }
 
-    if (sim == NULL || brownian_scale_simulation_in_place(sim, 1.0 / (double)n_sigmas) != 0) {
-        fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
-        goto cleanup_simulation_check;
+            tree_sim = brownian_simulate_expression(trees[i], names, n,
+                                                    n_tree_genes, n_null_genes,
+                                                    seed + (unsigned int)(104729u * i));
+            if (tree_sim == NULL)
+                goto cleanup_simulation_check;
+
+            if (sim == NULL) {
+                sim = tree_sim;
+                tree_sim = NULL;
+            } else {
+                if (brownian_add_simulation_in_place(sim, tree_sim) != 0) {
+                    fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
+                    goto cleanup_simulation_check;
+                }
+                gex_free_matrix_data(tree_sim);
+                tree_sim = NULL;
+            }
+        }
+
+        if (sim == NULL || brownian_scale_simulation_in_place(sim, 1.0 / (double)n_sigmas) != 0) {
+            fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
+            goto cleanup_simulation_check;
+        }
     }
 
     /* Run the specified filter(s) on the simulated data. */

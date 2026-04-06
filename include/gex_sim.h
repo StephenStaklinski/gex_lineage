@@ -20,11 +20,6 @@ int gex_get_shared_leaf_names(TreeNode **trees,
                               char ***names_out,
                               int *n_names_out);
 
-Matrix *gex_average_tree_covariance(TreeNode **trees,
-                                    int n_trees,
-                                    char **names,
-                                    int n_names);
-
 GexSimulationTruth *gex_simulate_latent_brownian_expression(Matrix *Sigma,
                                                             char **cell_names,
                                                             int n_cells,

@@ -267,48 +267,6 @@ cleanup:
     return status;
 }
 
-Matrix *gex_average_tree_covariance(TreeNode **trees,
-                                    int n_trees,
-                                    char **names,
-                                    int n_names) {
-    int i;
-    Matrix *avg = NULL;
-
-    if (trees == NULL || n_trees <= 0 || names == NULL || n_names <= 0)
-        return NULL;
-
-    avg = mat_new(n_names, n_names);
-    if (avg == NULL)
-        return NULL;
-    mat_zero(avg);
-
-    for (i = 0; i < n_trees; i++) {
-        int r, c;
-        Matrix *Sigma = NULL;
-
-        if (trees[i] == NULL) {
-            mat_free(avg);
-            return NULL;
-        }
-
-        Sigma = covariance_from_tree(trees[i], names, n_names);
-        if (Sigma == NULL) {
-            mat_free(avg);
-            return NULL;
-        }
-
-        for (r = 0; r < n_names; r++) {
-            for (c = 0; c < n_names; c++) {
-                mat_set(avg, r, c, mat_get(avg, r, c) + mat_get(Sigma, r, c));
-            }
-        }
-        mat_free(Sigma);
-    }
-
-    mat_scale(avg, 1.0 / (double)n_trees);
-    return avg;
-}
-
 GexSimulationTruth *gex_simulate_latent_brownian_expression(Matrix *Sigma,
                                                             char **cell_names,
                                                             int n_cells,

@@ -8,7 +8,19 @@
 
 Matrix *covariance_from_tree(TreeNode *tree, char **names, int n);
 
+Matrix *gex_average_tree_covariance(TreeNode **trees,
+                                    int n_trees,
+                                    char **names,
+                                    int n_names);
+
 Matrix *weight_matrix_from_covariance(Matrix *Sigma);
+
+GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
+                                                        char **names,
+                                                        int n,
+                                                        int n_tree_genes,
+                                                        int n_null_genes,
+                                                        unsigned int seed);
 
 GexMatrix *brownian_simulate_expression(TreeNode *tree,
                                         char **names,

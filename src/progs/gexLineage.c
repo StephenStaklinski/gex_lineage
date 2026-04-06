@@ -122,7 +122,7 @@ int main(int argc, char *argv[]) {
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
     int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
-    int n_filter_trees = 1;  /* Number of trees to use when computing phylogenetic filter expectations */
+    int n_filter_trees = 1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
@@ -140,6 +140,8 @@ int main(int argc, char *argv[]) {
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
+    Matrix *filter_avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
+    Matrix **filter_Sigmas = NULL; /* Covariance matrices used for filtering */
     Matrix **model_Sigmas = NULL; /* Selected covariance matrices for latent model fitting */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
@@ -294,12 +296,10 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
-    if (n_filter_trees < 0) {
-        fprintf(stderr, "ERROR: --n-filter-trees must be nonnegative (0 means use all trees)\n");
+    if (n_filter_trees < -1) {
+        fprintf(stderr, "ERROR: --n-filter-trees must be -1, 0, or a positive integer\n");
         goto cleanup;
     }
-    if (n_filter_trees == 0)
-        n_filter_trees = n_trees;
     if (n_filter_trees > n_trees) {
         fprintf(stderr, "ERROR: --n-filter-trees (%d) cannot exceed the number of loaded trees (%d)\n",
                 n_filter_trees, n_trees);
@@ -366,17 +366,41 @@ int main(int argc, char *argv[]) {
         print_covariance_summary(Sigmas[0], gex->cell_names, gex->n_cells);
     }
 
+    /* Compute average covariance matrix over input trees if needed */
+    if (n_filter_trees == -1) {
+        filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
+                                                       gex->cell_names, gex->n_cells);
+        if (filter_avg_Sigma == NULL) {
+            fprintf(stderr, "ERROR: failed to compute average covariance for filtering.\n");
+            goto cleanup;
+        }
+        filter_Sigmas = (Matrix **)calloc(1, sizeof(Matrix *));
+        if (filter_Sigmas == NULL) {
+            fprintf(stderr, "ERROR: failed to allocate average covariance wrapper.\n");
+            goto cleanup;
+        }
+        filter_Sigmas[0] = filter_avg_Sigma;
+    }
+    else {
+        filter_Sigmas = Sigmas;
+        if (n_filter_trees == 0)
+            n_filter_trees = n_trees;
+    }
+
     if (!no_filter) {
         /* Test the phylogenetic signal filter(s) with simulated data to understand
         the performance on the tree subset used for filtering. */
-        if (n_filter_trees == n_trees) {
+        if (n_filter_trees == -1) {
+            printf("Running a simulation check of the phylogenetic signal gene filter(s) using the average covariance across all %d tree(s)...\n",
+                   n_trees);
+        } else if (n_filter_trees == n_trees) {
             printf("Running a simulation check of the phylogenetic signal gene filter(s) using all %d tree(s)...\n",
                    n_filter_trees);
         } else {
             printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
                    n_filter_trees);
         }
-        if (!brownian_run_simulation_check(trees,
+        if (!brownian_run_simulation_check((n_filter_trees == -1 ? NULL : trees),
                                            gex->cell_names,
                                            gex->n_cells,
                                            n_sims,
@@ -386,8 +410,8 @@ int main(int argc, char *argv[]) {
                                            n_perms,
                                            max_q,
                                            moran_min_i,
-                                           Sigmas,
-                                           n_filter_trees,
+                                           filter_Sigmas,
+                                           (n_filter_trees == -1 ? 1 : n_filter_trees),
                                            seed)) {
             if (verbose) {
                 printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
@@ -400,7 +424,10 @@ int main(int argc, char *argv[]) {
     }
 
     if (!no_filter) {
-        if (n_filter_trees == n_trees) {
+        if (n_filter_trees == -1) {
+            printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the average covariance across all %d tree(s)...\n",
+                   n_trees);
+        } else if (n_filter_trees == n_trees) {
             printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using all %d tree(s)...\n", n_filter_trees);
         } else {
             printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the first %d tree(s)...\n",
@@ -408,7 +435,9 @@ int main(int argc, char *argv[]) {
         }
         /* Run the phylogenetic autocorrelation filter tests if requested */
         if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
-            morans = gex_compute_morans_i(gex, Sigmas, n_filter_trees, n_perms, seed);
+            morans = gex_compute_morans_i(gex, filter_Sigmas,
+                                          (n_filter_trees == -1 ? 1 : n_filter_trees),
+                                          n_perms, seed);
             if (morans == NULL) {
                 fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
                 goto cleanup;
@@ -433,7 +462,9 @@ int main(int argc, char *argv[]) {
 
         /* Run the phylogenetic LRT filter tests if requested */
         if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-            lrt = gex_compute_brownian_lrt(gex, Sigmas, n_filter_trees, n_perms, seed, lrt_alt_mode);
+            lrt = gex_compute_brownian_lrt(gex, filter_Sigmas,
+                                           (n_filter_trees == -1 ? 1 : n_filter_trees),
+                                           n_perms, seed, lrt_alt_mode);
             if (lrt == NULL) {
                 fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
                 goto cleanup;
@@ -549,6 +580,12 @@ int main(int argc, char *argv[]) {
         /* Only free model_Sigmas if it is separately allocated */
         if (model_Sigmas != NULL && model_Sigmas != Sigmas) {
             free(model_Sigmas);
+        }
+        if (filter_Sigmas != NULL && filter_Sigmas != Sigmas) {
+            free(filter_Sigmas);
+        }
+        if (filter_avg_Sigma != NULL) {
+            mat_free(filter_avg_Sigma);
         }
 
         return status;
