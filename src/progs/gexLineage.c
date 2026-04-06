@@ -521,7 +521,6 @@ int main(int argc, char *argv[]) {
         gex_free_lrt_result(lrt);
         gex_free_pca(pca);
         gex_free_latent_brownian_model(model);
-        free(model_Sigmas);
         if (Sigmas != NULL) {
             for (i = 0; i < n_trees; i++) {
                 if (Sigmas[i] != NULL)
@@ -529,5 +528,11 @@ int main(int argc, char *argv[]) {
             }
             free(Sigmas);
         }
+        if (model_Sigmas != NULL) {
+            /* Only free model_Sigmas if it is a different pointer from Sigmas,
+            which would already have been freed above */
+            free(model_Sigmas);
+        }
+
         return status;
 }
