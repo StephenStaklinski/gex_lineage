@@ -662,33 +662,33 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     return gex;
 }
 
-/* Add a simulated gene expression matrix to an existing matrix in place element-wise. */
-static int brownian_add_simulation_in_place(GexMatrix *dest, GexMatrix *src) {
+/* Add one matrix to another in place element-wise. */
+int add_matrix_in_place(Matrix *dest, Matrix *src) {
     int i, j;
 
-    if (dest == NULL || src == NULL || dest->X == NULL || src->X == NULL ||
-        dest->n_cells != src->n_cells || dest->n_genes != src->n_genes)
+    if (dest == NULL || src == NULL ||
+        dest->nrows != src->nrows || dest->ncols != src->ncols)
         return -1;
 
-    for (i = 0; i < dest->n_cells; i++) {
-        for (j = 0; j < dest->n_genes; j++) {
-            mat_set(dest->X, i, j, mat_get(dest->X, i, j) + mat_get(src->X, i, j));
+    for (i = 0; i < dest->nrows; i++) {
+        for (j = 0; j < dest->ncols; j++) {
+            mat_set(dest, i, j, mat_get(dest, i, j) + mat_get(src, i, j));
         }
     }
 
     return 0;
 }
 
-/* Scale a simulated gene expression matrix in place element-wise. */
-static int brownian_scale_simulation_in_place(GexMatrix *gex, double factor) {
+/* Scale a matrix in place element-wise. */
+int scale_matrix_in_place(Matrix *matrix, double factor) {
     int i, j;
 
-    if (gex == NULL || gex->X == NULL)
+    if (matrix == NULL)
         return -1;
 
-    for (i = 0; i < gex->n_cells; i++) {
-        for (j = 0; j < gex->n_genes; j++) {
-            mat_set(gex->X, i, j, factor * mat_get(gex->X, i, j));
+    for (i = 0; i < matrix->nrows; i++) {
+        for (j = 0; j < matrix->ncols; j++) {
+            mat_set(matrix, i, j, factor * mat_get(matrix, i, j));
         }
     }
 
@@ -759,7 +759,7 @@ int brownian_run_simulation_check(TreeNode **trees,
                 sim = tree_sim;
                 tree_sim = NULL;
             } else {
-                if (brownian_add_simulation_in_place(sim, tree_sim) != 0) {
+                if (add_matrix_in_place(sim->X, tree_sim->X) != 0) {
                     fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
                     goto cleanup_simulation_check;
                 }
@@ -768,7 +768,7 @@ int brownian_run_simulation_check(TreeNode **trees,
             }
         }
 
-        if (sim == NULL || brownian_scale_simulation_in_place(sim, 1.0 / (double)n_sigmas) != 0) {
+        if (sim == NULL || scale_matrix_in_place(sim->X, 1.0 / (double)n_sigmas) != 0) {
             fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
             goto cleanup_simulation_check;
         }

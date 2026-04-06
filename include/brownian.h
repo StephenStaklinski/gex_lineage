@@ -15,6 +15,10 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
 
 Matrix *weight_matrix_from_covariance(Matrix *Sigma);
 
+int add_matrix_in_place(Matrix *dest, Matrix *src);
+
+int scale_matrix_in_place(Matrix *matrix, double factor);
+
 GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
                                                         char **names,
                                                         int n,
