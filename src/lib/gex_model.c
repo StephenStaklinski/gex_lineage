@@ -74,7 +74,7 @@ latent Brownian factor model:
     z_d ~ N(0, sigma2_latent[d] * Sigma) independently for each latent factor d
 
 The objective (up to constants) is the sum of three terms for the data likelihood,
-the latent factor Brownian prior, and the L2 regularization on loadings L:
+the latent factor Brownian prior, and the L2 regularization on loadings L (latent factors x genes):
     Matrix factorization data term (Gaussian likelihood):
     (1 / (2 sigma2_obs)) ||X - ZL||_F^2 + (np/2) log(sigma2_obs)
 

@@ -54,6 +54,8 @@ static int gexeval_find_name(char **names, int n, const char *target) {
     return -1;
 }
 
+/* Subset rows of a GexMatrix by names to keep only those names
+input. */
 static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
                                                char **target_names,
                                                int n_target) {
@@ -223,7 +225,8 @@ static Matrix *gexeval_center_columns(Matrix *X) {
     return Xc;
 }
 
-static Matrix *gexeval_signal_matrix(Matrix *Z, Matrix *L) {
+/* Reconstruct the gex matrix X = Z * L */
+static Matrix *gexeval_reconstruct_gex_matrix(Matrix *Z, Matrix *L) {
     Matrix *signal = NULL;
 
     if (Z == NULL || L == NULL || Z->ncols != L->nrows)
@@ -235,6 +238,8 @@ static Matrix *gexeval_signal_matrix(Matrix *Z, Matrix *L) {
     return signal;
 }
 
+/* Compute the covariance matrix of the cells from their latent factor vectors in
+the rows of Z */
 static Matrix *gexeval_compute_cell_covariance(Matrix *Z) {
     int i, j, d;
     Matrix *Zc = NULL;
@@ -265,6 +270,8 @@ static Matrix *gexeval_compute_cell_covariance(Matrix *Z) {
     return cov;
 }
 
+/* Compute the covariance matrix of genes in the gene expression matrix 
+from the columns of X */
 static Matrix *gexeval_compute_gene_covariance(Matrix *signal) {
     int i, g1, g2;
     Matrix *Xc = NULL;
@@ -295,35 +302,20 @@ static Matrix *gexeval_compute_gene_covariance(Matrix *signal) {
     return cov;
 }
 
-static double gexeval_matrix_relative_error(Matrix *truth, Matrix *fit) {
-    int i, j;
-    double num = 0.0;
-    double den = 0.0;
-
-    if (truth == NULL || fit == NULL || truth->nrows != fit->nrows || truth->ncols != fit->ncols)
-        return HUGE_VAL;
-    for (i = 0; i < truth->nrows; i++) {
-        for (j = 0; j < truth->ncols; j++) {
-            double a = mat_get(truth, i, j);
-            double b = mat_get(fit, i, j);
-            num += (a - b) * (a - b);
-            den += a * a;
-        }
-    }
-    if (den <= 0.0)
-        return HUGE_VAL;
-    return sqrt(num / den);
-}
-
+/* Compute the Pearson correlation between all entries of matrices A and B.
+ * Treats both matrices as flattened vectors and returns correlation in [-1,1].
+ * Returns -2.0 if inputs are invalid or variance is zero.
+ */
 static double gexeval_matrix_correlation(Matrix *A, Matrix *B) {
     int i, j;
-    int n = 0;
-    double mean_a = 0.0;
-    double mean_b = 0.0;
-    double num = 0.0;
-    double den_a = 0.0;
-    double den_b = 0.0;
+    int n = 0;              /* Total number of entries */
+    double mean_a = 0.0;    /* Mean of all entries in A */
+    double mean_b = 0.0;    /* Mean of all entries in B */
+    double num = 0.0;       /* Numerator: covariance */
+    double den_a = 0.0;     /* Variance term for A */
+    double den_b = 0.0;     /* Variance term for B */
 
+    /* Require same shape and valid inputs */
     if (A == NULL || B == NULL || A->nrows != B->nrows || A->ncols != B->ncols)
         return -2.0;
 
@@ -331,6 +323,7 @@ static double gexeval_matrix_correlation(Matrix *A, Matrix *B) {
     if (n <= 1)
         return -2.0;
 
+    /* Compute means of both matrices */
     for (i = 0; i < A->nrows; i++) {
         for (j = 0; j < A->ncols; j++) {
             mean_a += mat_get(A, i, j);
@@ -340,18 +333,22 @@ static double gexeval_matrix_correlation(Matrix *A, Matrix *B) {
     mean_a /= (double)n;
     mean_b /= (double)n;
 
+    /* Compute covariance (num) and variances (den_a, den_b) */
     for (i = 0; i < A->nrows; i++) {
         for (j = 0; j < A->ncols; j++) {
-            double da = mat_get(A, i, j) - mean_a;
-            double db = mat_get(B, i, j) - mean_b;
-            num += da * db;
-            den_a += da * da;
-            den_b += db * db;
+            double da = mat_get(A, i, j) - mean_a;  /* Centered value from A */
+            double db = mat_get(B, i, j) - mean_b;  /* Centered value from B */
+            num += da * db;     /* Accumulate covariance */
+            den_a += da * da;   /* Accumulate variance of A */
+            den_b += db * db;   /* Accumulate variance of B */
         }
     }
 
+    /* Avoid division by zero if one matrix has no variance */
     if (den_a <= 0.0 || den_b <= 0.0)
         return -2.0;
+
+    /* Return Pearson correlation */
     return num / sqrt(den_a * den_b);
 }
 
@@ -409,36 +406,45 @@ static Matrix *gexeval_orthonormal_basis(Matrix *X, int *rank_out) {
     return Q;
 }
 
+/* Compute similarity between the column spaces of Z_true and Z_fit.
+ * Returns a value in [0,1]: 1 = identical subspaces, 0 = orthogonal.
+ * This is invariant to rotations or scaling of the latent factors.
+ */
 static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) {
     int r_true = 0;
     int r_fit = 0;
     int i, j, k;
-    Matrix *Q_true = NULL;
-    Matrix *Q_fit = NULL;
-    Matrix *cross = NULL;
-    Matrix *gram = NULL;
+    Matrix *Q_true = NULL;   /* Orthonormal basis for col(Z_true) */
+    Matrix *Q_fit = NULL;    /* Orthonormal basis for col(Z_fit) */
+    Matrix *cross = NULL;    /* Q_true^T Q_fit: pairwise basis overlaps */
+    Matrix *gram = NULL;     /* cross^T cross */
     Matrix *gram_copy = NULL;
-    Vector *evals = NULL;
+    Vector *evals = NULL;    /* Eigenvalues of gram */
     Matrix *evecs = NULL;
     double overlap = -1.0;
     int denom_rank;
 
+    /* Require same ambient space (same number of rows) */
     if (Z_true == NULL || Z_fit == NULL || Z_true->nrows != Z_fit->nrows)
         return -1.0;
 
+    /* Convert both matrices to orthonormal bases of their column spaces */
     Q_true = gexeval_orthonormal_basis(Z_true, &r_true);
     Q_fit = gexeval_orthonormal_basis(Z_fit, &r_fit);
     if (Q_true == NULL || Q_fit == NULL)
         goto cleanup;
 
+    /* Allocate working matrices */
     cross = mat_new(r_true, r_fit);
     gram = mat_new(r_fit, r_fit);
     gram_copy = mat_new(r_fit, r_fit);
     evals = vec_new(r_fit);
     evecs = mat_new(r_fit, r_fit);
-    if (cross == NULL || gram == NULL || gram_copy == NULL || evals == NULL || evecs == NULL)
+    if (cross == NULL || gram == NULL || gram_copy == NULL ||
+        evals == NULL || evecs == NULL)
         goto cleanup;
 
+    /* cross[i,j] = dot product between basis vectors of the two subspaces */
     for (i = 0; i < r_true; i++) {
         for (j = 0; j < r_fit; j++) {
             double sum = 0.0;
@@ -448,6 +454,7 @@ static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) 
         }
     }
 
+    /* gram = cross^T cross measures how much Q_fit lies in Q_true */
     for (i = 0; i < r_fit; i++) {
         for (j = 0; j < r_fit; j++) {
             double sum = 0.0;
@@ -458,20 +465,21 @@ static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) 
         }
     }
 
+    /* Eigenvalues = squared cosines of principal angles between subspaces */
     if (mat_diagonalize_sym(gram_copy, evals, evecs) != 0)
         goto cleanup;
 
+    /* Normalize by smaller subspace dimension */
     denom_rank = (r_true < r_fit ? r_true : r_fit);
     if (denom_rank <= 0)
         goto cleanup;
 
+    /* Average squared cosine overlap (clamp for numerical stability) */
     overlap = 0.0;
     for (i = 0; i < r_fit; i++) {
         double lambda = vec_get(evals, i);
-        if (lambda < 0.0)
-            lambda = 0.0;
-        if (lambda > 1.0)
-            lambda = 1.0;
+        if (lambda < 0.0) lambda = 0.0;
+        if (lambda > 1.0) lambda = 1.0;
         overlap += lambda;
     }
     overlap /= (double)denom_rank;
@@ -484,29 +492,43 @@ cleanup:
     if (gram_copy != NULL) mat_free(gram_copy);
     if (evals != NULL) vec_free(evals);
     if (evecs != NULL) mat_free(evecs);
+
     return overlap;
 }
 
+
+/* Compute per-latent-factor contribution magnitudes.
+ * For each latent dimension d, this returns:
+ *   sigma2_latent[d] * ||L[d, :]||^2
+ * i.e., the variance of factor d scaled by the squared norm of its loadings.
+ */
 static double *gexeval_factor_contributions(Matrix *L,
                                             const double *sigma2_latent,
                                             int k) {
     int d, j;
     double *vals = NULL;
 
+    /* L should have k rows (one per latent factor) */
     if (L == NULL || sigma2_latent == NULL || L->nrows != k)
         return NULL;
+
     vals = (double *)calloc(k, sizeof(double));
     if (vals == NULL)
         return NULL;
 
     for (d = 0; d < k; d++) {
         double row_ss = 0.0;
+
+        /* Compute squared norm of loadings for factor d */
         for (j = 0; j < L->ncols; j++) {
             double v = mat_get(L, d, j);
             row_ss += v * v;
         }
+
+        /* Scale by latent variance for factor d */
         vals[d] = sigma2_latent[d] * row_ss;
     }
+
     return vals;
 }
 
@@ -555,22 +577,6 @@ static double gexeval_vector_correlation(const double *a, const double *b, int n
     if (den_a <= 0.0 || den_b <= 0.0)
         return -2.0;
     return num / sqrt(den_a * den_b);
-}
-
-static double gexeval_vector_relative_error(const double *a, const double *b, int n) {
-    int i;
-    double num = 0.0;
-    double den = 0.0;
-
-    if (a == NULL || b == NULL || n <= 0)
-        return HUGE_VAL;
-    for (i = 0; i < n; i++) {
-        num += (a[i] - b[i]) * (a[i] - b[i]);
-        den += a[i] * a[i];
-    }
-    if (den <= 0.0)
-        return HUGE_VAL;
-    return sqrt(num / den);
 }
 
 static GexEvalSummary *gexeval_read_summary(const char *filename) {
@@ -680,12 +686,8 @@ int main(int argc, char *argv[]) {
     Matrix *fit_signal = NULL;
     double latent_subspace_similarity;
     double cell_cov_corr;
-    double cell_cov_rel_error;
     double gene_cov_corr;
-    double gene_cov_rel_error;
-    double sigma_obs_rel_error;
     double variance_trend_corr = -2.0;
-    double variance_trend_rel_error = HUGE_VAL;
     double *truth_contrib = NULL;
     double *fit_contrib = NULL;
     char **common_cells = NULL;
@@ -738,6 +740,7 @@ int main(int argc, char *argv[]) {
     snprintf(fit_l_path, sizeof(fit_l_path), "%s.model.L.tsv", fit_prefix);
     snprintf(eval_summary_path, sizeof(eval_summary_path), "%s.eval.summary.tsv", outprefix);
 
+    /* Read in the simulated and fit parameters */
     truth_summary = gexeval_read_summary(truth_summary_path);
     fit_summary = gexeval_read_summary(fit_summary_path);
     truth_Z = gex_read_labeled_matrix(truth_z_path);
@@ -762,6 +765,7 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
+    /* Subset Z and L to the common cells and genes */
     truth_Z_aligned = gexeval_subset_rows_by_names(truth_Z, common_cells, n_common_cells);
     fit_Z_aligned = gexeval_subset_rows_by_names(fit_Z, common_cells, n_common_cells);
     truth_L_common = gexeval_subset_cols_by_names(truth_L, common_genes, n_common_genes);
@@ -771,10 +775,15 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    truth_signal = gexeval_signal_matrix(truth_Z_aligned->X, truth_L_common->X);
-    fit_signal = gexeval_signal_matrix(fit_Z_aligned->X, fit_L_common->X);
+    /* Compute the reconstructed gex matrix X from Z and L for both simulated and fitted models */
+    truth_signal = gexeval_reconstruct_gex_matrix(truth_Z_aligned->X, truth_L_common->X);
+    fit_signal = gexeval_reconstruct_gex_matrix(fit_Z_aligned->X, fit_L_common->X);
+
+    /* Compute covariance between cells implied by their latent factor vectors */
     truth_latent_cov = gexeval_compute_cell_covariance(truth_Z_aligned->X);
     fit_latent_cov = gexeval_compute_cell_covariance(fit_Z_aligned->X);
+
+    /* Compute covariance between genes in the reconstructed gene expression matrix */
     truth_gene_cov = gexeval_compute_gene_covariance(truth_signal);
     fit_gene_cov = gexeval_compute_gene_covariance(fit_signal);
     if (truth_signal == NULL || fit_signal == NULL || truth_latent_cov == NULL ||
@@ -783,14 +792,18 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
+    /* Compute the similarity between the latent subspaces of the truth and fitted models */
     latent_subspace_similarity = gexeval_latent_subspace_similarity(truth_Z_aligned->X, fit_Z_aligned->X);
-    cell_cov_corr = gexeval_matrix_correlation(truth_latent_cov, fit_latent_cov);
-    cell_cov_rel_error = gexeval_matrix_relative_error(truth_latent_cov, fit_latent_cov);
-    gene_cov_corr = gexeval_matrix_correlation(truth_gene_cov, fit_gene_cov);
-    gene_cov_rel_error = gexeval_matrix_relative_error(truth_gene_cov, fit_gene_cov);
-    sigma_obs_rel_error = fabs(fit_summary->sigma_obs - truth_summary->sigma_obs) /
-                          (fabs(truth_summary->sigma_obs) > 1e-12 ? fabs(truth_summary->sigma_obs) : 1.0);
 
+    /* Compute pearson correlations between the flattened cell covariance matrices */
+    cell_cov_corr = gexeval_matrix_correlation(truth_latent_cov, fit_latent_cov);
+
+    /* Compute pearson correlations between the flattened gene covariance matrices */
+    gene_cov_corr = gexeval_matrix_correlation(truth_gene_cov, fit_gene_cov);
+
+    /* Compute how much each factor contributes to the total variance in the fit model
+    to see if any factor dominates in reconstruction from the matrix factorization components
+    Z and L. This is a scale-invariant way to compare the latent sigmas between simulated and fitted models */
     truth_contrib = gexeval_factor_contributions(truth_L->X, truth_summary->sigma2_latent, truth_summary->k);
     fit_contrib = gexeval_factor_contributions(fit_L->X, fit_summary->sigma2_latent, fit_summary->k);
     if (truth_contrib != NULL && fit_contrib != NULL) {
@@ -798,7 +811,6 @@ int main(int argc, char *argv[]) {
         gexeval_sort_desc(truth_contrib, truth_summary->k);
         gexeval_sort_desc(fit_contrib, fit_summary->k);
         variance_trend_corr = gexeval_vector_correlation(truth_contrib, fit_contrib, n_compare);
-        variance_trend_rel_error = gexeval_vector_relative_error(truth_contrib, fit_contrib, n_compare);
     }
 
     out = fopen(eval_summary_path, "w");
@@ -810,25 +822,16 @@ int main(int argc, char *argv[]) {
     fprintf(out, "metric\tvalue\n");
     fprintf(out, "k_true\t%d\n", truth_summary->k);
     fprintf(out, "k_fit\t%d\n", fit_summary->k);
-    fprintf(out, "k_abs_diff\t%d\n", abs(fit_summary->k - truth_summary->k));
     fprintf(out, "latent_subspace_similarity\t%.17g\n", latent_subspace_similarity);
     fprintf(out, "cell_cov_correlation\t%.17g\n", cell_cov_corr);
-    fprintf(out, "cell_cov_relative_error\t%.17g\n", cell_cov_rel_error);
     fprintf(out, "gene_cov_correlation\t%.17g\n", gene_cov_corr);
-    fprintf(out, "gene_cov_relative_error\t%.17g\n", gene_cov_rel_error);
     fprintf(out, "sigma_obs_true\t%.17g\n", truth_summary->sigma_obs);
     fprintf(out, "sigma_obs_fit\t%.17g\n", fit_summary->sigma_obs);
-    fprintf(out, "sigma_obs_relative_error\t%.17g\n", sigma_obs_rel_error);
     fprintf(out, "latent_variance_trend_correlation\t%.17g\n", variance_trend_corr);
-    fprintf(out, "latent_variance_trend_relative_error\t%.17g\n", variance_trend_rel_error);
     fclose(out);
     out = NULL;
 
-    printf("Evaluated simulated recovery.\n");
-    printf("latent_subspace_similarity=%.4f\n", latent_subspace_similarity);
-    printf("cell_cov_correlation=%.4f gene_cov_correlation=%.4f\n",
-           cell_cov_corr, gene_cov_corr);
-    printf("Wrote evaluation summary to %s\n", eval_summary_path);
+    printf("Done. Evaluation summary written to: %s\n", eval_summary_path);
     status = 0;
 
 cleanup:
