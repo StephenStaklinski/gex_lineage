@@ -6,20 +6,6 @@
 #include "gex.h"
 #include "gex_sim.h"
 
-static char *gexsimprog_strdup(const char *s) {
-    size_t n;
-    char *out;
-
-    if (s == NULL)
-        return NULL;
-    n = strlen(s);
-    out = (char *)malloc(n + 1);
-    if (out == NULL)
-        return NULL;
-    memcpy(out, s, n + 1);
-    return out;
-}
-
 static int parse_sigma_latent_values(const char *spec,
                                      double **values_io,
                                      int *n_values_io) {
@@ -31,7 +17,7 @@ static int parse_sigma_latent_values(const char *spec,
     if (spec == NULL || values_io == NULL || n_values_io == NULL)
         return -1;
 
-    copy = gexsimprog_strdup(spec);
+    copy = strdup(spec);
     if (copy == NULL)
         return -1;
 

@@ -11,20 +11,6 @@
 #include <phast/lists.h>
 #include <phast/stringsplus.h>
 
-static char *gexsim_strdup(const char *s) {
-    size_t n;
-    char *out;
-
-    if (s == NULL)
-        return NULL;
-    n = strlen(s);
-    out = (char *)malloc(n + 1);
-    if (out == NULL)
-        return NULL;
-    memcpy(out, s, n + 1);
-    return out;
-}
-
 static unsigned int gexsim_rand_u32(unsigned int *state) {
     *state = (*state * 1664525u) + 1013904223u;
     return *state;
@@ -153,7 +139,7 @@ static char **gexsim_make_factor_names(int k) {
     for (i = 0; i < k; i++) {
         char buf[64];
         snprintf(buf, sizeof(buf), "LF%d", i + 1);
-        names[i] = gexsim_strdup(buf);
+        names[i] = strdup(buf);
         if (names[i] == NULL) {
             gexsim_free_string_array(names, i);
             return NULL;
@@ -176,7 +162,7 @@ static char **gexsim_make_gene_names(int n_genes) {
     for (j = 0; j < n_genes; j++) {
         char buf[64];
         snprintf(buf, sizeof(buf), "sim_gene_%04d", j + 1);
-        names[j] = gexsim_strdup(buf);
+        names[j] = strdup(buf);
         if (names[j] == NULL) {
             gexsim_free_string_array(names, j);
             return NULL;
@@ -237,7 +223,7 @@ int gex_get_shared_leaf_names(TreeNode **trees,
             }
         }
         if (present_in_all) {
-            names[n_keep] = gexsim_strdup(s->chars);
+            names[n_keep] = strdup(s->chars);
             if (names[n_keep] == NULL)
                 goto cleanup;
             n_keep++;
@@ -373,7 +359,7 @@ GexSimulationTruth *gex_simulate_latent_brownian_expression(Matrix *Sigma,
         goto cleanup;
 
     for (i = 0; i < n_cells; i++) {
-        gex->cell_names[i] = gexsim_strdup(cell_names[i]);
+        gex->cell_names[i] = strdup(cell_names[i]);
         if (gex->cell_names[i] == NULL)
             goto cleanup;
     }

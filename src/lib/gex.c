@@ -11,21 +11,6 @@
 #include <phast/numerical_opt.h>
 #include <phast/stringsplus.h>
 
-/* Duplicate a string. */
-static char *gex_strdup(const char *s) {
-    size_t n;
-    char *out;
-
-    if (s == NULL) return NULL;
-    n = strlen(s);
-
-    out = (char *)malloc(n + 1);
-    if (out == NULL) return NULL;
-
-    memcpy(out, s, n + 1);
-    return out;
-}
-
 /* Strip leading whitespace from a string. 
 Returns pointer to first non-whitespace character. */
 static char *gex_lstrip(char *s) {
@@ -69,7 +54,7 @@ static char *gex_extract_newick_from_tree_line(const char *line) {
     eq = strchr(line, '='); /* Find the '=' character that separates the tree name from the Newick string */
     if (eq == NULL) return NULL;
 
-    tmp = gex_strdup(eq + 1);   /* Duplicate the substring after '=' for manipulation */
+    tmp = strdup(eq + 1);   /* Duplicate the substring after '=' for manipulation */
     if (tmp == NULL) return NULL;
 
     s = gex_lstrip(tmp);    /* Strip leading whitespace */
@@ -81,7 +66,7 @@ static char *gex_extract_newick_from_tree_line(const char *line) {
         s = gex_lstrip(s);
     }
 
-    out = gex_strdup(s);
+    out = strdup(s);
     free(tmp);
     return out;
 }
@@ -840,7 +825,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         return NULL;
     }
 
-    char *line_copy = gex_strdup(line);
+    char *line_copy = strdup(line);
     char **fields = NULL;
     int nfields, i;
 
@@ -877,7 +862,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
     }
 
     for (i = 0; i < n_genes; i++) {
-        gex->gene_names[i] = gex_strdup(fields[i + 1]); /* Duplicate gene name strings from header fields */
+        gex->gene_names[i] = strdup(fields[i + 1]); /* Duplicate gene name strings from header fields */
         if (gex->gene_names[i] == NULL) {
             free(fields);
             free(line_copy);
@@ -938,7 +923,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         if (*trimmed == '\0' || *trimmed == '\n')
             continue;
 
-        line_copy = gex_strdup(line);   /* Duplicate the line for tokenization since strtok modifies the string */
+        line_copy = strdup(line);   /* Duplicate the line for tokenization since strtok modifies the string */
         if (line_copy == NULL) {
             fclose(f);
             return NULL;
@@ -952,7 +937,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
             return NULL;
         }
 
-        gex->cell_names[row] = gex_strdup(fields[0]);   /* Duplicate the cell name from the first field of the line */
+        gex->cell_names[row] = strdup(fields[0]);   /* Duplicate the cell name from the first field of the line */
         if (gex->cell_names[row] == NULL) {
             free(fields);
             free(line_copy);
@@ -1136,7 +1121,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 
     /* Fill the gene names in the subsetted matrix (same as original since we keep all genes) */
     for (j = 0; j < gex->n_genes; j++) {
-        subset->gene_names[j] = gex_strdup(gex->gene_names[j]);
+        subset->gene_names[j] = strdup(gex->gene_names[j]);
         if (subset->gene_names[j] == NULL) {
             gex_free_matrix_data(subset);
             subset = NULL;
@@ -1148,7 +1133,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     for (i = 0, j = 0; i < gex->n_cells; i++) {
         if (gex_name_in_string_list(gex->cell_names[i], keep_names)) {
             int g;
-            subset->cell_names[j] = gex_strdup(gex->cell_names[i]);
+            subset->cell_names[j] = strdup(gex->cell_names[i]);
             if (subset->cell_names[j] == NULL) {
                 gex_free_matrix_data(subset);
                 subset = NULL;
@@ -1875,7 +1860,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
 
     /* Copy cell names */
     for (i = 0; i < out->n_cells; i++) {
-        out->cell_names[i] = gex_strdup(gex->cell_names[i]);
+        out->cell_names[i] = strdup(gex->cell_names[i]);
         if (out->cell_names[i] == NULL) {
             gex_free_matrix_data(out);
             return NULL;
@@ -1886,7 +1871,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
     for (j = 0; j < gex->n_genes; j++) {
         if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i)) {
             /* Copy gene name that passed the filter(s) */
-            out->gene_names[out_j] = gex_strdup(gex->gene_names[j]);
+            out->gene_names[out_j] = strdup(gex->gene_names[j]);
             if (out->gene_names[out_j] == NULL) {
                 gex_free_matrix_data(out);
                 return NULL;

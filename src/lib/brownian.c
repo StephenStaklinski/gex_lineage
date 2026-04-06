@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 static int is_leaf(TreeNode *node) {
     if (node == NULL) return 0;
     return (node->lchild == NULL && node->rchild == NULL);
@@ -53,20 +52,6 @@ static int fill_node_depths(TreeNode *node, double *depth_by_id, int nnodes, dou
         return -1;
 
     return 0;
-}
-
-static char *brownian_strdup(const char *s) {
-    size_t n;
-    char *out;
-
-    if (s == NULL)
-        return NULL;
-    n = strlen(s);
-    out = (char *)malloc(n + 1);
-    if (out == NULL)
-        return NULL;
-    memcpy(out, s, n + 1);
-    return out;
 }
 
 static unsigned int brownian_rand_u32(unsigned int *state) {
@@ -483,7 +468,7 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
         return NULL;
     }
     for (i = 0; i < n; i++) {
-        gex->cell_names[i] = brownian_strdup(names[i]);
+        gex->cell_names[i] = strdup(names[i]);
         if (gex->cell_names[i] == NULL) {
             free(tips);
             gex_free_matrix_data(gex);
@@ -493,7 +478,7 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
     for (j = 0; j < n_tree_genes; j++) {
         char gene_name[64];
         snprintf(gene_name, sizeof(gene_name), "sim_pos_%02d", j + 1);
-        gex->gene_names[j] = brownian_strdup(gene_name);
+        gex->gene_names[j] = strdup(gene_name);
         if (gex->gene_names[j] == NULL) {
             free(tips);
             gex_free_matrix_data(gex);
@@ -503,7 +488,7 @@ GexMatrix *brownian_simulate_expression(TreeNode *tree,
     for (j = 0; j < n_null_genes; j++) {
         char gene_name[64];
         snprintf(gene_name, sizeof(gene_name), "sim_neg_%02d", j + 1);
-        gex->gene_names[n_tree_genes + j] = brownian_strdup(gene_name);
+        gex->gene_names[n_tree_genes + j] = strdup(gene_name);
         if (gex->gene_names[n_tree_genes + j] == NULL) {
             free(tips);
             gex_free_matrix_data(gex);
@@ -614,7 +599,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     }
 
     for (i = 0; i < n; i++) {
-        gex->cell_names[i] = brownian_strdup(names[i]);
+        gex->cell_names[i] = strdup(names[i]);
         if (gex->cell_names[i] == NULL) {
             gex_free_matrix_data(gex);
             mat_free(Sigma_reg);
@@ -625,7 +610,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     for (j = 0; j < n_tree_genes; j++) {
         char gene_name[64];
         snprintf(gene_name, sizeof(gene_name), "sim_pos_%02d", j + 1);
-        gex->gene_names[j] = brownian_strdup(gene_name);
+        gex->gene_names[j] = strdup(gene_name);
         if (gex->gene_names[j] == NULL) {
             gex_free_matrix_data(gex);
             mat_free(Sigma_reg);
@@ -636,7 +621,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     for (j = 0; j < n_null_genes; j++) {
         char gene_name[64];
         snprintf(gene_name, sizeof(gene_name), "sim_neg_%02d", j + 1);
-        gex->gene_names[n_tree_genes + j] = brownian_strdup(gene_name);
+        gex->gene_names[n_tree_genes + j] = strdup(gene_name);
         if (gex->gene_names[n_tree_genes + j] == NULL) {
             gex_free_matrix_data(gex);
             mat_free(Sigma_reg);

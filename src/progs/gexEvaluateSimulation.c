@@ -28,20 +28,6 @@ static int cmp_desc_value(const void *a, const void *b) {
     return 0;
 }
 
-static char *gexeval_strdup(const char *s) {
-    size_t n;
-    char *out;
-
-    if (s == NULL)
-        return NULL;
-    n = strlen(s);
-    out = (char *)malloc(n + 1);
-    if (out == NULL)
-        return NULL;
-    memcpy(out, s, n + 1);
-    return out;
-}
-
 static int gexeval_find_name(char **names, int n, const char *target) {
     int i;
 
@@ -78,7 +64,7 @@ static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
     }
 
     for (j = 0; j < src->n_genes; j++) {
-        out->gene_names[j] = gexeval_strdup(src->gene_names[j]);
+        out->gene_names[j] = strdup(src->gene_names[j]);
         if (out->gene_names[j] == NULL) {
             gex_free_matrix_data(out);
             return NULL;
@@ -91,7 +77,7 @@ static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
             gex_free_matrix_data(out);
             return NULL;
         }
-        out->cell_names[i] = gexeval_strdup(target_names[i]);
+        out->cell_names[i] = strdup(target_names[i]);
         if (out->cell_names[i] == NULL) {
             gex_free_matrix_data(out);
             return NULL;
@@ -125,7 +111,7 @@ static GexMatrix *gexeval_subset_cols_by_names(GexMatrix *src,
     }
 
     for (i = 0; i < src->n_cells; i++) {
-        out->cell_names[i] = gexeval_strdup(src->cell_names[i]);
+        out->cell_names[i] = strdup(src->cell_names[i]);
         if (out->cell_names[i] == NULL) {
             gex_free_matrix_data(out);
             return NULL;
@@ -138,7 +124,7 @@ static GexMatrix *gexeval_subset_cols_by_names(GexMatrix *src,
             gex_free_matrix_data(out);
             return NULL;
         }
-        out->gene_names[j] = gexeval_strdup(target_names[j]);
+        out->gene_names[j] = strdup(target_names[j]);
         if (out->gene_names[j] == NULL) {
             gex_free_matrix_data(out);
             return NULL;
@@ -171,7 +157,7 @@ static int gexeval_collect_common_names(char **names_ref,
 
     for (i = 0; i < n_ref; i++) {
         if (gexeval_find_name(names_other, n_other, names_ref[i]) >= 0) {
-            common[n_common] = gexeval_strdup(names_ref[i]);
+            common[n_common] = strdup(names_ref[i]);
             if (common[n_common] == NULL) {
                 int j;
                 for (j = 0; j < n_common; j++)
