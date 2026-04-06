@@ -107,6 +107,7 @@ static void usage(const char *progname) {
         "[--max-q Q] "
         "[--moran-min-i I] "
         "[--filter-only] "
+        "[--no-filter] "
         "[--verbose] "
         "[--seed S]\n",
         progname);
@@ -128,6 +129,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
+    int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
@@ -256,6 +258,9 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
         }
+        else if (strcmp(argv[i], "--no-filter") == 0) {
+            no_filter = 1;
+        }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
         }
@@ -274,6 +279,10 @@ int main(int argc, char *argv[]) {
     /* Check that all required inputs are specified */
     if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
+        goto cleanup;
+    }
+    if (filter_only && no_filter) {
+        fprintf(stderr, "ERROR: --filter-only and --no-filter cannot be used together.\n");
         goto cleanup;
     }
 
@@ -357,113 +366,122 @@ int main(int argc, char *argv[]) {
         print_covariance_summary(Sigmas[0], gex->cell_names, gex->n_cells);
     }
 
-    /* Test the phylogenetic signal filter(s) with simulated data to understand
-    the performance on the tree subset used for filtering. */
-    if (n_filter_trees == n_trees) {
-        printf("Running a simulation check of the phylogenetic signal gene filter(s) using all %d tree(s)...\n",
-               n_filter_trees);
-    } else {
-        printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
-               n_filter_trees);
-    }
-    if (!brownian_run_simulation_check(trees,
-                                       gex->cell_names,
-                                       gex->n_cells,
-                                       n_sims,
-                                       n_sims,
-                                       filter_mode,
-                                       lrt_alt_mode,
-                                       n_perms,
-                                       max_q,
-                                       moran_min_i,
-                                       Sigmas,
-                                       n_filter_trees,
-                                       seed)) {
-        if (verbose) {
-            printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
+    if (!no_filter) {
+        /* Test the phylogenetic signal filter(s) with simulated data to understand
+        the performance on the tree subset used for filtering. */
+        if (n_filter_trees == n_trees) {
+            printf("Running a simulation check of the phylogenetic signal gene filter(s) using all %d tree(s)...\n",
+                   n_filter_trees);
+        } else {
+            printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
+                   n_filter_trees);
         }
-    } else {
-        if (verbose) {
-            printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree.\n");
+        if (!brownian_run_simulation_check(trees,
+                                           gex->cell_names,
+                                           gex->n_cells,
+                                           n_sims,
+                                           n_sims,
+                                           filter_mode,
+                                           lrt_alt_mode,
+                                           n_perms,
+                                           max_q,
+                                           moran_min_i,
+                                           Sigmas,
+                                           n_filter_trees,
+                                           seed)) {
+            if (verbose) {
+                printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
+            }
+        } else {
+            if (verbose) {
+                printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree.\n");
+            }
         }
     }
 
-    
-    if (n_filter_trees == n_trees) {
-        printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using all %d tree(s)...\n", n_filter_trees);
-    } else {
-        printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the first %d tree(s)...\n",
-                n_filter_trees);
-    }
-    /* Run the phylogenetic autocorrelation filter tests if requested */
-    if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
-        morans = gex_compute_morans_i(gex, Sigmas, n_filter_trees, n_perms, seed);
-        if (morans == NULL) {
-            fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
-            goto cleanup;
+    if (!no_filter) {
+        if (n_filter_trees == n_trees) {
+            printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using all %d tree(s)...\n", n_filter_trees);
+        } else {
+            printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the first %d tree(s)...\n",
+                    n_filter_trees);
         }
-        if (verbose) {
-            gex_print_morans_summary(morans, gex, max_q, moran_min_i);
-        }
-
-        {
-            char corr_path[4096];
-            snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
-            if (gex_write_morans_tsv(corr_path, morans, gex, max_q, moran_min_i) != 0) {
-                fprintf(stderr, "ERROR: failed to write Moran correlation results to %s.\n",
-                        corr_path);
+        /* Run the phylogenetic autocorrelation filter tests if requested */
+        if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
+            morans = gex_compute_morans_i(gex, Sigmas, n_filter_trees, n_perms, seed);
+            if (morans == NULL) {
+                fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
                 goto cleanup;
             }
             if (verbose) {
-                printf("Wrote Moran correlation results to %s.\n", corr_path);
+                gex_print_morans_summary(morans, gex, max_q, moran_min_i);
+            }
+
+            {
+                char corr_path[4096];
+                snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
+                if (gex_write_morans_tsv(corr_path, morans, gex, max_q, moran_min_i) != 0) {
+                    fprintf(stderr, "ERROR: failed to write Moran correlation results to %s.\n",
+                            corr_path);
+                    goto cleanup;
+                }
+                if (verbose) {
+                    printf("Wrote Moran correlation results to %s.\n", corr_path);
+                }
             }
         }
-    }
 
-    /* Run the phylogenetic LRT filter tests if requested */
-    if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
-        lrt = gex_compute_brownian_lrt(gex, Sigmas, n_filter_trees, n_perms, seed, lrt_alt_mode);
-        if (lrt == NULL) {
-            fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
-            goto cleanup;
-        }
-        if (verbose) {
-            gex_print_lrt_summary(lrt, gex, max_q);
-        }
-
-        {
-            char lrt_path[4096];
-            snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.tsv", outprefix);
-            if (gex_write_lrt_tsv(lrt_path, lrt, gex, max_q) != 0) {
-                fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
-                        lrt_path);
+        /* Run the phylogenetic LRT filter tests if requested */
+        if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
+            lrt = gex_compute_brownian_lrt(gex, Sigmas, n_filter_trees, n_perms, seed, lrt_alt_mode);
+            if (lrt == NULL) {
+                fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
                 goto cleanup;
             }
             if (verbose) {
-                printf("Wrote LRT correlation results to %s.\n", lrt_path);
+                gex_print_lrt_summary(lrt, gex, max_q);
+            }
+
+            {
+                char lrt_path[4096];
+                snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.tsv", outprefix);
+                if (gex_write_lrt_tsv(lrt_path, lrt, gex, max_q) != 0) {
+                    fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
+                            lrt_path);
+                    goto cleanup;
+                }
+                if (verbose) {
+                    printf("Wrote LRT correlation results to %s.\n", lrt_path);
+                }
             }
         }
-    }
 
-    /* Stop early if only phylogenetic signal filtering is requested */
-    if (filter_only) {
-        printf("Done\n");
-        status = 0;
-        goto cleanup;
-    }
+        /* Stop early if only phylogenetic signal filtering is requested */
+        if (filter_only) {
+            printf("Done\n");
+            status = 0;
+            goto cleanup;
+        }
 
-    /* Filter genes based on the results of the correlation and/or LRT test(s) */
-    gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode,
-                                               max_q, moran_min_i);
-    if (gex_filtered == NULL) {
-        fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
-        goto cleanup;
+        /* Filter genes based on the results of the correlation and/or LRT test(s) */
+        gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode,
+                                                   max_q, moran_min_i);
+        if (gex_filtered == NULL) {
+            fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
+            goto cleanup;
+        }
+        printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->n_cells, gex_filtered->n_genes);
+        printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
+    } else {
+        gex_filtered = gex;
+        gex = NULL;
+        printf("Skipping phylogenetic signal gene filtering and using all %d gene(s) for modeling.\n",
+               gex_filtered->n_genes);
+        printf("Running PCA on the input unfiltered gene expression matrix to select the number of latent factor dimensions for the model...\n");
     }
-    printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->n_cells, gex_filtered->n_genes);
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
-    printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
     pca = gex_compute_pca(gex_filtered, pca_var_threshold);
     if (pca == NULL) {
         fprintf(stderr, "ERROR: PCA failed.\n");

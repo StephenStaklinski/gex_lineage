@@ -413,7 +413,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int objective_hist_size_short = 0;   /* Current number of values stored in the short window */
     int objective_hist_idx_long = 0;    /* Next insertion position in the long history buffer */
     int objective_hist_idx_short = 0;    /* Next insertion position in the short history buffer */
-    const double objective_tol = 1e-4;  /* Relative objective tolerance used for convergence */
+    const double objective_tol = 1e-3;  /* Relative objective tolerance used for convergence */
 
     /* Model related */
     int k;  /* Number of latent dimensions */
