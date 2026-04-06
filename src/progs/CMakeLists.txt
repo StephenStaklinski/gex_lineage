@@ -4,6 +4,8 @@ add_executable(vine vine.c)
 add_executable(evalTrees evalTrees.c)
 add_executable(crisprLnl crisprLnl.c)
 add_executable(gexLineage gexLineage.c)
+add_executable(gexSimulateLatent gexSimulateLatent.c)
+add_executable(gexEvaluateSimulation gexEvaluateSimulation.c)
 
 # ---- Optional codesigning (macOS) ----
 # Default is ON on macOS for normal developer builds, but OFF under conda-build.
@@ -18,7 +20,7 @@ endif()
 option(VINE_CODESIGN "Ad-hoc codesign executables on macOS after build" ${_vine_codesign_default})
 message(STATUS "VINE_CODESIGN=${VINE_CODESIGN} (CONDA_BUILD=$ENV{CONDA_BUILD})")
 
-foreach(tgt vine evalTrees crisprLnl gexLineage)
+foreach(tgt vine evalTrees crisprLnl gexLineage gexSimulateLatent gexEvaluateSimulation)
     target_link_libraries(${tgt} PRIVATE vine_core)
     if(APPLE AND VINE_CODESIGN)
         add_custom_command(TARGET ${tgt} POST_BUILD
@@ -44,5 +46,7 @@ install(TARGETS
   evalTrees
   crisprLnl
   gexLineage
+  gexSimulateLatent
+  gexEvaluateSimulation
   RUNTIME DESTINATION bin
 )

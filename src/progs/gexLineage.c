@@ -482,7 +482,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: failed to select covariance matrices for latent model fitting.\n");
             goto cleanup;
         }
-        printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.", n_model_trees);
+        printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
     } else {
         model_Sigmas = Sigmas;
         n_model_trees = n_trees;

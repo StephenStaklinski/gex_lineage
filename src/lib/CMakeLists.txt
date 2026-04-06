@@ -11,6 +11,7 @@ add_library(vine_core STATIC
     geometry.c
     gex.c
     gex_model.c
+    gex_sim.c
     gradients.c
     heap.c
     hutchinson.c
