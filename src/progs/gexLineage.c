@@ -528,9 +528,8 @@ int main(int argc, char *argv[]) {
             }
             free(Sigmas);
         }
-        if (model_Sigmas != NULL) {
-            /* Only free model_Sigmas if it is a different pointer from Sigmas,
-            which would already have been freed above */
+        /* Only free model_Sigmas if it is separately allocated */
+        if (model_Sigmas != NULL && model_Sigmas != Sigmas) {
             free(model_Sigmas);
         }
 
