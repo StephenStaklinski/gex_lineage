@@ -52,8 +52,6 @@ static int gexsim_average_simulation_in_place(GexSimulationTruth *truth,
         return -1;
 
     if (add_matrix_in_place(truth->Z, tree_truth->Z) != 0 ||
-        add_matrix_in_place(truth->latent_cov, tree_truth->latent_cov) != 0 ||
-        add_matrix_in_place(truth->gene_cov, tree_truth->gene_cov) != 0 ||
         add_matrix_in_place(gex->X, tree_gex->X) != 0)
         return -1;
 
@@ -278,8 +276,6 @@ int main(int argc, char *argv[]) {
 
         if (truth == NULL || gex == NULL ||
             scale_matrix_in_place(truth->Z, 1.0 / (double)n_sim_trees) != 0 ||
-            scale_matrix_in_place(truth->latent_cov, 1.0 / (double)n_sim_trees) != 0 ||
-            scale_matrix_in_place(truth->gene_cov, 1.0 / (double)n_sim_trees) != 0 ||
             scale_matrix_in_place(gex->X, 1.0 / (double)n_sim_trees) != 0) {
             fprintf(stderr, "ERROR: failed to finalize expectation-over-trees simulation.\n");
             goto cleanup;

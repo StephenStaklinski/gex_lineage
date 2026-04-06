@@ -9,8 +9,6 @@ typedef struct {
     int k;
     Matrix *Z;
     Matrix *L;
-    Matrix *latent_cov;
-    Matrix *gene_cov;
     double *sigma2_latent;
     double sigma2_obs;
 } GexSimulationTruth;
