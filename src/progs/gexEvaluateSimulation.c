@@ -352,6 +352,34 @@ static double gexeval_matrix_correlation(Matrix *A, Matrix *B) {
     return num / sqrt(den_a * den_b);
 }
 
+/* Compute relative Frobenius error between matrices A and B:
+ *   ||A - B||_F / ||A||_F
+ * Returns -1.0 on invalid input.
+ */
+static double gexeval_relative_frobenius_error(Matrix *A, Matrix *B) {
+    int i, j;
+    double ss_diff = 0.0;
+    double ss_ref = 0.0;
+
+    if (A == NULL || B == NULL || A->nrows != B->nrows || A->ncols != B->ncols)
+        return -1.0;
+
+    for (i = 0; i < A->nrows; i++) {
+        for (j = 0; j < A->ncols; j++) {
+            double a = mat_get(A, i, j);
+            double b = mat_get(B, i, j);
+            double d = a - b;
+            ss_diff += d * d;
+            ss_ref += a * a;
+        }
+    }
+
+    if (ss_ref <= 0.0)
+        return -1.0;
+
+    return sqrt(ss_diff) / sqrt(ss_ref);
+}
+
 static Matrix *gexeval_orthonormal_basis(Matrix *X, int *rank_out) {
     int i, j, qcol;
     Matrix *Xc = NULL;
@@ -549,6 +577,60 @@ static void gexeval_sort_desc(double *vals, int n) {
     free(tmp);
 }
 
+/* Normalize a nonnegative vector to sum to 1.
+ * Returns a newly allocated probability vector, or NULL on failure.
+ */
+static double *gexeval_normalize_nonnegative_vector(const double *x, int n) {
+    int i;
+    double sum = 0.0;
+    double *p = NULL;
+
+    if (x == NULL || n <= 0)
+        return NULL;
+
+    p = (double *)calloc(n, sizeof(double));
+    if (p == NULL)
+        return NULL;
+
+    for (i = 0; i < n; i++) {
+        double v = x[i];
+        if (v < 0.0)
+            v = 0.0;
+        p[i] = v;
+        sum += v;
+    }
+
+    if (sum <= 0.0) {
+        free(p);
+        return NULL;
+    }
+
+    for (i = 0; i < n; i++)
+        p[i] /= sum;
+
+    return p;
+}
+
+/* Compute L1 distance between two vectors of equal length.
+ * Returns value in [0,2] for probability vectors, or -1.0 on failure.
+ */
+static double gexeval_vector_l1_distance(const double *a, const double *b, int n) {
+    int i;
+    double s = 0.0;
+
+    if (a == NULL || b == NULL || n <= 0)
+        return -1.0;
+
+    for (i = 0; i < n; i++) {
+        double d = a[i] - b[i];
+        if (d < 0.0)
+            d = -d;
+        s += d;
+    }
+
+    return s;
+}
+
 static double gexeval_vector_correlation(const double *a, const double *b, int n) {
     int i;
     double mean_a = 0.0;
@@ -577,6 +659,194 @@ static double gexeval_vector_correlation(const double *a, const double *b, int n
     if (den_a <= 0.0 || den_b <= 0.0)
         return -2.0;
     return num / sqrt(den_a * den_b);
+}
+
+/* Compute Pearson correlation between vectors a and b.
+ * Returns value in [-1,1], or -2.0 on invalid input.
+ */
+static double gexeval_vector_correlation_basic(const double *a, const double *b, int n) {
+    return gexeval_vector_correlation(a, b, n);
+}
+
+/* Compute absolute Pearson correlation between columns c1 and c2
+ * of matrices A and B. The matrices must have the same number of rows.
+ * Returns value in [0,1], or -2.0 on failure.
+ */
+static double gexeval_column_abs_correlation(Matrix *A, int c1, Matrix *B, int c2) {
+    int i;
+    int n;
+    double mean_a = 0.0;
+    double mean_b = 0.0;
+    double num = 0.0;
+    double den_a = 0.0;
+    double den_b = 0.0;
+
+    if (A == NULL || B == NULL || A->nrows != B->nrows ||
+        c1 < 0 || c1 >= A->ncols || c2 < 0 || c2 >= B->ncols)
+        return -2.0;
+
+    n = A->nrows;
+    if (n <= 1)
+        return -2.0;
+
+    for (i = 0; i < n; i++) {
+        mean_a += mat_get(A, i, c1);
+        mean_b += mat_get(B, i, c2);
+    }
+    mean_a /= (double)n;
+    mean_b /= (double)n;
+
+    for (i = 0; i < n; i++) {
+        double da = mat_get(A, i, c1) - mean_a;
+        double db = mat_get(B, i, c2) - mean_b;
+        num += da * db;
+        den_a += da * da;
+        den_b += db * db;
+    }
+
+    if (den_a <= 0.0 || den_b <= 0.0)
+        return -2.0;
+
+    num /= sqrt(den_a * den_b);
+    if (num < 0.0)
+        num = -num;
+    return num;
+}
+
+/* Match latent factors by greedily pairing columns of Z_true and Z_fit
+ * using maximum absolute Pearson correlation.
+ *
+ * This is a factor-level metric, unlike subspace overlap. It asks whether
+ * individual latent factors are recovered up to sign flips.
+ *
+ * Returns the mean matched absolute correlation in [0,1], or -1.0 on failure.
+ * Compares up to min(ncol(Z_true), ncol(Z_fit)) factors.
+ */
+static double gexeval_greedy_factor_match_score(Matrix *Z_true, Matrix *Z_fit) {
+    int i, j;
+    int n_match;
+    int *used_true = NULL;
+    int *used_fit = NULL;
+    double score = -1.0;
+
+    if (Z_true == NULL || Z_fit == NULL || Z_true->nrows != Z_fit->nrows)
+        return -1.0;
+
+    n_match = (Z_true->ncols < Z_fit->ncols ? Z_true->ncols : Z_fit->ncols);
+    if (n_match <= 0)
+        return -1.0;
+
+    used_true = (int *)calloc(Z_true->ncols, sizeof(int));
+    used_fit = (int *)calloc(Z_fit->ncols, sizeof(int));
+    if (used_true == NULL || used_fit == NULL)
+        goto cleanup;
+
+    score = 0.0;
+    for (i = 0; i < n_match; i++) {
+        int best_true = -1;
+        int best_fit = -1;
+        double best_corr = -1.0;
+
+        for (j = 0; j < Z_true->ncols; j++) {
+            int k;
+            if (used_true[j])
+                continue;
+            for (k = 0; k < Z_fit->ncols; k++) {
+                double corr;
+                if (used_fit[k])
+                    continue;
+                corr = gexeval_column_abs_correlation(Z_true, j, Z_fit, k);
+                if (corr > best_corr) {
+                    best_corr = corr;
+                    best_true = j;
+                    best_fit = k;
+                }
+            }
+        }
+
+        if (best_true < 0 || best_fit < 0 || best_corr < 0.0) {
+            score = -1.0;
+            goto cleanup;
+        }
+
+        used_true[best_true] = 1;
+        used_fit[best_fit] = 1;
+        score += best_corr;
+    }
+
+    score /= (double)n_match;
+
+cleanup:
+    if (used_true != NULL)
+        free(used_true);
+    if (used_fit != NULL)
+        free(used_fit);
+    return score;
+}
+
+/* Compare normalized factor contribution profiles between truth and fit.
+ *
+ * The input vectors should be per-factor contribution magnitudes such as
+ *   sigma2_latent[d] * ||L[d,:]||^2
+ *
+ * Steps:
+ *   1. sort both vectors in descending order
+ *   2. keep the top min(n_true, n_fit) entries
+ *   3. normalize each truncated vector to sum to 1
+ *   4. return L1 distance between the two normalized profiles
+ *
+ * Returns 0 for identical profiles, larger values for more mismatch.
+ * Maximum is 2 for probability vectors. Returns -1.0 on failure.
+ */
+static double gexeval_normalized_contribution_l1(const double *truth_contrib,
+                                                 int n_true,
+                                                 const double *fit_contrib,
+                                                 int n_fit) {
+    int i;
+    int n_compare;
+    double *truth_sorted = NULL;
+    double *fit_sorted = NULL;
+    double *truth_p = NULL;
+    double *fit_p = NULL;
+    double out = -1.0;
+
+    if (truth_contrib == NULL || fit_contrib == NULL || n_true <= 0 || n_fit <= 0)
+        return -1.0;
+
+    n_compare = (n_true < n_fit ? n_true : n_fit);
+    if (n_compare <= 0)
+        return -1.0;
+
+    truth_sorted = (double *)calloc(n_true, sizeof(double));
+    fit_sorted = (double *)calloc(n_fit, sizeof(double));
+    if (truth_sorted == NULL || fit_sorted == NULL)
+        goto cleanup;
+
+    for (i = 0; i < n_true; i++)
+        truth_sorted[i] = truth_contrib[i];
+    for (i = 0; i < n_fit; i++)
+        fit_sorted[i] = fit_contrib[i];
+
+    gexeval_sort_desc(truth_sorted, n_true);
+    gexeval_sort_desc(fit_sorted, n_fit);
+
+    truth_p = gexeval_normalize_nonnegative_vector(truth_sorted, n_compare);
+    fit_p = gexeval_normalize_nonnegative_vector(fit_sorted, n_compare);
+    if (truth_p == NULL || fit_p == NULL)
+        goto cleanup;
+
+    out = gexeval_vector_l1_distance(truth_p, fit_p, n_compare);
+
+cleanup:
+    if (truth_sorted != NULL)
+        free(truth_sorted);
+    if (fit_sorted != NULL)
+        free(fit_sorted);
+    if (truth_p != NULL)
+        free(truth_p);
+    if (fit_p != NULL)
+        free(fit_p);
+    return out;
 }
 
 static GexEvalSummary *gexeval_read_summary(const char *filename) {
@@ -685,9 +955,14 @@ int main(int argc, char *argv[]) {
     Matrix *truth_signal = NULL;
     Matrix *fit_signal = NULL;
     double latent_subspace_similarity;
+    double latent_factor_match_score = -1.0;
     double cell_cov_corr;
     double gene_cov_corr;
+    double signal_relative_frobenius_error = -1.0;
+    double cell_cov_relative_frobenius_error = -1.0;
+    double gene_cov_relative_frobenius_error = -1.0;
     double variance_trend_corr = -2.0;
+    double normalized_contribution_l1 = -1.0;
     double *truth_contrib = NULL;
     double *fit_contrib = NULL;
     char **common_cells = NULL;
@@ -795,11 +1070,19 @@ int main(int argc, char *argv[]) {
     /* Compute the similarity between the latent subspaces of the truth and fitted models */
     latent_subspace_similarity = gexeval_latent_subspace_similarity(truth_Z_aligned->X, fit_Z_aligned->X);
 
+    /* Compute factor-level recovery up to permutation and sign flip. */
+    latent_factor_match_score = gexeval_greedy_factor_match_score(truth_Z_aligned->X, fit_Z_aligned->X);
+
     /* Compute pearson correlations between the flattened cell covariance matrices */
     cell_cov_corr = gexeval_matrix_correlation(truth_latent_cov, fit_latent_cov);
 
     /* Compute pearson correlations between the flattened gene covariance matrices */
     gene_cov_corr = gexeval_matrix_correlation(truth_gene_cov, fit_gene_cov);
+
+    /* Compute scale-sensitive matrix reconstruction and covariance errors. */
+    signal_relative_frobenius_error = gexeval_relative_frobenius_error(truth_signal, fit_signal);
+    cell_cov_relative_frobenius_error = gexeval_relative_frobenius_error(truth_latent_cov, fit_latent_cov);
+    gene_cov_relative_frobenius_error = gexeval_relative_frobenius_error(truth_gene_cov, fit_gene_cov);
 
     /* Compute how much each factor contributes to the total variance in the fit model
     to see if any factor dominates in reconstruction from the matrix factorization components
@@ -810,7 +1093,9 @@ int main(int argc, char *argv[]) {
         int n_compare = (truth_summary->k < fit_summary->k ? truth_summary->k : fit_summary->k);
         gexeval_sort_desc(truth_contrib, truth_summary->k);
         gexeval_sort_desc(fit_contrib, fit_summary->k);
-        variance_trend_corr = gexeval_vector_correlation(truth_contrib, fit_contrib, n_compare);
+        variance_trend_corr = gexeval_vector_correlation_basic(truth_contrib, fit_contrib, n_compare);
+        normalized_contribution_l1 = gexeval_normalized_contribution_l1(truth_contrib, truth_summary->k,
+                                                                        fit_contrib, fit_summary->k);
     }
 
     out = fopen(eval_summary_path, "w");
@@ -823,11 +1108,16 @@ int main(int argc, char *argv[]) {
     fprintf(out, "k_true\t%d\n", truth_summary->k);
     fprintf(out, "k_fit\t%d\n", fit_summary->k);
     fprintf(out, "latent_subspace_similarity\t%.17g\n", latent_subspace_similarity);
+    fprintf(out, "latent_factor_match_score\t%.17g\n", latent_factor_match_score);
     fprintf(out, "cell_cov_correlation\t%.17g\n", cell_cov_corr);
     fprintf(out, "gene_cov_correlation\t%.17g\n", gene_cov_corr);
+    fprintf(out, "signal_relative_frobenius_error\t%.17g\n", signal_relative_frobenius_error);
+    fprintf(out, "cell_cov_relative_frobenius_error\t%.17g\n", cell_cov_relative_frobenius_error);
+    fprintf(out, "gene_cov_relative_frobenius_error\t%.17g\n", gene_cov_relative_frobenius_error);
     fprintf(out, "sigma_obs_true\t%.17g\n", truth_summary->sigma_obs);
     fprintf(out, "sigma_obs_fit\t%.17g\n", fit_summary->sigma_obs);
     fprintf(out, "latent_variance_trend_correlation\t%.17g\n", variance_trend_corr);
+    fprintf(out, "normalized_contribution_l1\t%.17g\n", normalized_contribution_l1);
     fclose(out);
     out = NULL;
 
