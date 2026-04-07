@@ -189,12 +189,13 @@ int main(int argc, char *argv[]) {
     }
     selected_n_trees = (use_n_trees == 0 ? n_trees : use_n_trees);
     /* Allocate and initialize the latent variance parameters */
-    sigma2_latent = (double *)calloc(n_sigma_latent_raw, sizeof(double));
+    sigma2_latent = (double *)calloc((size_t)k, sizeof(double));
     if (sigma2_latent == NULL)
         goto cleanup;
     if (n_sigma_latent_raw == 1) {
-        /* Only copy one variance for all latent dimensions*/
-        sigma2_latent[0] = sigma2_latent_raw[0];
+        /* Use one variance value for all latent dimensions. */
+        for (i = 0; i < k; i++)
+            sigma2_latent[i] = sigma2_latent_raw[0];
     }
     else if (n_sigma_latent_raw == k) {
         /* Copy each provided variance for each latent dimension */
@@ -239,7 +240,7 @@ int main(int argc, char *argv[]) {
         per_sim_Z = brownian_simulate_expression_from_covariance(sim_Sigmas[i],
                                                         cell_names,
                                                         n_cells,
-                                                        n_genes,
+                                                        k,
                                                         sigma2_latent,
                                                         n_sigma_latent_raw,
                                                         seed + (unsigned int)(104729u * i));
@@ -255,7 +256,7 @@ int main(int argc, char *argv[]) {
             per_sim_Z = NULL;
         } else {
             /* Add in place for subsequent simulations */
-            if (add_matrix_in_place(Z, per_sim_Z) != 0) {
+            if (add_matrix_in_place(Z->X, per_sim_Z->X) != 0) {
                 fprintf(stderr, "ERROR: failed to accumulate simulated latent factor matrices\n");
                 goto cleanup;
             }
@@ -265,7 +266,8 @@ int main(int argc, char *argv[]) {
     }
 
     /* Scale the latent factors matrix Z to complete the expectation over the simulated matrices */
-    if (Z == NULL || scale_matrix_in_place(Z, 1.0 / (double)n_sim_sigmas) != 0) {
+    if (Z == NULL || Z->X == NULL ||
+        scale_matrix_in_place(Z->X, 1.0 / (double)n_sim_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to finalize simulated latent factor matrix Z.\n");
         goto cleanup;
     }

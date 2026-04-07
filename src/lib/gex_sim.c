@@ -177,28 +177,27 @@ cleanup:
 }
 
 /* Use the provides latent factors . */
-int *gex_simulate_from_latent_factors(GexMatrix *Z,
-                                            char **cell_names,
-                                            int n_cells,
-                                            int k,
-                                            int n_genes,
-                                            double sigma2_obs,
-                                            unsigned int seed,
-                                            GexMatrix **L_out,
-                                            GexMatrix **gex_out) {
+int gex_simulate_from_latent_factors(GexMatrix *Z,
+                                     char **cell_names,
+                                     int n_cells,
+                                     int k,
+                                     int n_genes,
+                                     double sigma2_obs,
+                                     unsigned int seed,
+                                     GexMatrix **L_out,
+                                     GexMatrix **gex_out) {
     int i, j, d;    /* Loop indices */
     int success = 1; /* Whether the simulation succeeded; Failure by default */
     GexMatrix *gex = NULL;  /* Simulation output gene expression object */
     GexMatrix *L = NULL;    /* Simulation output gene loadings object */
-    double *std_normals = NULL; /* Standard normal random variables */
     char **gene_names = NULL;   /* Gene names */
     unsigned int rng_state = (seed == 0u ? 1u : seed);  /* Random number generator state */
 
-    if (L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
+    if (Z == NULL || Z->X == NULL || L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
         k <= 0 || n_genes <= 0 || sigma2_obs < 0.0)
-        return NULL;
-    if (Z->n_cells != n_cells || Z->n_genes != n_cells)
-        return NULL;
+        return 1;
+    if (Z->n_cells != n_cells || Z->n_genes != k)
+        return 1;
 
     /* Make sure the simulation output is initialized as empty */
     *gex_out = NULL;
@@ -209,6 +208,12 @@ int *gex_simulate_from_latent_factors(GexMatrix *Z,
     L = (GexMatrix *)calloc(1, sizeof(GexMatrix));
     gene_names = gexsim_make_gene_names(n_genes);
     if (L == NULL || gex == NULL || gene_names == NULL)
+        goto cleanup;
+
+    L->n_cells = k;
+    L->n_genes = n_genes;
+    L->X = mat_new(k, n_genes);
+    if (L->X == NULL)
         goto cleanup;
 
     /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
@@ -274,13 +279,13 @@ int *gex_simulate_from_latent_factors(GexMatrix *Z,
     gexsim_free_string_array(gene_names, n_genes);
 
     cleanup:
-        if (gene_names != NULL)
-            gexsim_free_string_array(gene_names, n_genes);
-        if (std_normals != NULL)
-            free(std_normals);
-        if (gex != NULL)
-            gex_free_matrix_data(gex);
-        return success;
+    if (gene_names != NULL)
+        gexsim_free_string_array(gene_names, n_genes);
+    if (L != NULL)
+        gex_free_matrix_data(L);
+    if (gex != NULL)
+        gex_free_matrix_data(gex);
+    return success;
 }
 
 int gex_write_labeled_matrix_tsv(const char *filename,
@@ -335,7 +340,9 @@ int gex_write_simulation_truth(const char *outprefix,
     int j;
     int status = 1;
 
-    if (outprefix == NULL || gex == NULL || cell_names == NULL || gene_names == NULL)
+    if (outprefix == NULL || gex == NULL || L == NULL || Z == NULL ||
+        L->X == NULL || Z->X == NULL || cell_names == NULL || gene_names == NULL ||
+        k <= 0 || sigma2_latent == NULL)
         goto cleanup;
 
     factor_names = gexsim_make_factor_names(k);
@@ -366,10 +373,10 @@ int gex_write_simulation_truth(const char *outprefix,
     if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->n_cells,
                                      gene_names, gex->n_genes, "cell") != 0)
         goto cleanup;
-    if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->n_cells,
+    if (gex_write_labeled_matrix_tsv(z_path, Z->X, cell_names, gex->n_cells,
                                      factor_names, k, "cell") != 0)
         goto cleanup;
-    if (gex_write_labeled_matrix_tsv(l_path, L, factor_names, k,
+    if (gex_write_labeled_matrix_tsv(l_path, L->X, factor_names, k,
                                      gene_names, gex->n_genes, "factor") != 0)
         goto cleanup;
 

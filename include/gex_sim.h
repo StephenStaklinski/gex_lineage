@@ -9,15 +9,15 @@ int gex_get_shared_leaf_names(TreeNode **trees,
                               char ***names_out,
                               int *n_names_out);
 
-int *gex_simulate_from_latent_factors(GexMatrix *Z,
-                                            char **cell_names,
-                                            int n_cells,
-                                            int k,
-                                            int n_genes,
-                                            double sigma2_obs,
-                                            unsigned int seed,
-                                            GexMatrix **L_out,
-                                            GexMatrix **gex_out);
+int gex_simulate_from_latent_factors(GexMatrix *Z,
+                                     char **cell_names,
+                                     int n_cells,
+                                     int k,
+                                     int n_genes,
+                                     double sigma2_obs,
+                                     unsigned int seed,
+                                     GexMatrix **L_out,
+                                     GexMatrix **gex_out);
 
 int gex_write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,
