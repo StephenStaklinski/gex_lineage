@@ -44,19 +44,6 @@ static int parse_sigma_latent_values(const char *spec,
     return (n > 0 ? 0 : -1);
 }
 
-static int gexsim_average_simulation_in_place(GexSimulationTruth *truth,
-                                              GexMatrix *gex,
-                                              GexSimulationTruth *tree_truth,
-                                              GexMatrix *tree_gex) {
-    if (truth == NULL || gex == NULL || tree_truth == NULL || tree_gex == NULL)
-        return -1;
-
-    if (add_matrix_in_place(truth->Z, tree_truth->Z) != 0 ||
-        add_matrix_in_place(gex->X, tree_gex->X) != 0)
-        return -1;
-
-    return 0;
-}
 
 static void usage(const char *progname) {
     fprintf(stderr,
@@ -85,8 +72,9 @@ int main(int argc, char *argv[]) {
     Matrix **sim_Sigmas = NULL;
     GexSimulationTruth *truth = NULL;
     GexMatrix *gex = NULL;
-    GexSimulationTruth *tree_truth = NULL;
     GexMatrix *tree_gex = NULL;
+    GexMatrix *per_sim_Z = NULL; /* Temporarily stores the simulated latent factors for each individual tree */
+    GexMatrix *sim_Z = NULL; /* Stores the overall simulated latent factors from Brownian motion */
     double *sigma2_latent_raw = NULL;
     double *sigma2_latent = NULL;
     int n_trees = 0;
@@ -249,37 +237,41 @@ int main(int argc, char *argv[]) {
     }
 
     for (i = 0; i < n_sim_sigmas; i++) {
-        tree_truth = gex_simulate_latent_brownian_expression(sim_Sigmas[i], cell_names, n_cells, k, n_genes,
-                                                             sigma2_latent, sigma2_obs,
-                                                             seed + (unsigned int)(104729u * i), &tree_gex);
-        if (tree_truth == NULL || tree_gex == NULL) {
-            fprintf(stderr, "ERROR: failed to simulate latent Brownian expression for covariance %d.\n", i + 1);
+        /* Simulate the latent factors matrix Z from Brownian motion */
+        per_sim_Z = brownian_simulate_expression_from_covariance(sim_Sigmas[i],
+                                                        cell_names,
+                                                        n_cells,
+                                                        n_genes,
+                                                        seed + (unsigned int)(104729u * i));
+
+        if (per_sim_Z == NULL) {
+            fprintf(stderr, "ERROR: failed to simulate latent factors from Brownian covariance for tree %d.\n", i + 1);
             goto cleanup;
         }
-
-        if (truth == NULL) {
-            truth = tree_truth;
-            gex = tree_gex;
-            tree_truth = NULL;
-            tree_gex = NULL;
+        
+        if (i == 0) {
+            /* Take the first simulation as is */
+            sim_Z = per_sim_Z;
+            per_sim_Z = NULL;
         } else {
-            if (gexsim_average_simulation_in_place(truth, gex, tree_truth, tree_gex) != 0) {
-                fprintf(stderr, "ERROR: failed to accumulate expectation-over-covariances simulation.\n");
+            /* Add in place for subsequent simulations */
+            if (add_matrix_in_place(sim_Z, per_sim_Z) != 0) {
+                fprintf(stderr, "ERROR: failed to accumulate simulated latent factor matrices\n");
                 goto cleanup;
             }
-            gex_free_simulation_truth(tree_truth);
-            gex_free_matrix_data(tree_gex);
-            tree_truth = NULL;
-            tree_gex = NULL;
+            gex_free_matrix_data(per_sim_Z);
+            per_sim_Z = NULL;
         }
     }
 
-    if (truth == NULL || gex == NULL ||
-        scale_matrix_in_place(truth->Z, 1.0 / (double)n_sim_sigmas) != 0 ||
-        scale_matrix_in_place(gex->X, 1.0 / (double)n_sim_sigmas) != 0) {
-        fprintf(stderr, "ERROR: failed to finalize latent Brownian simulation.\n");
+    /* Scale the latent factors matrix Z to get the expectation */
+    if (sim_Z == NULL || scale_matrix_in_place(sim_Z, 1.0 / (double)n_sim_sigmas) != 0) {
+        fprintf(stderr, "ERROR: failed to finalize simulated latent factor matrix Z.\n");
         goto cleanup;
     }
+
+    /* Use the expected latent factors matrix Z to simulate L and the expression matrix X
+    for the input parameters. */
 
     expr_path = (char *)malloc(strlen(outprefix) + 16u);
     if (expr_path == NULL)
@@ -316,8 +308,10 @@ cleanup:
         free(sigma2_latent_raw);
     if (sigma2_latent != NULL)
         free(sigma2_latent);
-    if (tree_truth != NULL)
-        gex_free_simulation_truth(tree_truth);
+    if (per_sim_Z != NULL)
+        gex_free_matrix_data(per_sim_Z);
+    if (sim_Z != NULL)
+        gex_free_matrix_data(sim_Z);
     if (tree_gex != NULL)
         gex_free_matrix_data(tree_gex);
     if (truth != NULL)
