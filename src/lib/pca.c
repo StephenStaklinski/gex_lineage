@@ -3,13 +3,12 @@
 
 #include <phast/eigen.h>
 
-/* -------------------- PCA -------------------- */
-
 typedef struct {
     double val;
     int idx;
 } GexEigPair;
 
+/* Compare two eigenvalue-index pairs in descending order of eigenvalues */
 static int gex_cmp_eigpair_desc(const void *a, const void *b) {
     const GexEigPair *ea = (const GexEigPair *)a;
     const GexEigPair *eb = (const GexEigPair *)b;
