@@ -122,7 +122,7 @@ int main(int argc, char *argv[]) {
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
     int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
-    int n_filter_trees = 1;  /* -1: average covariance, 0: all trees, >0: first N trees */
+    int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
