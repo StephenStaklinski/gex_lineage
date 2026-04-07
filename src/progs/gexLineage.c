@@ -544,11 +544,11 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    /* Write the fitted latent Brownian model results to files */
-    if (gex_write_latent_brownian_model(outprefix, model, gex_filtered) != 0) {
-        fprintf(stderr,
-                "ERROR: failed to write latent Brownian model outputs with prefix %s.\n",
-                outprefix);
+    /* Write the fitted latent Brownian model parameters to files */
+    if (gex_write_model(outprefix, gex_filtered, model->L, model->Z, 
+                        gex_filtered->cell_names, gex_filtered->gene_names, 
+                        pca->K, model->sigma2_obs, model->sigma2_latent) != 0) {
+        fprintf(stderr, "ERROR: failed to write latent Brownian model outputs with prefix %s.\n", outprefix);
         goto cleanup;
     }
     if (verbose) {

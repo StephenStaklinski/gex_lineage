@@ -281,9 +281,9 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    /* Write the data to output files */
-    if (gex_write_simulation_truth(outprefix, gex, L, Z, gex->cell_names, gex->gene_names, k, sigma2_obs, sigma2_latent) != 0) {
-        fprintf(stderr, "ERROR: failed to write simulation truth outputs.\n");
+    /* Write the simulated data to output files */
+    if (gex_write_model(outprefix, gex, L->X, Z->X, gex->cell_names, gex->gene_names, k, sigma2_obs, sigma2_latent) != 0) {
+        fprintf(stderr, "ERROR: failed to write simulation outputs.\n");
         goto cleanup;
     }
 

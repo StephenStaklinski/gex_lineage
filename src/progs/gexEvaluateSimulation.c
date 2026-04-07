@@ -996,10 +996,10 @@ int main(int argc, char *argv[]) {
     snprintf(sim_summary_path, sizeof(sim_summary_path), "%s.summary.tsv", sim_prefix);
     snprintf(sim_z_path, sizeof(sim_z_path), "%s.Z.tsv", sim_prefix);
     snprintf(sim_l_path, sizeof(sim_l_path), "%s.L.tsv", sim_prefix);
-    snprintf(fit_summary_path, sizeof(fit_summary_path), "%s.model.summary.tsv", fit_prefix);
-    snprintf(fit_z_path, sizeof(fit_z_path), "%s.model.Z.tsv", fit_prefix);
-    snprintf(fit_l_path, sizeof(fit_l_path), "%s.model.L.tsv", fit_prefix);
-    snprintf(eval_summary_path, sizeof(eval_summary_path), "%s.eval.summary.tsv", outprefix);
+    snprintf(fit_summary_path, sizeof(fit_summary_path), "%s.summary.tsv", fit_prefix);
+    snprintf(fit_z_path, sizeof(fit_z_path), "%s.Z.tsv", fit_prefix);
+    snprintf(fit_l_path, sizeof(fit_l_path), "%s.L.tsv", fit_prefix);
+    snprintf(eval_summary_path, sizeof(eval_summary_path), "%s.summary.tsv", outprefix);
 
     /* Read in the simulated and fit parameters */
     sim_summary = gexeval_read_summary(sim_summary_path);

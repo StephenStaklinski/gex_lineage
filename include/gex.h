@@ -112,4 +112,24 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                                        double max_q,
                                        double min_i);
 
+int gex_write_labeled_matrix_tsv(const char *filename,
+                                 Matrix *X,
+                                 char **row_names,
+                                 int n_rows,
+                                 char **col_names,
+                                 int n_cols,
+                                 const char *corner_label);
+
+int gex_write_model(const char *outprefix,
+                               GexMatrix *gex,
+                               Matrix *L,
+                               Matrix *Z,
+                               char **cell_names,
+                               char **gene_names,
+                               int k,
+                               double sigma2_obs,
+                               double *sigma2_latent);
+
+void free_string_array(char **arr, int n);
+
 #endif

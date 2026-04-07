@@ -1,6 +1,7 @@
 #include "gex_sim.h"
 
 #include "brownian.h"
+#include "gex.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -26,16 +27,6 @@ static double gexsim_rand_normal(unsigned int *state) {
     return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
 }
 
-static void gexsim_free_string_array(char **names, int n) {
-    int i;
-
-    if (names == NULL)
-        return;
-    for (i = 0; i < n; i++)
-        free(names[i]);
-    free(names);
-}
-
 static int gexsim_name_in_list(const char *name, List *names) {
     int i;
 
@@ -47,29 +38,6 @@ static int gexsim_name_in_list(const char *name, List *names) {
             return 1;
     }
     return 0;
-}
-
-static char **gexsim_make_factor_names(int k) {
-    int i;
-    char **names = NULL;
-
-    if (k <= 0)
-        return NULL;
-    names = (char **)calloc(k, sizeof(char *));
-    if (names == NULL)
-        return NULL;
-
-    for (i = 0; i < k; i++) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "LF%d", i + 1);
-        names[i] = strdup(buf);
-        if (names[i] == NULL) {
-            gexsim_free_string_array(names, i);
-            return NULL;
-        }
-    }
-
-    return names;
 }
 
 static char **gexsim_make_gene_names(int n_genes) {
@@ -87,7 +55,7 @@ static char **gexsim_make_gene_names(int n_genes) {
         snprintf(buf, sizeof(buf), "sim_gene_%04d", j + 1);
         names[j] = strdup(buf);
         if (names[j] == NULL) {
-            gexsim_free_string_array(names, j);
+            free_string_array(names, j);
             return NULL;
         }
     }
@@ -172,7 +140,7 @@ cleanup:
         free(name_lists);
     }
     if (names != NULL)
-        gexsim_free_string_array(names, names_capacity);
+        free_string_array(names, names_capacity);
     return status;
 }
 
@@ -278,117 +246,15 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
     L = NULL;
     *gex_out = gex;
     gex = NULL;
-    gexsim_free_string_array(gene_names, n_genes);
+    free_string_array(gene_names, n_genes);
     gene_names = NULL;
 
     cleanup:
     if (gene_names != NULL)
-        gexsim_free_string_array(gene_names, n_genes);
+        free_string_array(gene_names, n_genes);
     if (L != NULL)
         gex_free_matrix_data(L);
     if (gex != NULL)
         gex_free_matrix_data(gex);
     return success;
-}
-
-int gex_write_labeled_matrix_tsv(const char *filename,
-                                 Matrix *X,
-                                 char **row_names,
-                                 int n_rows,
-                                 char **col_names,
-                                 int n_cols,
-                                 const char *corner_label) {
-    int i, j;
-    FILE *out = NULL;
-
-    if (filename == NULL || X == NULL || row_names == NULL || col_names == NULL ||
-        n_rows <= 0 || n_cols <= 0 || X->nrows != n_rows || X->ncols != n_cols)
-        return -1;
-
-    out = fopen(filename, "w");
-    if (out == NULL)
-        return -1;
-
-    fprintf(out, "%s", corner_label == NULL ? "id" : corner_label);
-    for (j = 0; j < n_cols; j++)
-        fprintf(out, "\t%s", col_names[j]);
-    fprintf(out, "\n");
-
-    for (i = 0; i < n_rows; i++) {
-        fprintf(out, "%s", row_names[i]);
-        for (j = 0; j < n_cols; j++)
-            fprintf(out, "\t%.17g", mat_get(X, i, j));
-        fprintf(out, "\n");
-    }
-
-    fclose(out);
-    return 0;
-}
-
-int gex_write_simulation_truth(const char *outprefix,
-                                GexMatrix *gex,
-                                GexMatrix *L,
-                                GexMatrix *Z,
-                                char **cell_names,
-                                char **gene_names,
-                                int k,
-                                double sigma2_obs,
-                                double *sigma2_latent) {
-    char summary_path[4096];
-    char z_path[4096];
-    char l_path[4096];
-    char expr_path[4096];
-    char **factor_names = NULL;
-    FILE *summary_out = NULL;
-    int j;
-    int status = 1;
-
-    if (outprefix == NULL || gex == NULL || L == NULL || Z == NULL ||
-        L->X == NULL || Z->X == NULL || cell_names == NULL || gene_names == NULL ||
-        k <= 0 || sigma2_latent == NULL)
-        goto cleanup;
-
-    factor_names = gexsim_make_factor_names(k);
-    if (factor_names == NULL)
-        goto cleanup;
-
-    snprintf(summary_path, sizeof(summary_path), "%s.summary.tsv", outprefix);
-    snprintf(z_path, sizeof(z_path), "%s.Z.tsv", outprefix);
-    snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
-    snprintf(expr_path, sizeof(expr_path), "%s.expr.tsv", outprefix);
-
-    /* Write out the summary parameters file to match the format used
-    by model fitting output */
-    summary_out = fopen(summary_path, "w");
-    if (summary_out == NULL)
-        goto cleanup;
-    fprintf(summary_out, "parameter\tvalue\n");
-    fprintf(summary_out, "n_cells\t%d\n", gex->n_cells);
-    fprintf(summary_out, "n_genes\t%d\n", gex->n_genes);
-    fprintf(summary_out, "k\t%d\n", k);
-    fprintf(summary_out, "sigma_obs\t%.17g\n", sigma2_obs);
-    for (j = 0; j < k; j++)
-        fprintf(summary_out, "sigma_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
-    fclose(summary_out);
-    summary_out = NULL;
-
-    /* Write out the simulated matrices */
-    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->n_cells,
-                                     gene_names, gex->n_genes, "cell") != 0)
-        goto cleanup;
-    if (gex_write_labeled_matrix_tsv(z_path, Z->X, cell_names, gex->n_cells,
-                                     factor_names, k, "cell") != 0)
-        goto cleanup;
-    if (gex_write_labeled_matrix_tsv(l_path, L->X, factor_names, k,
-                                     gene_names, gex->n_genes, "factor") != 0)
-        goto cleanup;
-
-    status = 0;
-
-cleanup:
-    if (summary_out != NULL)
-        fclose(summary_out);
-    if (factor_names != NULL)
-        gexsim_free_string_array(factor_names, k);
-    return status;
 }

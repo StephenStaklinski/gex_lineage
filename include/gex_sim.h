@@ -19,22 +19,4 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
                                      GexMatrix **L_out,
                                      GexMatrix **gex_out);
 
-int gex_write_labeled_matrix_tsv(const char *filename,
-                                 Matrix *X,
-                                 char **row_names,
-                                 int n_rows,
-                                 char **col_names,
-                                 int n_cols,
-                                 const char *corner_label);
-
-int gex_write_simulation_truth(const char *outprefix,
-                               GexMatrix *gex,
-                               GexMatrix *L,
-                               GexMatrix *Z,
-                               char **cell_names,
-                               char **gene_names,
-                               int k,
-                               double sigma2_obs,
-                               double *sigma2_latent);
-
 #endif
