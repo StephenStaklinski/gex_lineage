@@ -72,11 +72,10 @@ int main(int argc, char *argv[]) {
     Matrix *Sigma = NULL;
     Matrix *avg_Sigmas[1] = {NULL};
     Matrix **sim_Sigmas = NULL;
-    GexSimulationTruth *truth = NULL;
-    GexMatrix *gex = NULL;
-    GexMatrix *tree_gex = NULL;
     GexMatrix *per_sim_Z = NULL; /* Temporarily stores the simulated latent factors for each individual tree */
-    GexMatrix *sim_Z = NULL; /* Stores the overall simulated latent factors from Brownian motion */
+    GexMatrix *Z = NULL; /* Stores the overall simulated latent factors from Brownian motion */
+    GexMatrix *L = NULL;
+    GexMatrix *gex = NULL;
     double *sigma2_latent_raw = NULL;
     double *sigma2_latent = NULL;
     int n_trees = 0;
@@ -253,11 +252,11 @@ int main(int argc, char *argv[]) {
         
         if (i == 0) {
             /* Take the first simulation as is */
-            sim_Z = per_sim_Z;
+            Z = per_sim_Z;
             per_sim_Z = NULL;
         } else {
             /* Add in place for subsequent simulations */
-            if (add_matrix_in_place(sim_Z, per_sim_Z) != 0) {
+            if (add_matrix_in_place(Z, per_sim_Z) != 0) {
                 fprintf(stderr, "ERROR: failed to accumulate simulated latent factor matrices\n");
                 goto cleanup;
             }
@@ -267,30 +266,25 @@ int main(int argc, char *argv[]) {
     }
 
     /* Scale the latent factors matrix Z to complete the expectation over the simulated matrices */
-    if (sim_Z == NULL || scale_matrix_in_place(sim_Z, 1.0 / (double)n_sim_sigmas) != 0) {
+    if (Z == NULL || scale_matrix_in_place(Z, 1.0 / (double)n_sim_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to finalize simulated latent factor matrix Z.\n");
         goto cleanup;
     }
 
     /* Use the expected latent factors matrix Z to simulate L and the expression matrix X
     for the input parameters. */
-
-    expr_path = (char *)malloc(strlen(outprefix) + 16u);
-    if (expr_path == NULL)
-        goto cleanup;
-    snprintf(expr_path, strlen(outprefix) + 16u, "%s.expr.tsv", outprefix);
-
-    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, gex->cell_names, gex->n_cells,
-                                     gex->gene_names, gex->n_genes, "cell") != 0) {
-        fprintf(stderr, "ERROR: failed to write simulated expression matrix.\n");
+    if (gex_simulate_from_latent_factors(Z, cell_names, n_cells, k, n_genes, sigma2_obs, seed + 7919u, &L, &gex) != 0) {
+        fprintf(stderr, "ERROR: failed to simulate expression matrix from latent factors.\n");
         goto cleanup;
     }
 
-    if (gex_write_simulation_truth(outprefix, truth, gex->cell_names, gex->gene_names) != 0) {
+    /* Write the data to output files */
+    if (gex_write_simulation_truth(outprefix, gex, L, Z, gex->cell_names, gex->gene_names, k, sigma2_obs, sigma2_latent) != 0) {
         fprintf(stderr, "ERROR: failed to write simulation truth outputs.\n");
         goto cleanup;
     }
 
+    /* Log simulation run settings and progress to the terminal */
     printf("Simulated latent Brownian expression for %d cells, %d genes, k=%d.\n",
            n_cells, n_genes, k);
     if (use_n_trees == -1)
@@ -299,9 +293,11 @@ int main(int argc, char *argv[]) {
         printf("Simulation mode: expectation over all %d tree(s).\n", n_trees);
     else
         printf("Simulation mode: expectation over the first %d tree(s).\n", selected_n_trees);
-    printf("Wrote expression matrix to %s\n", expr_path);
-    printf("Wrote truth files with prefix %s.truth.*\n", outprefix);
-    status = 0;
+
+    printf("Wrote simulated data files with prefix %s.*\n", outprefix);
+
+    printf("Done.\n");
+    status = 0; /* Success */
 
 cleanup:
     if (expr_path != NULL)
@@ -312,12 +308,8 @@ cleanup:
         free(sigma2_latent);
     if (per_sim_Z != NULL)
         gex_free_matrix_data(per_sim_Z);
-    if (sim_Z != NULL)
-        gex_free_matrix_data(sim_Z);
-    if (tree_gex != NULL)
-        gex_free_matrix_data(tree_gex);
-    if (truth != NULL)
-        gex_free_simulation_truth(truth);
+    if (Z != NULL)
+        gex_free_matrix_data(Z);
     if (gex != NULL)
         gex_free_matrix_data(gex);
     if (Sigma != NULL)

@@ -176,97 +176,40 @@ cleanup:
     return status;
 }
 
-/* Simulate latent Brownian expression under the provided parameters and covariance matrix. */
-GexSimulationTruth *gex_simulate_latent_brownian_expression(Matrix *Sigma,
-                                                            char **cell_names,
-                                                            int n_cells,
-                                                            int k,
-                                                            int n_genes,
-                                                            const double *sigma2_latent,
-                                                            double sigma2_obs,
-                                                            unsigned int seed,
-                                                            GexMatrix **gex_out) {
+/* Use the provides latent factors . */
+int *gex_simulate_from_latent_factors(GexMatrix *Z,
+                                            char **cell_names,
+                                            int n_cells,
+                                            int k,
+                                            int n_genes,
+                                            double sigma2_obs,
+                                            unsigned int seed,
+                                            GexMatrix **L_out,
+                                            GexMatrix **gex_out) {
     int i, j, d;    /* Loop indices */
-    GexSimulationTruth *truth = NULL; /* Simulation truth outputs */
+    int success = 1; /* Whether the simulation succeeded; Failure by default */
     GexMatrix *gex = NULL;  /* Simulation output gene expression object */
-    Matrix *Sigma_reg = NULL;   /* Regularized covariance matrix */
-    Matrix *chol = NULL;    /* Cholesky factor */
-    Matrix *signal = NULL;  /* Gene expression matrix */
+    GexMatrix *L = NULL;    /* Simulation output gene loadings object */
     double *std_normals = NULL; /* Standard normal random variables */
     char **gene_names = NULL;   /* Gene names */
     unsigned int rng_state = (seed == 0u ? 1u : seed);  /* Random number generator state */
-    double max_diag = 0.0;  /* Maximum diagonal element of the covariance matrix */
-    double jitter;  /* Jitter for regularization */
 
-    if (gex_out == NULL || Sigma == NULL || cell_names == NULL || n_cells <= 0 ||
-        k <= 0 || n_genes <= 0 || sigma2_latent == NULL || sigma2_obs < 0.0)
+    if (L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
+        k <= 0 || n_genes <= 0 || sigma2_obs < 0.0)
         return NULL;
-    if (Sigma->nrows != n_cells || Sigma->ncols != n_cells)
+    if (Z->n_cells != n_cells || Z->n_genes != n_cells)
         return NULL;
 
+    /* Make sure the simulation output is initialized as empty */
     *gex_out = NULL;
+    *L_out = NULL;
 
     /* Allocate objects in memory */
-    truth = (GexSimulationTruth *)calloc(1, sizeof(GexSimulationTruth));
     gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    Sigma_reg = mat_create_copy(Sigma);
-    chol = mat_new(n_cells, n_cells);
-    signal = mat_new(n_cells, n_genes);
+    L = (GexMatrix *)calloc(1, sizeof(GexMatrix));
     gene_names = gexsim_make_gene_names(n_genes);
-    if (truth == NULL || gex == NULL || Sigma_reg == NULL || chol == NULL ||
-        signal == NULL || gene_names == NULL)
+    if (L == NULL || gex == NULL || gene_names == NULL)
         goto cleanup;
-
-    /* Apply relative jitter to the diagonal of the covariance matrix to regularize it 
-    for numerical stability. */
-    for (i = 0; i < n_cells; i++) {
-        double diag = mat_get(Sigma, i, i);
-        if (diag > max_diag)
-            max_diag = diag;
-    }
-    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
-    for (i = 0; i < n_cells; i++)
-        mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
-
-    /* Compute the Cholesky factor of the regularized covariance matrix. */
-    if (mat_cholesky(chol, Sigma_reg) != 0)
-        goto cleanup;
-
-    /* Initialize the simulation truth outputs */
-    truth->n_cells = n_cells;
-    truth->n_genes = n_genes;
-    truth->k = k;
-    truth->Z = mat_new(n_cells, k);
-    truth->L = mat_new(k, n_genes);
-    truth->sigma2_latent = (double *)calloc(k, sizeof(double));
-    truth->sigma2_obs = sigma2_obs;
-    if (truth->Z == NULL || truth->L == NULL || truth->sigma2_latent == NULL)
-        goto cleanup;
-
-    /* Set the latent variance parameters */
-    for (d = 0; d < k; d++)
-        truth->sigma2_latent[d] = sigma2_latent[d];
-
-    /* Generate each latent dimension as a Gaussian random vector with
-    covariance sigma2_latent[d] * Sigma_reg, using the Cholesky factor
-    of the regularized phylogenetic covariance matrix. This is meant to 
-    simulate a factorized Brownian motion model. */
-    for (d = 0; d < k; d++) {
-        double scale = sqrt(sigma2_latent[d] > 0.0 ? sigma2_latent[d] : 0.0);
-        std_normals = (double *)calloc(n_cells, sizeof(double));
-        if (std_normals == NULL)
-            goto cleanup;
-        for (j = 0; j < n_cells; j++)
-            std_normals[j] = gexsim_rand_normal(&rng_state);
-        for (i = 0; i < n_cells; i++) {
-            double sum = 0.0;
-            for (j = 0; j <= i; j++)
-                sum += mat_get(chol, i, j) * std_normals[j];
-            mat_set(truth->Z, i, d, scale * sum);
-        }
-        free(std_normals);
-        std_normals = NULL;
-    }
 
     /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
     sqrt(n_genes / k), ensuring each latent dimension contributes
@@ -276,24 +219,26 @@ GexSimulationTruth *gex_simulate_latent_brownian_expression(Matrix *Sigma,
         double target_norm = sqrt((double)n_genes / (double)k);
         for (j = 0; j < n_genes; j++) {
             double val = gexsim_rand_normal(&rng_state);
-            mat_set(truth->L, d, j, val);
+            mat_set(L->X, d, j, val);
             row_ss += val * val;
         }
         if (row_ss > 0.0) {
             double row_scale = target_norm / sqrt(row_ss);
             for (j = 0; j < n_genes; j++)
-                mat_set(truth->L, d, j, row_scale * mat_get(truth->L, d, j));
+                mat_set(L->X, d, j, row_scale * mat_get(L->X, d, j));
         }
     }
 
-    /* Compute the noiseless expression matrix from the 
-    simulated Z and L matrix factorization. */
-    mat_mult(signal, truth->Z, truth->L);
-
-    /* Initialize the simulated gene expression matrix from the noiseless expression matrix */
+    /* Initialize the gene expression matrix */
     gex->n_cells = n_cells;
     gex->n_genes = n_genes;
     gex->X = mat_new(n_cells, n_genes);
+
+    /* Compute the noiseless expression matrix from the 
+    simulated Z and L matrix factorization. */
+    mat_mult(gex->X, Z->X, L->X);
+
+    /* Initialize the cell and gene names */
     gex->cell_names = (char **)calloc(n_cells, sizeof(char *));
     gex->gene_names = (char **)calloc(n_genes, sizeof(char *));
     if (gex->X == NULL || gex->cell_names == NULL || gex->gene_names == NULL)
@@ -313,37 +258,29 @@ GexSimulationTruth *gex_simulate_latent_brownian_expression(Matrix *Sigma,
     the sigma2_obs parameter input. */
     for (i = 0; i < n_cells; i++) {
         for (j = 0; j < n_genes; j++) {
-            double val = mat_get(signal, i, j);
+            double val = mat_get(gex->X, i, j);
             if (sigma2_obs > 0.0)
                 val += sqrt(sigma2_obs) * gexsim_rand_normal(&rng_state);
             mat_set(gex->X, i, j, val);
         }
     }
 
+    success = 0; /* Simulation succeeded */
+
+    *L_out = L;
+    L = NULL;
     *gex_out = gex;
     gex = NULL;
-    mat_free(Sigma_reg);
-    mat_free(chol);
-    mat_free(signal);
     gexsim_free_string_array(gene_names, n_genes);
-    return truth;
 
-cleanup:
-    if (gene_names != NULL)
-        gexsim_free_string_array(gene_names, n_genes);
-    if (std_normals != NULL)
-        free(std_normals);
-    if (signal != NULL)
-        mat_free(signal);
-    if (chol != NULL)
-        mat_free(chol);
-    if (Sigma_reg != NULL)
-        mat_free(Sigma_reg);
-    if (gex != NULL)
-        gex_free_matrix_data(gex);
-    if (truth != NULL)
-        gex_free_simulation_truth(truth);
-    return NULL;
+    cleanup:
+        if (gene_names != NULL)
+            gexsim_free_string_array(gene_names, n_genes);
+        if (std_normals != NULL)
+            free(std_normals);
+        if (gex != NULL)
+            gex_free_matrix_data(gex);
+        return success;
 }
 
 int gex_write_labeled_matrix_tsv(const char *filename,
@@ -381,46 +318,53 @@ int gex_write_labeled_matrix_tsv(const char *filename,
 }
 
 int gex_write_simulation_truth(const char *outprefix,
-                               GexSimulationTruth *truth,
-                               char **cell_names,
-                               char **gene_names) {
+                                GexMatrix *gex,
+                                GexMatrix *L,
+                                GexMatrix *Z,
+                                char **cell_names,
+                                char **gene_names,
+                                int k,
+                                double sigma2_obs,
+                                double *sigma2_latent) {
     char summary_path[4096];
     char z_path[4096];
     char l_path[4096];
+    char expr_path[4096];
     char **factor_names = NULL;
     FILE *summary_out = NULL;
     int j;
     int status = -1;
 
-    if (outprefix == NULL || truth == NULL || cell_names == NULL || gene_names == NULL)
+    if (outprefix == NULL || gex == NULL || cell_names == NULL || gene_names == NULL)
         return -1;
 
-    factor_names = gexsim_make_factor_names(truth->k);
+    factor_names = gexsim_make_factor_names(k);
     if (factor_names == NULL)
         return -1;
 
     snprintf(summary_path, sizeof(summary_path), "%s.truth.summary.tsv", outprefix);
     snprintf(z_path, sizeof(z_path), "%s.truth.Z.tsv", outprefix);
     snprintf(l_path, sizeof(l_path), "%s.truth.L.tsv", outprefix);
+    snprintf(expr_path, sizeof(expr_path), "%s.truth.expr.tsv", outprefix);
 
     summary_out = fopen(summary_path, "w");
     if (summary_out == NULL)
         goto cleanup;
     fprintf(summary_out, "parameter\tvalue\n");
-    fprintf(summary_out, "n_cells\t%d\n", truth->n_cells);
-    fprintf(summary_out, "n_genes\t%d\n", truth->n_genes);
-    fprintf(summary_out, "k\t%d\n", truth->k);
-    fprintf(summary_out, "sigma_obs\t%.17g\n", truth->sigma2_obs);
-    for (j = 0; j < truth->k; j++)
-        fprintf(summary_out, "sigma_latent_LF%d\t%.17g\n", j + 1, truth->sigma2_latent[j]);
+    fprintf(summary_out, "n_cells\t%d\n", gex->n_cells);
+    fprintf(summary_out, "n_genes\t%d\n", gex->n_genes);
+    fprintf(summary_out, "k\t%d\n", k);
+    fprintf(summary_out, "sigma_obs\t%.17g\n", sigma2_obs);
+    for (j = 0; j < k; j++)
+        fprintf(summary_out, "sigma_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
     fclose(summary_out);
     summary_out = NULL;
 
-    if (gex_write_labeled_matrix_tsv(z_path, truth->Z, cell_names, truth->n_cells,
-                                     factor_names, truth->k, "cell") != 0)
+    if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->n_cells,
+                                     factor_names, k, "cell") != 0)
         goto cleanup;
-    if (gex_write_labeled_matrix_tsv(l_path, truth->L, factor_names, truth->k,
-                                     gene_names, truth->n_genes, "factor") != 0)
+    if (gex_write_labeled_matrix_tsv(l_path, L, factor_names, k,
+                                     gene_names, gex->n_genes, "factor") != 0)
         goto cleanup;
 
     status = 0;
@@ -428,18 +372,6 @@ int gex_write_simulation_truth(const char *outprefix,
 cleanup:
     if (summary_out != NULL)
         fclose(summary_out);
-    gexsim_free_string_array(factor_names, truth->k);
+    gexsim_free_string_array(factor_names, k);
     return status;
-}
-
-void gex_free_simulation_truth(GexSimulationTruth *truth) {
-    if (truth == NULL)
-        return;
-    if (truth->Z != NULL)
-        mat_free(truth->Z);
-    if (truth->L != NULL)
-        mat_free(truth->L);
-    if (truth->sigma2_latent != NULL)
-        free(truth->sigma2_latent);
-    free(truth);
 }
