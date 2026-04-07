@@ -23,6 +23,8 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
                                                         char **names,
                                                         int n,
                                                         int n_genes,
+                                                        double *sigma2,
+                                                        int n_sigma2,
                                                         unsigned int seed);
 
 GexMatrix *simulate_standard_normal_expression(char **names,

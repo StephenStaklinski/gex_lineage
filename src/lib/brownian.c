@@ -363,6 +363,8 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
                                                         char **names,
                                                         int n,
                                                         int n_genes,
+                                                        double *sigma2,
+                                                        int n_sigma2,
                                                         unsigned int seed) {
     int i, j;
     int ngenes;
@@ -376,7 +378,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
 
     if (Sigma == NULL || names == NULL || n <= 0 ||
         Sigma->nrows != n || Sigma->ncols != n ||
-        n_genes < 0) {
+        n_genes < 0 || sigma2 == NULL) {
         fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid input\n");
         return NULL;
     }
@@ -385,6 +387,20 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     if (ngenes <= 0) {
         fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance needs at least one gene\n");
         return NULL;
+    }
+
+    /* Check that either 1 or all sigma2 values are provided */
+    if (n_sigma2 != 1 && n_sigma2 != n_genes) {
+        fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid number of sigma2 values\n");
+        return NULL;
+    }
+
+    /* Check the input sigma2 values are valid */
+    for (j = 0; j < n_sigma2; j++) {
+        if (sigma2[j] <= 0.0) {
+            fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid sigma2\n");
+            return NULL;
+        }
     }
 
     gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
@@ -447,6 +463,8 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     }
 
     for (j = 0; j < ngenes; j++) {
+        double sigma2_j = (n_sigma2 == 1 ? sigma2[0] : sigma2[j]);
+        double sigma_scale = sqrt(sigma2_j);
         for (i = 0; i < n; i++)
             std_normals[i] = brownian_rand_normal(&rng_state);
         for (i = 0; i < n; i++) {
@@ -454,7 +472,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
             int m;
             for (m = 0; m <= i; m++)
                 sum += mat_get(chol, i, m) * std_normals[m];
-            mat_set(gex->X, i, j, sum);
+            mat_set(gex->X, i, j, sigma_scale * sum);
         }
     }
 
@@ -576,8 +594,23 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
         n_tree_genes <= 0 || n_null_genes <= 0)
         return NULL;
 
+    /* Set sigma2 value based on tree height */
+    int n_sigma2 = 1;
+    double *sigma2 = (double *)calloc(n_sigma2, sizeof(double));
+    if (sigma2 == NULL) {
+        fprintf(stderr, "ERROR: out of memory allocating sigma2 array\n");
+        return NULL;
+    }
+    sigma2[0] = 1.0 / mat_get(Sigma, 0, 0);  /* Set sigma2 to 1/T assuming ultrametric tree height T to get a desired tip variance of ~1.0 */
+
     pos_gex = brownian_simulate_expression_from_covariance(Sigma, names, n,
-                                                           n_tree_genes, seed);
+                                                           n_tree_genes, sigma2, 
+                                                           n_sigma2, seed);
+
+    /* Dummy */
+    free(sigma2);
+    sigma2 = NULL;
+
     if (pos_gex == NULL)
         goto cleanup;
 

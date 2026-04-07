@@ -237,12 +237,28 @@ int main(int argc, char *argv[]) {
     }
 
     for (i = 0; i < n_sim_sigmas; i++) {
+
+        /* Dummy for now */
+        int n_sigma2 = 1;
+        double *sigma2 = (double *)calloc(n_sigma2, sizeof(double));
+        if (sigma2 == NULL) {
+            fprintf(stderr, "ERROR: out of memory allocating sigma2 array\n");
+            return NULL;
+        }
+        sigma2[0] = 1.0;
+
         /* Simulate the latent factors matrix Z from Brownian motion */
         per_sim_Z = brownian_simulate_expression_from_covariance(sim_Sigmas[i],
                                                         cell_names,
                                                         n_cells,
                                                         n_genes,
+                                                        sigma2,
+                                                        n_sigma2,
                                                         seed + (unsigned int)(104729u * i));
+        
+        /* Dummy */
+        free(sigma2);
+        sigma2 = NULL;
 
         if (per_sim_Z == NULL) {
             fprintf(stderr, "ERROR: failed to simulate latent factors from Brownian covariance for tree %d.\n", i + 1);
