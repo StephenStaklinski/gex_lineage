@@ -84,11 +84,11 @@ int main(int argc, char *argv[]) {
     int n_genes = 0;
     int use_n_trees = -1; /* Match gexLineage: -1 average covariance, 0 all trees, >0 first N trees */
     int selected_n_trees = 0;
-    int n_sigma_latent_raw = -1;
+    int n_sigma_latent_raw = 0;
     int n_sim_sigmas = 0;
     int i;
     int status = 1;
-    double sigma2_obs = -1.0;
+    double sigma2_obs = 0.0;
     unsigned int seed = 1u;
     const double ultrametric_tol = 1e-3;
 

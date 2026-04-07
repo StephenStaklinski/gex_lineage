@@ -444,7 +444,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     }
     for (j = 0; j < ngenes; j++) {
         char gene_name[64];
-        snprintf(gene_name, sizeof(gene_name), "sim_pos_%02d", j + 1);
+        snprintf(gene_name, sizeof(gene_name), "sim_%02d", j + 1);
         gex->gene_names[j] = strdup(gene_name);
         if (gex->gene_names[j] == NULL) {
             gex_free_matrix_data(gex);

@@ -238,6 +238,8 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
     gex->n_cells = n_cells;
     gex->n_genes = n_genes;
     gex->X = mat_new(n_cells, n_genes);
+    if (gex->X == NULL)
+        goto cleanup;
 
     /* Compute the noiseless expression matrix from the 
     simulated Z and L matrix factorization. */
@@ -277,6 +279,7 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
     *gex_out = gex;
     gex = NULL;
     gexsim_free_string_array(gene_names, n_genes);
+    gene_names = NULL;
 
     cleanup:
     if (gene_names != NULL)

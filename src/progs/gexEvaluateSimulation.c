@@ -770,7 +770,7 @@ cleanup:
     return score;
 }
 
-/* Compare normalized factor contribution profiles between truth and fit.
+/* Compare normalized factor contribution profiles between sim and fit.
  *
  * The input vectors should be per-factor contribution magnitudes such as
  *   sigma2_latent[d] * ||L[d,:]||^2
@@ -784,52 +784,52 @@ cleanup:
  * Returns 0 for identical profiles, larger values for more mismatch.
  * Maximum is 2 for probability vectors. Returns -1.0 on failure.
  */
-static double gexeval_normalized_contribution_l1(const double *truth_contrib,
+static double gexeval_normalized_contribution_l1(const double *sim_contrib,
                                                  int n_true,
                                                  const double *fit_contrib,
                                                  int n_fit) {
     int i;
     int n_compare;
-    double *truth_sorted = NULL;
+    double *sim_sorted = NULL;
     double *fit_sorted = NULL;
-    double *truth_p = NULL;
+    double *sim_p = NULL;
     double *fit_p = NULL;
     double out = -1.0;
 
-    if (truth_contrib == NULL || fit_contrib == NULL || n_true <= 0 || n_fit <= 0)
+    if (sim_contrib == NULL || fit_contrib == NULL || n_true <= 0 || n_fit <= 0)
         return -1.0;
 
     n_compare = (n_true < n_fit ? n_true : n_fit);
     if (n_compare <= 0)
         return -1.0;
 
-    truth_sorted = (double *)calloc(n_true, sizeof(double));
+    sim_sorted = (double *)calloc(n_true, sizeof(double));
     fit_sorted = (double *)calloc(n_fit, sizeof(double));
-    if (truth_sorted == NULL || fit_sorted == NULL)
+    if (sim_sorted == NULL || fit_sorted == NULL)
         goto cleanup;
 
     for (i = 0; i < n_true; i++)
-        truth_sorted[i] = truth_contrib[i];
+        sim_sorted[i] = sim_contrib[i];
     for (i = 0; i < n_fit; i++)
         fit_sorted[i] = fit_contrib[i];
 
-    gexeval_sort_desc(truth_sorted, n_true);
+    gexeval_sort_desc(sim_sorted, n_true);
     gexeval_sort_desc(fit_sorted, n_fit);
 
-    truth_p = gexeval_normalize_nonnegative_vector(truth_sorted, n_compare);
+    sim_p = gexeval_normalize_nonnegative_vector(sim_sorted, n_compare);
     fit_p = gexeval_normalize_nonnegative_vector(fit_sorted, n_compare);
-    if (truth_p == NULL || fit_p == NULL)
+    if (sim_p == NULL || fit_p == NULL)
         goto cleanup;
 
-    out = gexeval_vector_l1_distance(truth_p, fit_p, n_compare);
+    out = gexeval_vector_l1_distance(sim_p, fit_p, n_compare);
 
 cleanup:
-    if (truth_sorted != NULL)
-        free(truth_sorted);
+    if (sim_sorted != NULL)
+        free(sim_sorted);
     if (fit_sorted != NULL)
         free(fit_sorted);
-    if (truth_p != NULL)
-        free(truth_p);
+    if (sim_p != NULL)
+        free(sim_p);
     if (fit_p != NULL)
         free(fit_p);
     return out;
@@ -907,38 +907,38 @@ static void gexeval_free_summary(GexEvalSummary *summary) {
 static void usage(const char *progname) {
     fprintf(stderr,
             "Usage: %s "
-            "--truth-prefix <prefix> "
+            "--sim-prefix <prefix> "
             "--fit-prefix <prefix> "
             "--outprefix <prefix>\n",
             progname);
 }
 
 int main(int argc, char *argv[]) {
-    const char *truth_prefix = NULL;
+    const char *sim_prefix = NULL;
     const char *fit_prefix = NULL;
     const char *outprefix = NULL;
-    char truth_summary_path[4096];
-    char truth_z_path[4096];
-    char truth_l_path[4096];
+    char sim_summary_path[4096];
+    char sim_z_path[4096];
+    char sim_l_path[4096];
     char fit_summary_path[4096];
     char fit_z_path[4096];
     char fit_l_path[4096];
     char eval_summary_path[4096];
-    GexEvalSummary *truth_summary = NULL;
+    GexEvalSummary *sim_summary = NULL;
     GexEvalSummary *fit_summary = NULL;
-    GexMatrix *truth_Z = NULL;
-    GexMatrix *truth_L = NULL;
+    GexMatrix *sim_Z = NULL;
+    GexMatrix *sim_L = NULL;
     GexMatrix *fit_Z = NULL;
     GexMatrix *fit_L = NULL;
-    GexMatrix *truth_Z_aligned = NULL;
+    GexMatrix *sim_Z_aligned = NULL;
     GexMatrix *fit_Z_aligned = NULL;
-    GexMatrix *truth_L_common = NULL;
+    GexMatrix *sim_L_common = NULL;
     GexMatrix *fit_L_common = NULL;
-    Matrix *truth_latent_cov = NULL;
+    Matrix *sim_latent_cov = NULL;
     Matrix *fit_latent_cov = NULL;
-    Matrix *truth_gene_cov = NULL;
+    Matrix *sim_gene_cov = NULL;
     Matrix *fit_gene_cov = NULL;
-    Matrix *truth_signal = NULL;
+    Matrix *sim_signal = NULL;
     Matrix *fit_signal = NULL;
     double latent_subspace_similarity;
     double latent_factor_match_score = -1.0;
@@ -949,7 +949,7 @@ int main(int argc, char *argv[]) {
     double gene_cov_relative_frobenius_error = -1.0;
     double variance_trend_corr = -2.0;
     double normalized_contribution_l1 = -1.0;
-    double *truth_contrib = NULL;
+    double *sim_contrib = NULL;
     double *fit_contrib = NULL;
     char **common_cells = NULL;
     char **common_genes = NULL;
@@ -960,12 +960,12 @@ int main(int argc, char *argv[]) {
     FILE *out = NULL;
 
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--truth-prefix") == 0) {
+        if (strcmp(argv[i], "--sim-prefix") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
                 return 1;
             }
-            truth_prefix = argv[++i];
+            sim_prefix = argv[++i];
         }
         else if (strcmp(argv[i], "--fit-prefix") == 0) {
             if (i + 1 >= argc) {
@@ -987,100 +987,100 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (truth_prefix == NULL || fit_prefix == NULL || outprefix == NULL) {
+    if (sim_prefix == NULL || fit_prefix == NULL || outprefix == NULL) {
         usage(argv[0]);
         return 1;
     }
 
     /* Use relative paths for the comparison based on the input prefixes */
-    snprintf(truth_summary_path, sizeof(truth_summary_path), "%s.truth.summary.tsv", truth_prefix);
-    snprintf(truth_z_path, sizeof(truth_z_path), "%s.truth.Z.tsv", truth_prefix);
-    snprintf(truth_l_path, sizeof(truth_l_path), "%s.truth.L.tsv", truth_prefix);
+    snprintf(sim_summary_path, sizeof(sim_summary_path), "%s.summary.tsv", sim_prefix);
+    snprintf(sim_z_path, sizeof(sim_z_path), "%s.Z.tsv", sim_prefix);
+    snprintf(sim_l_path, sizeof(sim_l_path), "%s.L.tsv", sim_prefix);
     snprintf(fit_summary_path, sizeof(fit_summary_path), "%s.model.summary.tsv", fit_prefix);
     snprintf(fit_z_path, sizeof(fit_z_path), "%s.model.Z.tsv", fit_prefix);
     snprintf(fit_l_path, sizeof(fit_l_path), "%s.model.L.tsv", fit_prefix);
     snprintf(eval_summary_path, sizeof(eval_summary_path), "%s.eval.summary.tsv", outprefix);
 
     /* Read in the simulated and fit parameters */
-    truth_summary = gexeval_read_summary(truth_summary_path);
+    sim_summary = gexeval_read_summary(sim_summary_path);
     fit_summary = gexeval_read_summary(fit_summary_path);
-    truth_Z = gex_read_labeled_matrix(truth_z_path);
-    truth_L = gex_read_labeled_matrix(truth_l_path);
+    sim_Z = gex_read_labeled_matrix(sim_z_path);
+    sim_L = gex_read_labeled_matrix(sim_l_path);
     fit_Z = gex_read_labeled_matrix(fit_z_path);
     fit_L = gex_read_labeled_matrix(fit_l_path);
-    if (truth_summary == NULL || fit_summary == NULL || truth_Z == NULL || truth_L == NULL ||
+    if (sim_summary == NULL || fit_summary == NULL || sim_Z == NULL || sim_L == NULL ||
         fit_Z == NULL || fit_L == NULL) {
-        fprintf(stderr, "ERROR: failed to read required truth/model files.\n");
+        fprintf(stderr, "ERROR: failed to read required sim/model files.\n");
         goto cleanup;
     }
 
-    /* Derive the set of common cells and genes between the truth and fitted outputs 
+    /* Derive the set of common cells and genes between the sim and fitted outputs 
     so that we are not comparing model fits on the subset of genes simulated. */
     if (gexeval_collect_common_names(fit_Z->cell_names, fit_Z->n_cells,
-                                     truth_Z->cell_names, truth_Z->n_cells,
+                                     sim_Z->cell_names, sim_Z->n_cells,
                                      &common_cells, &n_common_cells) != 0 ||
         gexeval_collect_common_names(fit_L->gene_names, fit_L->n_genes,
-                                     truth_L->gene_names, truth_L->n_genes,
+                                     sim_L->gene_names, sim_L->n_genes,
                                      &common_genes, &n_common_genes) != 0) {
-        fprintf(stderr, "ERROR: failed to derive shared cells/genes between truth and fitted outputs.\n");
+        fprintf(stderr, "ERROR: failed to derive shared cells/genes between sim and fitted outputs.\n");
         goto cleanup;
     }
 
     /* Subset Z and L to the common cells and genes */
-    truth_Z_aligned = gexeval_subset_rows_by_names(truth_Z, common_cells, n_common_cells);
+    sim_Z_aligned = gexeval_subset_rows_by_names(sim_Z, common_cells, n_common_cells);
     fit_Z_aligned = gexeval_subset_rows_by_names(fit_Z, common_cells, n_common_cells);
-    truth_L_common = gexeval_subset_cols_by_names(truth_L, common_genes, n_common_genes);
+    sim_L_common = gexeval_subset_cols_by_names(sim_L, common_genes, n_common_genes);
     fit_L_common = gexeval_subset_cols_by_names(fit_L, common_genes, n_common_genes);
-    if (truth_Z_aligned == NULL || fit_Z_aligned == NULL || truth_L_common == NULL || fit_L_common == NULL) {
-        fprintf(stderr, "ERROR: failed to align truth and fitted matrices on shared names.\n");
+    if (sim_Z_aligned == NULL || fit_Z_aligned == NULL || sim_L_common == NULL || fit_L_common == NULL) {
+        fprintf(stderr, "ERROR: failed to align sim and fitted matrices on shared names.\n");
         goto cleanup;
     }
 
     /* Compute the reconstructed gex matrix X from Z and L for both simulated and fitted models */
-    truth_signal = gexeval_reconstruct_gex_matrix(truth_Z_aligned->X, truth_L_common->X);
+    sim_signal = gexeval_reconstruct_gex_matrix(sim_Z_aligned->X, sim_L_common->X);
     fit_signal = gexeval_reconstruct_gex_matrix(fit_Z_aligned->X, fit_L_common->X);
 
     /* Compute covariance between cells implied by their latent factor vectors */
-    truth_latent_cov = gexeval_compute_cell_covariance(truth_Z_aligned->X);
+    sim_latent_cov = gexeval_compute_cell_covariance(sim_Z_aligned->X);
     fit_latent_cov = gexeval_compute_cell_covariance(fit_Z_aligned->X);
 
     /* Compute covariance between genes in the reconstructed gene expression matrix */
-    truth_gene_cov = gexeval_compute_gene_covariance(truth_signal);
+    sim_gene_cov = gexeval_compute_gene_covariance(sim_signal);
     fit_gene_cov = gexeval_compute_gene_covariance(fit_signal);
-    if (truth_signal == NULL || fit_signal == NULL || truth_latent_cov == NULL ||
-        fit_latent_cov == NULL || truth_gene_cov == NULL || fit_gene_cov == NULL) {
+    if (sim_signal == NULL || fit_signal == NULL || sim_latent_cov == NULL ||
+        fit_latent_cov == NULL || sim_gene_cov == NULL || fit_gene_cov == NULL) {
         fprintf(stderr, "ERROR: failed to derive fitted covariance summaries.\n");
         goto cleanup;
     }
 
-    /* Compute the similarity between the latent subspaces of the truth and fitted models */
-    latent_subspace_similarity = gexeval_latent_subspace_similarity(truth_Z_aligned->X, fit_Z_aligned->X);
+    /* Compute the similarity between the latent subspaces of the sim and fitted models */
+    latent_subspace_similarity = gexeval_latent_subspace_similarity(sim_Z_aligned->X, fit_Z_aligned->X);
 
     /* Compute factor-level recovery up to permutation and sign flip. */
-    latent_factor_match_score = gexeval_greedy_factor_match_score(truth_Z_aligned->X, fit_Z_aligned->X);
+    latent_factor_match_score = gexeval_greedy_factor_match_score(sim_Z_aligned->X, fit_Z_aligned->X);
 
     /* Compute pearson correlations between the flattened cell covariance matrices */
-    cell_cov_corr = gexeval_matrix_correlation(truth_latent_cov, fit_latent_cov);
+    cell_cov_corr = gexeval_matrix_correlation(sim_latent_cov, fit_latent_cov);
 
     /* Compute pearson correlations between the flattened gene covariance matrices */
-    gene_cov_corr = gexeval_matrix_correlation(truth_gene_cov, fit_gene_cov);
+    gene_cov_corr = gexeval_matrix_correlation(sim_gene_cov, fit_gene_cov);
 
     /* Compute scale-sensitive matrix reconstruction and covariance errors. */
-    signal_relative_frobenius_error = gexeval_relative_frobenius_error(truth_signal, fit_signal);
-    cell_cov_relative_frobenius_error = gexeval_relative_frobenius_error(truth_latent_cov, fit_latent_cov);
-    gene_cov_relative_frobenius_error = gexeval_relative_frobenius_error(truth_gene_cov, fit_gene_cov);
+    signal_relative_frobenius_error = gexeval_relative_frobenius_error(sim_signal, fit_signal);
+    cell_cov_relative_frobenius_error = gexeval_relative_frobenius_error(sim_latent_cov, fit_latent_cov);
+    gene_cov_relative_frobenius_error = gexeval_relative_frobenius_error(sim_gene_cov, fit_gene_cov);
 
     /* Compute how much each factor contributes to the total variance in the fit model
     to see if any factor dominates in reconstruction from the matrix factorization components
     Z and L. This is a scale-invariant way to compare the latent sigmas between simulated and fitted models */
-    truth_contrib = gexeval_factor_contributions(truth_L->X, truth_summary->sigma2_latent, truth_summary->k);
+    sim_contrib = gexeval_factor_contributions(sim_L->X, sim_summary->sigma2_latent, sim_summary->k);
     fit_contrib = gexeval_factor_contributions(fit_L->X, fit_summary->sigma2_latent, fit_summary->k);
-    if (truth_contrib != NULL && fit_contrib != NULL) {
-        int n_compare = (truth_summary->k < fit_summary->k ? truth_summary->k : fit_summary->k);
-        gexeval_sort_desc(truth_contrib, truth_summary->k);
+    if (sim_contrib != NULL && fit_contrib != NULL) {
+        int n_compare = (sim_summary->k < fit_summary->k ? sim_summary->k : fit_summary->k);
+        gexeval_sort_desc(sim_contrib, sim_summary->k);
         gexeval_sort_desc(fit_contrib, fit_summary->k);
-        variance_trend_corr = gexeval_vector_correlation_basic(truth_contrib, fit_contrib, n_compare);
-        normalized_contribution_l1 = gexeval_normalized_contribution_l1(truth_contrib, truth_summary->k,
+        variance_trend_corr = gexeval_vector_correlation_basic(sim_contrib, fit_contrib, n_compare);
+        normalized_contribution_l1 = gexeval_normalized_contribution_l1(sim_contrib, sim_summary->k,
                                                                         fit_contrib, fit_summary->k);
     }
 
@@ -1091,7 +1091,7 @@ int main(int argc, char *argv[]) {
     }
 
     fprintf(out, "metric\tvalue\n");
-    fprintf(out, "k_true\t%d\n", truth_summary->k);
+    fprintf(out, "k_true\t%d\n", sim_summary->k);
     fprintf(out, "k_fit\t%d\n", fit_summary->k);
     fprintf(out, "latent_subspace_similarity\t%.17g\n", latent_subspace_similarity);
     fprintf(out, "latent_factor_match_score\t%.17g\n", latent_factor_match_score);
@@ -1100,7 +1100,7 @@ int main(int argc, char *argv[]) {
     fprintf(out, "signal_relative_frobenius_error\t%.17g\n", signal_relative_frobenius_error);
     fprintf(out, "cell_cov_relative_frobenius_error\t%.17g\n", cell_cov_relative_frobenius_error);
     fprintf(out, "gene_cov_relative_frobenius_error\t%.17g\n", gene_cov_relative_frobenius_error);
-    fprintf(out, "sigma_obs_true\t%.17g\n", truth_summary->sigma_obs);
+    fprintf(out, "sigma_obs_true\t%.17g\n", sim_summary->sigma_obs);
     fprintf(out, "sigma_obs_fit\t%.17g\n", fit_summary->sigma_obs);
     fprintf(out, "latent_variance_trend_correlation\t%.17g\n", variance_trend_corr);
     fprintf(out, "normalized_contribution_l1\t%.17g\n", normalized_contribution_l1);
@@ -1113,44 +1113,44 @@ int main(int argc, char *argv[]) {
 cleanup:
     if (out != NULL)
         fclose(out);
-    if (truth_contrib != NULL)
-        free(truth_contrib);
+    if (sim_contrib != NULL)
+        free(sim_contrib);
     if (fit_contrib != NULL)
         free(fit_contrib);
     if (common_cells != NULL)
         gexeval_free_names(common_cells, n_common_cells);
     if (common_genes != NULL)
         gexeval_free_names(common_genes, n_common_genes);
-    if (truth_signal != NULL)
-        mat_free(truth_signal);
+    if (sim_signal != NULL)
+        mat_free(sim_signal);
     if (fit_signal != NULL)
         mat_free(fit_signal);
-    if (truth_latent_cov != NULL)
-        mat_free(truth_latent_cov);
+    if (sim_latent_cov != NULL)
+        mat_free(sim_latent_cov);
     if (fit_latent_cov != NULL)
         mat_free(fit_latent_cov);
-    if (truth_gene_cov != NULL)
-        mat_free(truth_gene_cov);
+    if (sim_gene_cov != NULL)
+        mat_free(sim_gene_cov);
     if (fit_gene_cov != NULL)
         mat_free(fit_gene_cov);
-    if (truth_summary != NULL)
-        gexeval_free_summary(truth_summary);
+    if (sim_summary != NULL)
+        gexeval_free_summary(sim_summary);
     if (fit_summary != NULL)
         gexeval_free_summary(fit_summary);
-    if (truth_Z != NULL)
-        gex_free_matrix_data(truth_Z);
-    if (truth_L != NULL)
-        gex_free_matrix_data(truth_L);
+    if (sim_Z != NULL)
+        gex_free_matrix_data(sim_Z);
+    if (sim_L != NULL)
+        gex_free_matrix_data(sim_L);
     if (fit_Z != NULL)
         gex_free_matrix_data(fit_Z);
     if (fit_L != NULL)
         gex_free_matrix_data(fit_L);
-    if (truth_Z_aligned != NULL)
-        gex_free_matrix_data(truth_Z_aligned);
+    if (sim_Z_aligned != NULL)
+        gex_free_matrix_data(sim_Z_aligned);
     if (fit_Z_aligned != NULL)
         gex_free_matrix_data(fit_Z_aligned);
-    if (truth_L_common != NULL)
-        gex_free_matrix_data(truth_L_common);
+    if (sim_L_common != NULL)
+        gex_free_matrix_data(sim_L_common);
     if (fit_L_common != NULL)
         gex_free_matrix_data(fit_L_common);
     return status;
