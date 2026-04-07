@@ -1,14 +1,11 @@
 #include "brownian.h"
 
+#include "gex.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static int is_leaf(TreeNode *node) {
-    if (node == NULL) return 0;
-    return (node->lchild == NULL && node->rchild == NULL);
-}
 
 /* Find the most recent common ancestor (MRCA) of two nodes in a tree.
 Returns a pointer to the MRCA node or NULL if no common ancestor is found. */
@@ -54,25 +51,6 @@ static int fill_node_depths(TreeNode *node, double *depth_by_id, int nnodes, dou
     return 0;
 }
 
-static unsigned int brownian_rand_u32(unsigned int *state) {
-    *state = (*state * 1664525u) + 1013904223u;
-    return *state;
-}
-
-/* Generate a random sample from a uniform distribution on (0, 1) 
-where the boundaries 0 and 1 are excluded from being drawn. */
-static double brownian_uniform_open(unsigned int *state) {
-    return ((double)brownian_rand_u32(state) + 1.0) / 4294967297.0;
-}
-
-/* Generate a random sample from a standard normal distribution, mean
-0 and variance 1, using the Box-Muller transform */
-static double brownian_rand_normal(unsigned int *state) {
-    double u1 = brownian_uniform_open(state);
-    double u2 = brownian_uniform_open(state);
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
-}
-
 static int brownian_copy_cell_names(GexMatrix *gex, char **names, int n) {
     int i;
 
@@ -100,7 +78,9 @@ static void fill_tip_map(TreeNode *node,
 
     if (node == NULL)
         return;
-    if (is_leaf(node)) {
+
+    /* Check if the node is a leaf */
+    if (node->lchild == NULL && node->rchild == NULL) {
         for (i = 0; i < n; i++) {
             if (tips[i] == NULL && node->name != NULL &&
                 strcmp(node->name, names[i]) == 0) {
@@ -477,7 +457,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
         double sigma2_j = (n_sigma2 == 1 ? sigma2[0] : sigma2[j]);
         double sigma_scale = sqrt(sigma2_j);
         for (i = 0; i < n; i++)
-            std_normals[i] = brownian_rand_normal(&rng_state);
+            std_normals[i] = rand_normal(&rng_state);
         for (i = 0; i < n; i++) {
             double sum = 0.0;
             int m;
@@ -525,7 +505,7 @@ GexMatrix *simulate_standard_normal_expression(char **names,
     /* Draw expression values from standard normal distribution */
     for (j = 0; j < n_genes; j++) {
         for (i = 0; i < n; i++)
-            mat_set(gex->X, i, j, brownian_rand_normal(&rng_state));
+            mat_set(gex->X, i, j, rand_normal(&rng_state));
     }
 
     return gex;

@@ -20,4 +20,6 @@ void gex_free_pca(GexPCA *pca);
 
 void gex_print_pca_summary(GexPCA *pca);
 
+Matrix *center_matrix(Matrix *X);
+
 #endif

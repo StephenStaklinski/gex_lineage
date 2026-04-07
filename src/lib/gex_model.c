@@ -1,5 +1,6 @@
 #include "gex_model.h"
 
+#include "pca.h"
 #include <adam_scheduler.h>
 #include <variational.h>
 
@@ -33,39 +34,6 @@ static double gex_model_logsumexp(double *x, int n) {
 
     /* Return the log-sum-exp */
     return max_x + log(sum);
-}
-
-/* Center the columns of a matrix by subtracting the mean of each column.
-Returns a newly allocated centered matrix or NULL on failure. */
-static Matrix *gex_model_center_matrix(Matrix *X) {
-    int i, j;
-    int n = X->nrows;
-    int p = X->ncols;
-    double *means = NULL;
-    Matrix *Xc = NULL;
-
-    means = (double *)calloc(p, sizeof(double));
-    Xc = mat_new(n, p);
-    if (means == NULL || Xc == NULL) {
-        free(means);
-        if (Xc != NULL)
-            mat_free(Xc);
-        return NULL;
-    }
-
-    for (j = 0; j < p; j++) {
-        for (i = 0; i < n; i++)
-            means[j] += mat_get(X, i, j);
-        means[j] /= (double)n;
-    }
-
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < p; j++)
-            mat_set(Xc, i, j, mat_get(X, i, j) - means[j]);
-    }
-
-    free(means);
-    return Xc;
 }
 
 /* Compute the negative log-posterior objective and its gradients for the
@@ -465,7 +433,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Center the expression matrix by subtracting the mean of each gene.
     This ensures the latent factor model is fit to the residual structure
     after removing per-gene offsets. */
-    ws.Xc = gex_model_center_matrix(gex->X);
+    ws.Xc = center_matrix(gex->X);
     if (ws.Xc == NULL)
         goto cleanup_fit_latent_brownian_model;
 

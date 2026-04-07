@@ -20,7 +20,7 @@ static int gex_cmp_eigpair_desc(const void *a, const void *b) {
 }
 
 /* Center the columns of a matrix by subtracting the mean of each column. */
-static Matrix *gex_center_matrix(Matrix *X) {
+Matrix *center_matrix(Matrix *X) {
     int i, j;
     int n = X->nrows;
     int p = X->ncols;
@@ -139,7 +139,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     p = gex->n_genes;
 
     /* Center the gene expression matrix by subtracting the mean of each column (gene) */
-    Xc = gex_center_matrix(gex->X);
+    Xc = center_matrix(gex->X);
     if (Xc == NULL)
         return NULL;
 
