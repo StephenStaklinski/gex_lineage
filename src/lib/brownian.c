@@ -115,6 +115,27 @@ static void fill_tip_map(TreeNode *node,
     fill_tip_map(node->rchild, names, n, tips);
 }
 
+/* Fill a preallocated array of gene names of length n_genes. 
+Returns 0 on success, -1 on failure. */
+int generate_gene_names(char **names, int n_genes) {
+    int j;
+
+    if (names == NULL || n_genes <= 0)
+        return -1;
+
+    for (j = 0; j < n_genes; j++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "sim_gene_%04d", j + 1);
+        names[j] = strdup(buf);
+        if (names[j] == NULL) {
+            free_string_array(names, j);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 /* Calculate the phylogenetic covariance matrix for an input tree.
 Covariance is the distance from root to MRCA for each pair of tips. 
 Tips are matched to the order of the input names.
@@ -442,17 +463,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
         mat_free(chol);
         return NULL;
     }
-    for (j = 0; j < ngenes; j++) {
-        char gene_name[64];
-        snprintf(gene_name, sizeof(gene_name), "sim_%02d", j + 1);
-        gex->gene_names[j] = strdup(gene_name);
-        if (gex->gene_names[j] == NULL) {
-            gex_free_matrix_data(gex);
-            mat_free(Sigma_reg);
-            mat_free(chol);
-            return NULL;
-        }
-    }
+    generate_gene_names(gex->gene_names, ngenes);
 
     std_normals = (double *)calloc(n, sizeof(double));
     if (std_normals == NULL) {
@@ -509,15 +520,7 @@ GexMatrix *simulate_standard_normal_expression(char **names,
         return NULL;
     }
 
-    for (j = 0; j < n_genes; j++) {
-        char gene_name[64];
-        snprintf(gene_name, sizeof(gene_name), "sim_neg_%02d", j + 1);
-        gex->gene_names[j] = strdup(gene_name);
-        if (gex->gene_names[j] == NULL) {
-            gex_free_matrix_data(gex);
-            return NULL;
-        }
-    }
+    generate_gene_names(gex->gene_names, n_genes);
 
     /* Draw expression values from standard normal distribution */
     for (j = 0; j < n_genes; j++) {

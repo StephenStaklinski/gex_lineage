@@ -130,6 +130,23 @@ int gex_write_model(const char *outprefix,
                                double sigma2_obs,
                                double *sigma2_latent);
 
+int gex_simulate_from_latent_factors(GexMatrix *Z,
+                                     char **cell_names,
+                                     int n_cells,
+                                     int k,
+                                     int n_genes,
+                                     double sigma2_obs,
+                                     unsigned int seed,
+                                     GexMatrix **L_out,
+                                     GexMatrix **gex_out);
+
+/* Helpers */
 void free_string_array(char **arr, int n);
+
+unsigned int rand_u32(unsigned int *state);
+
+double uniform_open(unsigned int *state);
+
+double rand_normal(unsigned int *state);
 
 #endif

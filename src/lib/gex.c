@@ -117,18 +117,21 @@ static int gex_cmp_pval_asc(const void *a, const void *b) {
     return 0;
 }
 
-static unsigned int gex_rand_u32(unsigned int *state) {
+/* Generate next 32-bit unsigned integer from RNG state */
+unsigned int rand_u32(unsigned int *state) {
     *state = (*state * 1664525u) + 1013904223u;
     return *state;
 }
 
-static double gex_uniform_open(unsigned int *state) {
-    return ((double)gex_rand_u32(state) + 1.0) / 4294967297.0;
+/* Generate uniform random number in (0,1), excluding endpoints */
+double uniform_open(unsigned int *state) {
+    return ((double)rand_u32(state) + 1.0) / 4294967297.0;
 }
 
-static double gex_rand_normal(unsigned int *state) {
-    double u1 = gex_uniform_open(state);
-    double u2 = gex_uniform_open(state);
+/* Generate standard normal random variable (mean 0, variance 1) */
+double rand_normal(unsigned int *state) {
+    double u1 = uniform_open(state);
+    double u2 = uniform_open(state);
     return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2); 
 }
 
@@ -172,7 +175,7 @@ static void gex_shuffle_double(double *x, int n, unsigned int *state) {
 
     /* Loop backwards from the last element to the second */
     for (i = n - 1; i > 0; i--) {
-        int j = (int)(gex_rand_u32(state) % (unsigned int)(i + 1)); /* Pick a random index */
+        int j = (int)(rand_u32(state) % (unsigned int)(i + 1)); /* Pick a random index */
         /* Swap elements at indices i and j */
         double tmp = x[i];
         x[i] = x[j];
@@ -1664,7 +1667,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                 double stat_sim;
                 for (i = 0; i < n; i++)
                     /* Draw simulated data independently from the null model N(μ0, σ20) */
-                    y_sim[i] = mu0 + sqrt(sigma20) * gex_rand_normal(&rng_state);
+                    y_sim[i] = mu0 + sqrt(sigma20) * rand_normal(&rng_state);
 
                 /* Re-calculate the mean and variance of the simulated gene expression data.
                 This is necessary because we only simulate finite samples, so we are not guaranteed
@@ -2031,3 +2034,121 @@ cleanup:
         free_string_array(factor_names, k);
     return status;
 }
+
+/* Use the provides latent factors . */
+int gex_simulate_from_latent_factors(GexMatrix *Z,
+                                     char **cell_names,
+                                     int n_cells,
+                                     int k,
+                                     int n_genes,
+                                     double sigma2_obs,
+                                     unsigned int seed,
+                                     GexMatrix **L_out,
+                                     GexMatrix **gex_out) {
+    int i, j, d;    /* Loop indices */
+    int success = 1; /* Whether the simulation succeeded; Failure by default */
+    GexMatrix *gex = NULL;  /* Simulation output gene expression object */
+    GexMatrix *L = NULL;    /* Simulation output gene loadings object */
+    char **gene_names = NULL;   /* Gene names */
+    unsigned int rng_state = (seed == 0u ? 1u : seed);  /* Random number generator state */
+
+    if (Z == NULL || Z->X == NULL || L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
+        k <= 0 || n_genes <= 0 || sigma2_obs < 0.0)
+        return 1;
+    if (Z->n_cells != n_cells || Z->n_genes != k)
+        return 1;
+
+    /* Make sure the simulation output is initialized as empty */
+    *gex_out = NULL;
+    *L_out = NULL;
+
+    /* Allocate objects in memory */
+    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    L = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    gene_names = (char **)calloc(n_genes, sizeof(char *));
+    if (gene_names == NULL) 
+        goto cleanup;
+    generate_gene_names(gene_names, n_genes);
+
+    if (L == NULL || gex == NULL || gene_names == NULL)
+        goto cleanup;
+
+    L->n_cells = k;
+    L->n_genes = n_genes;
+    L->X = mat_new(k, n_genes);
+    if (L->X == NULL)
+        goto cleanup;
+
+    /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
+    sqrt(n_genes / k), ensuring each latent dimension contributes
+    equal expected magnitude to the noiseless gene expression data. */
+    for (d = 0; d < k; d++) {
+        double row_ss = 0.0;
+        double target_norm = sqrt((double)n_genes / (double)k);
+        for (j = 0; j < n_genes; j++) {
+            double val = rand_normal(&rng_state);
+            mat_set(L->X, d, j, val);
+            row_ss += val * val;
+        }
+        if (row_ss > 0.0) {
+            double row_scale = target_norm / sqrt(row_ss);
+            for (j = 0; j < n_genes; j++)
+                mat_set(L->X, d, j, row_scale * mat_get(L->X, d, j));
+        }
+    }
+
+    /* Initialize the gene expression matrix */
+    gex->n_cells = n_cells;
+    gex->n_genes = n_genes;
+    gex->X = mat_new(n_cells, n_genes);
+    if (gex->X == NULL)
+        goto cleanup;
+
+    /* Compute the noiseless expression matrix from the 
+    simulated Z and L matrix factorization. */
+    mat_mult(gex->X, Z->X, L->X);
+
+    /* Initialize the cell and gene names */
+    gex->cell_names = (char **)calloc(n_cells, sizeof(char *));
+    gex->gene_names = (char **)calloc(n_genes, sizeof(char *));
+    if (gex->X == NULL || gex->cell_names == NULL || gex->gene_names == NULL)
+        goto cleanup;
+
+    for (i = 0; i < n_cells; i++) {
+        gex->cell_names[i] = strdup(cell_names[i]);
+        if (gex->cell_names[i] == NULL)
+            goto cleanup;
+    }
+    for (j = 0; j < n_genes; j++) {
+        gex->gene_names[j] = gene_names[j];
+        gene_names[j] = NULL;
+    }
+
+    /* Add noise to the noiseless expression matrix based on 
+    the sigma2_obs parameter input. */
+    for (i = 0; i < n_cells; i++) {
+        for (j = 0; j < n_genes; j++) {
+            double val = mat_get(gex->X, i, j);
+            if (sigma2_obs > 0.0)
+                val += sqrt(sigma2_obs) * rand_normal(&rng_state);
+            mat_set(gex->X, i, j, val);
+        }
+    }
+
+    success = 0; /* Simulation succeeded */
+
+    *L_out = L;
+    L = NULL;
+    *gex_out = gex;
+    gex = NULL;
+
+    cleanup:
+    if (gene_names != NULL)
+        free_string_array(gene_names, n_genes);
+    if (L != NULL)
+        gex_free_matrix_data(L);
+    if (gex != NULL)
+        gex_free_matrix_data(gex);
+    return success;
+}
+

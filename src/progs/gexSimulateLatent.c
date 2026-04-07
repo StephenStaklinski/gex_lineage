@@ -4,7 +4,6 @@
 
 #include "brownian.h"
 #include "gex.h"
-#include "gex_sim.h"
 
 /* Parse a comma-separated list of double values into an array 
 and count the number of values */
@@ -175,10 +174,35 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    if (gex_get_shared_leaf_names(trees, n_trees, &cell_names, &n_cells) != 0 || n_cells <= 0) {
-        fprintf(stderr, "ERROR: failed to derive shared leaf names across the input trees.\n");
+    /* Get cell names and number of cells from the first tree 
+    (assuming all trees have the same tips from the nexus file) */
+    List *leaf_list = tr_leaf_names(trees[0]);
+    if (leaf_list == NULL || lst_size(leaf_list) <= 0) {
+        fprintf(stderr, "ERROR: failed to get leaf names from first tree.\n");
         goto cleanup;
     }
+    n_cells = lst_size(leaf_list);
+
+    /* Convert leaf list to cell names array*/
+    cell_names = (char **)calloc(n_cells, sizeof(char *));
+    if (cell_names == NULL) {
+        fprintf(stderr, "ERROR: failed to allocate cell names.\n");
+        goto cleanup;
+    }
+    for (i = 0; i < n_cells; i++) {
+        String *s = lst_get_ptr(leaf_list, i);
+        if (s == NULL) {
+            fprintf(stderr, "ERROR: failed to get leaf name %d.\n", i);
+            goto cleanup;
+        }
+        cell_names[i] = strdup(s->chars);
+        if (cell_names[i] == NULL) {
+            fprintf(stderr, "ERROR: failed to allocate cell name.\n");
+            goto cleanup;
+        }
+    }
+    lst_free_strings(leaf_list);
+    lst_free(leaf_list);
 
     if (use_n_trees < -1) {
         fprintf(stderr, "ERROR: --use-n-trees must be -1, 0, or a positive integer\n");
