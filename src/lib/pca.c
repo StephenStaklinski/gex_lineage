@@ -1,6 +1,7 @@
 
 #include "pca.h"
 
+#include <phast/misc.h>
 #include <phast/eigen.h>
 
 typedef struct {
@@ -26,18 +27,9 @@ Matrix *center_matrix(Matrix *X) {
     double *means = NULL;
     Matrix *Xc = NULL;
 
-    means = (double *)calloc(p, sizeof(double));
-    if (means == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating PCA means\n");
-        return NULL;
-    }
+    means = scalloc(p, sizeof(double));
 
     Xc = mat_new(n, p);
-    if (Xc == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating centered matrix\n");
-        free(means);
-        return NULL;
-    }
 
     for (j = 0; j < p; j++) {
         for (i = 0; i < n; i++)
@@ -63,10 +55,6 @@ static Matrix *gex_compute_covariance(Matrix *Xc) {
     Matrix *Cov = NULL;
 
     Cov = mat_new(p, p);
-    if (Cov == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating covariance matrix\n");
-        return NULL;
-    }
 
     for (j = 0; j < p; j++) {
         for (k = j; k < p; k++) {
@@ -152,10 +140,6 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     /* Allocate memory for eigenvectors and eigenvalues */
     eigvals = vec_new(p);
     eigvecs = mat_new(p, p);
-    if (eigvals == NULL || eigvecs == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating eigensystem objects\n");
-        goto cleanup_compute_pca;
-    }
 
     /* Perform eigendecomposition of the symmetric covariance matrix */
     if (mat_diagonalize_sym(Cov, eigvals, eigvecs) != 0) {
@@ -164,11 +148,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     }
 
     /* Create an array of eigenvalue/index pairs to sort the eigenvalues in descending order while keeping track of their original indices */
-    pairs = (GexEigPair *)malloc(p * sizeof(GexEigPair));
-    if (pairs == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating eigenvalue sort buffer\n");
-        goto cleanup_compute_pca;
-    }
+    pairs = smalloc(p * sizeof(GexEigPair));
 
     /* Populate the eigenvalue/index pairs */
     for (i = 0; i < p; i++) {
@@ -187,20 +167,10 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         total_var += pairs[i].val;
 
     /* Allocate memory for the output PCA result */
-    out = (GexPCA *)calloc(1, sizeof(GexPCA));
-    if (out == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating PCA result\n");
-        goto cleanup_compute_pca;
-    }
-
+    out = scalloc(1, sizeof(GexPCA));
     out->components = mat_new(p, p);
-    out->var_explained = (double *)calloc(p, sizeof(double));
+    out->var_explained = scalloc(p, sizeof(double));
     out->K = p;
-
-    if (out->components == NULL || out->var_explained == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating PCA outputs\n");
-        goto cleanup_compute_pca;
-    }
 
     if (total_var <= 0.0) {
         fprintf(stderr, "WARNING: total PCA variance is non-positive; reporting zeros\n");
@@ -236,10 +206,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
 
     /* Allocate memory for the reduced PCA components and variance explained */
     new_components = mat_new(keep_K, out->components->ncols);
-    new_var = (double *)calloc(keep_K, sizeof(double));
-    if (new_components == NULL || new_var == NULL) {
-        goto cleanup_compute_pca;
-    }
+    new_var = scalloc(keep_K, sizeof(double));
 
     /* Fill the reduced PCA result with the top components and their variance explained */
     for (i = 0; i < keep_K; i++) {

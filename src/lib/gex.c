@@ -79,19 +79,14 @@ static int gex_split_tab_fields(char *line, char ***fields_out) {
     char **fields = NULL;
     char *token = NULL;
 
-    fields = (char **)malloc(capacity * sizeof(char *));
-    if (fields == NULL) return -1;
+    fields = smalloc(capacity * sizeof(char *));
 
     token = strtok(line, "\t\r\n");
     while (token != NULL) {
         if (count == capacity) {
             char **tmp;
             capacity *= 2;
-            tmp = (char **)realloc(fields, capacity * sizeof(char *));
-            if (tmp == NULL) {
-                free(fields);
-                return -1;
-            }
+            tmp = srealloc(fields, capacity * sizeof(char *));
             fields = tmp;
         }
 
@@ -152,9 +147,7 @@ static char **generate_factor_names(int k) {
 
     if (k <= 0)
         return NULL;
-    names = (char **)calloc(k, sizeof(char *));
-    if (names == NULL)
-        return NULL;
+    names = scalloc(k, sizeof(char *));
 
     for (i = 0; i < k; i++) {
         char buf[64];
@@ -243,13 +236,8 @@ static double gex_loglik_centered_gaussian_cov(double *y,
     n = Sigma->nrows;   /* Number of rows (cells) in the covariance matrix */
 
     /* Allocate temporary vectors */
-    Sinv1 = (double *)calloc(n, sizeof(double));
-    Sinvy = (double *)calloc(n, sizeof(double));
-    if (Sinv1 == NULL || Sinvy == NULL) {
-        free(Sinv1);
-        free(Sinvy);
-        return -HUGE_VAL;
-    }
+    Sinv1 = scalloc(n, sizeof(double));
+    Sinvy = scalloc(n, sizeof(double));
 
     /* Compute:
          Sinv1 = Sigma^{-1} * 1
@@ -468,11 +456,7 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
     Z = mat_new(gex->n_cells, gex->n_genes);    /* Initialize the standardized matrix */
     if (Z == NULL)
         return NULL;
-    col = (double *)malloc(gex->n_cells * sizeof(double));
-    if (col == NULL) {
-        mat_free(Z);
-        return NULL;
-    }
+    col = smalloc(gex->n_cells * sizeof(double));
 
     /* Standardize each column (gene) of the expression matrix */
     for (j = 0; j < gex->n_genes; j++) {
@@ -512,12 +496,7 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
     double running;
 
     /* Initialize the pairs array */
-    pairs = (GexPvalPair *)malloc(n * sizeof(GexPvalPair));
-    if (pairs == NULL) {
-        for (i = 0; i < n; i++)
-            qvals[i] = 1.0;
-        return;
-    }
+    pairs = smalloc(n * sizeof(GexPvalPair));
 
     /* Fill the pairs array with p-values and their original indices */
     for (i = 0; i < n; i++) {
@@ -727,14 +706,7 @@ TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
         /* Ensure capacity in the trees array */
         if (count == capacity) {
             int new_capacity = (capacity == 0 ? 8 : 2 * capacity);
-            TreeNode **tmp = (TreeNode **)realloc(trees, new_capacity * sizeof(TreeNode *));
-            if (tmp == NULL) {
-                fprintf(stderr, "ERROR: out of memory while storing trees\n");
-                tr_free(tree);
-                gex_free_trees(trees, count);
-                fclose(f);
-                return NULL;
-            }
+            TreeNode **tmp = srealloc(trees, new_capacity * sizeof(TreeNode *));
             trees = tmp;
             capacity = new_capacity;
         }
@@ -881,26 +853,11 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
 
     n_genes = nfields - 1;  /* Number of genes is the number of fields minus the row label first column */
 
-    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));    /* Allocate matrix structure */
-    if (gex == NULL) {
-        free(fields);
-        free(line_copy);
-        fclose(f);
-        return NULL;
-    }
+    gex = scalloc(1, sizeof(GexMatrix));    /* Allocate matrix structure */
 
     gex->n_cells = 0;
     gex->n_genes = n_genes;
-
-    gex->gene_names = (char **)calloc(n_genes, sizeof(char *));    /* Allocate array for gene names */
-    if (gex->gene_names == NULL) {
-        free(fields);
-        free(line_copy);
-        free(gex);
-        fclose(f);
-        return NULL;
-    }
-
+    gex->gene_names = scalloc(n_genes, sizeof(char *));    /* Allocate array for gene names */
     for (i = 0; i < n_genes; i++) {
         gex->gene_names[i] = strdup(fields[i + 1]); /* Duplicate gene name strings from header fields */
         if (gex->gene_names[i] == NULL) {
@@ -931,20 +888,8 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
 
     gex->n_cells = n_cells;
     gex->n_genes = n_genes;
-
-    gex->cell_names = (char **)calloc(n_cells, sizeof(char *));    /* Allocate array for cell names */
-    if (gex->cell_names == NULL) {
-        gex_free_matrix_data(gex);
-        fclose(f);
-        return NULL;
-    }
-
+    gex->cell_names = scalloc(n_cells, sizeof(char *));    /* Allocate array for cell names */
     gex->X = mat_new(n_cells, n_genes);    /* Allocate expression matrix */
-    if (gex->X == NULL) {
-        gex_free_matrix_data(gex);
-        fclose(f);
-        return NULL;
-    }
 
     /* Second pass: Fill data structures */
     rewind(f);
@@ -1084,9 +1029,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     }
 
     gex = *gex_ptr; /* Get the expression matrix pointer */
-    tree_name_lists = (List **)calloc(n_trees, sizeof(List *));
-    if (tree_name_lists == NULL)
-        return -1;
+    tree_name_lists = scalloc(n_trees, sizeof(List *));
 
     /* Get the leaf names from each tree */
     for (i = 0; i < n_trees; i++) {
@@ -1148,22 +1091,13 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         goto cleanup_reconcile_tree_and_expression;
     }
 
-    subset = (GexMatrix *)calloc(1, sizeof(GexMatrix)); /* Allocate memory for the subsetted matrix */
-    if (subset == NULL) {
-        goto cleanup_reconcile_tree_and_expression;
-    }
-
     /* Initialize the subsetted matrix */
+    subset = scalloc(1, sizeof(GexMatrix)); /* Allocate memory for the subsetted matrix */
     subset->n_cells = n_keep;
     subset->n_genes = gex->n_genes;
     subset->X = mat_new(n_keep, gex->n_genes);
-    subset->cell_names = (char **)calloc(n_keep, sizeof(char *));
-    subset->gene_names = (char **)calloc(gex->n_genes, sizeof(char *));
-    if (subset->X == NULL || subset->cell_names == NULL || subset->gene_names == NULL) {
-        gex_free_matrix_data(subset);
-        subset = NULL;
-        goto cleanup_reconcile_tree_and_expression;
-    }
+    subset->cell_names = scalloc(n_keep, sizeof(char *));
+    subset->gene_names = scalloc(gex->n_genes, sizeof(char *));
 
     /* Fill the gene names in the subsetted matrix (same as original since we keep all genes) */
     for (j = 0; j < gex->n_genes; j++) {
@@ -1268,9 +1202,7 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     }
     n_cells = gex->n_cells;
     n_genes = gex->n_genes;
-    Ws = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
-    if (Ws == NULL)
-        return NULL;
+    Ws = scalloc(n_sigmas, sizeof(Matrix *));
     for (t = 0; t < n_sigmas; t++) {
         if (Sigmas[t] == NULL ||
             Sigmas[t]->nrows != n_cells ||
@@ -1310,19 +1242,12 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     }
 
     /* Initialize the result structure */
-    res = (GexMoransResult *)calloc(1, sizeof(GexMoransResult));
-    if (res == NULL) {
-        goto cleanup_compute_morans_i;
-    }
+    res = scalloc(1, sizeof(GexMoransResult));
     res->corr = mat_new(n_genes, n_genes);
-    res->morans_i = (double *)calloc(n_genes, sizeof(double));
-    res->pvals = (double *)calloc(n_genes, sizeof(double));
-    res->qvals = (double *)calloc(n_genes, sizeof(double));
+    res->morans_i = scalloc(n_genes, sizeof(double));
+    res->pvals = scalloc(n_genes, sizeof(double));
+    res->qvals = scalloc(n_genes, sizeof(double));
     res->n_genes = n_genes;
-    if (res->corr == NULL || res->morans_i == NULL ||
-        res->pvals == NULL || res->qvals == NULL) {
-        goto cleanup_compute_morans_i;
-    }
 
     /* Compute the Moran's I correlation matrix from Z^T x B */
     for (j = 0; j < n_genes; j++) {
@@ -1337,11 +1262,8 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     }
 
     /* Initialize temporary arrays for permutation testing */
-    zcol = (double *)malloc(n_cells * sizeof(double));
-    perm = (double *)malloc(n_cells * sizeof(double));
-    if (zcol == NULL || perm == NULL) {
-        goto cleanup_compute_morans_i;
-    }
+    zcol = smalloc(n_cells * sizeof(double));
+    perm = smalloc(n_cells * sizeof(double));
 
     /* Run permutation tests per gene */
     rng_state = (seed == 0u ? 1u : seed);
@@ -1515,18 +1437,13 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     }
 
     n = gex->n_cells;
-    Sigma_regs = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
-    Sigma_invs = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
-    Ls = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
-    logdet_sigmas = (double *)calloc(n_sigmas, sizeof(double));
-    jitters = (double *)calloc(n_sigmas, sizeof(double));
+    Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
+    Sigma_invs = scalloc(n_sigmas, sizeof(Matrix *));
+    Ls = scalloc(n_sigmas, sizeof(Matrix *));
+    logdet_sigmas = scalloc(n_sigmas, sizeof(double));
+    jitters = scalloc(n_sigmas, sizeof(double));
     if (alt_mode == GEX_LRT_ALT_LAMBDA)
-        Sigma_lambdas = (Matrix **)calloc(n_sigmas, sizeof(Matrix *));
-    if (Sigma_regs == NULL || Sigma_invs == NULL || Ls == NULL ||
-        logdet_sigmas == NULL || jitters == NULL ||
-        (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambdas == NULL)) {
-        goto cleanup_compute_brownian_lrt;
-    }
+        Sigma_lambdas = scalloc(n_sigmas, sizeof(Matrix *));
 
     for (t = 0; t < n_sigmas; t++) {
         double max_diag = 0.0;
@@ -1579,29 +1496,19 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     }
 
     /* Initialize result structure and temporary vectors for the LRT computation */
-    res = (GexLRTResult *)calloc(1, sizeof(GexLRTResult));
-    y = (double *)malloc(n * sizeof(double));
+    res = scalloc(1, sizeof(GexLRTResult));
+    y = smalloc(n * sizeof(double));
     if (alt_mode == GEX_LRT_ALT_FULL)
-        y_sim = (double *)malloc(n * sizeof(double));
-    if (res == NULL || y == NULL || (alt_mode == GEX_LRT_ALT_FULL && y_sim == NULL)) {
-        goto cleanup_compute_brownian_lrt;
-    }
-    res->ll_null = (double *)calloc(gex->n_genes, sizeof(double));
-    res->ll_alt = (double *)calloc(gex->n_genes, sizeof(double));
+        y_sim = smalloc(n * sizeof(double));
+    res->ll_null = scalloc(gex->n_genes, sizeof(double));
+    res->ll_alt = scalloc(gex->n_genes, sizeof(double));
     if (alt_mode == GEX_LRT_ALT_LAMBDA)
-        res->lambda_hat = (double *)calloc(gex->n_genes, sizeof(double));
-    res->lrt_stat = (double *)calloc(gex->n_genes, sizeof(double));
-    res->pvals = (double *)calloc(gex->n_genes, sizeof(double));
-    res->qvals = (double *)calloc(gex->n_genes, sizeof(double));
+        res->lambda_hat = scalloc(gex->n_genes, sizeof(double));
+    res->lrt_stat = scalloc(gex->n_genes, sizeof(double));
+    res->pvals = scalloc(gex->n_genes, sizeof(double));
+    res->qvals = scalloc(gex->n_genes, sizeof(double));
     res->alt_mode = alt_mode;
     res->n_genes = gex->n_genes;
-    if (res->lrt_stat == NULL || res->pvals == NULL || res->qvals == NULL || 
-        res->ll_null == NULL || res->ll_alt == NULL ||
-        (alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat == NULL)) {
-        gex_free_lrt_result(res);
-        res = NULL;
-        goto cleanup_compute_brownian_lrt;
-    }
 
     /* Run the LRT on each gene */
     rng_state = (seed == 0u ? 1u : seed);
@@ -1891,18 +1798,12 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
     }
 
     /* Initialize the output matrix */
-    out = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    if (out == NULL)
-        return NULL;
+    out = scalloc(1, sizeof(GexMatrix));
     out->n_cells = gex->n_cells;
     out->n_genes = nkeep;
     out->X = mat_new(out->n_cells, out->n_genes);
-    out->cell_names = (char **)malloc(out->n_cells * sizeof(char *));
-    out->gene_names = (char **)malloc(out->n_genes * sizeof(char *));
-    if (out->X == NULL || out->cell_names == NULL || out->gene_names == NULL) {
-        gex_free_matrix_data(out);
-        return NULL;
-    }
+    out->cell_names = smalloc(out->n_cells * sizeof(char *));
+    out->gene_names = smalloc(out->n_genes * sizeof(char *));
 
     /* Copy cell names */
     for (i = 0; i < out->n_cells; i++) {
@@ -2063,13 +1964,11 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     *L_out = NULL;
 
     /* Allocate objects in memory */
-    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    gex = scalloc(1, sizeof(GexMatrix));
     L = mat_new(k, n_genes);
 
     /* Get simulated gene names */
-    gene_names = (char **)calloc(n_genes, sizeof(char *));
-    if (gene_names == NULL) 
-        goto cleanup;
+    gene_names = scalloc(n_genes, sizeof(char *));
     generate_gene_names(gene_names, n_genes);
 
     if (L == NULL || gex == NULL || gene_names == NULL)
@@ -2109,11 +2008,8 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     mat_mult(gex->X, Z, L);
 
     /* Initialize the cell and gene names */
-    gex->cell_names = (char **)calloc(n_cells, sizeof(char *));
-    gex->gene_names = (char **)calloc(n_genes, sizeof(char *));
-    if (gex->X == NULL || gex->cell_names == NULL || gex->gene_names == NULL)
-        goto cleanup;
-
+    gex->cell_names = scalloc(n_cells, sizeof(char *));
+    gex->gene_names = scalloc(n_genes, sizeof(char *));
     for (i = 0; i < n_cells; i++) {
         gex->cell_names[i] = strdup(cell_names[i]);
         if (gex->cell_names[i] == NULL)

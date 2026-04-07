@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <phast/misc.h>
 #include <phast/eigen.h>
 
 #include "gex.h"
@@ -50,18 +51,12 @@ static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
 
     if (src == NULL || target_names == NULL || n_target <= 0)
         return NULL;
-    out = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    if (out == NULL)
-        return NULL;
+    out = scalloc(1, sizeof(GexMatrix));
     out->n_cells = n_target;
     out->n_genes = src->n_genes;
     out->X = mat_new(n_target, src->n_genes);
-    out->cell_names = (char **)calloc(n_target, sizeof(char *));
-    out->gene_names = (char **)calloc(src->n_genes, sizeof(char *));
-    if (out->X == NULL || out->cell_names == NULL || out->gene_names == NULL) {
-        gex_free_matrix_data(out);
-        return NULL;
-    }
+    out->cell_names = scalloc(n_target, sizeof(char *));
+    out->gene_names = scalloc(src->n_genes, sizeof(char *));
 
     for (j = 0; j < src->n_genes; j++) {
         out->gene_names[j] = strdup(src->gene_names[j]);
@@ -97,18 +92,12 @@ static GexMatrix *gexeval_subset_cols_by_names(GexMatrix *src,
 
     if (src == NULL || target_names == NULL || n_target <= 0)
         return NULL;
-    out = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    if (out == NULL)
-        return NULL;
+    out = scalloc(1, sizeof(GexMatrix));
     out->n_cells = src->n_cells;
     out->n_genes = n_target;
     out->X = mat_new(src->n_cells, n_target);
-    out->cell_names = (char **)calloc(src->n_cells, sizeof(char *));
-    out->gene_names = (char **)calloc(n_target, sizeof(char *));
-    if (out->X == NULL || out->cell_names == NULL || out->gene_names == NULL) {
-        gex_free_matrix_data(out);
-        return NULL;
-    }
+    out->cell_names = scalloc(src->n_cells, sizeof(char *));
+    out->gene_names = scalloc(n_target, sizeof(char *));
 
     for (i = 0; i < src->n_cells; i++) {
         out->cell_names[i] = strdup(src->cell_names[i]);
@@ -151,9 +140,7 @@ static int gexeval_collect_common_names(char **names_ref,
     *common_out = NULL;
     *n_common_out = 0;
 
-    common = (char **)calloc(n_ref, sizeof(char *));
-    if (common == NULL)
-        return -1;
+    common = scalloc(n_ref, sizeof(char *));
 
     for (i = 0; i < n_ref; i++) {
         if (gexeval_find_name(names_other, n_other, names_ref[i]) >= 0) {
@@ -454,9 +441,6 @@ static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) 
     gram_copy = mat_new(r_fit, r_fit);
     evals = vec_new(r_fit);
     evecs = mat_new(r_fit, r_fit);
-    if (cross == NULL || gram == NULL || gram_copy == NULL ||
-        evals == NULL || evecs == NULL)
-        goto cleanup;
 
     /* cross[i,j] = dot product between basis vectors of the two subspaces */
     for (i = 0; i < r_true; i++) {
@@ -526,7 +510,7 @@ static double *gexeval_factor_contributions(Matrix *L,
     if (L == NULL || sigma2_latent == NULL || L->nrows != k)
         return NULL;
 
-    vals = (double *)calloc(k, sizeof(double));
+    vals = scalloc(k, sizeof(double));
     if (vals == NULL)
         return NULL;
 
@@ -552,9 +536,7 @@ static void gexeval_sort_desc(double *vals, int n) {
 
     if (vals == NULL || n <= 0)
         return;
-    tmp = (DescValue *)calloc(n, sizeof(DescValue));
-    if (tmp == NULL)
-        return;
+    tmp = scalloc(n, sizeof(DescValue));
     for (i = 0; i < n; i++)
         tmp[i].value = vals[i];
     qsort(tmp, n, sizeof(DescValue), cmp_desc_value);
@@ -574,9 +556,7 @@ static double *gexeval_normalize_nonnegative_vector(const double *x, int n) {
     if (x == NULL || n <= 0)
         return NULL;
 
-    p = (double *)calloc(n, sizeof(double));
-    if (p == NULL)
-        return NULL;
+    p = scalloc(n, sizeof(double));
 
     for (i = 0; i < n; i++) {
         double v = x[i];
@@ -722,10 +702,8 @@ static double gexeval_greedy_factor_match_score(Matrix *Z_true, Matrix *Z_fit) {
     if (n_match <= 0)
         return -1.0;
 
-    used_true = (int *)calloc(Z_true->ncols, sizeof(int));
-    used_fit = (int *)calloc(Z_fit->ncols, sizeof(int));
-    if (used_true == NULL || used_fit == NULL)
-        goto cleanup;
+    used_true = scalloc(Z_true->ncols, sizeof(int));
+    used_fit = scalloc(Z_fit->ncols, sizeof(int));
 
     score = 0.0;
     for (i = 0; i < n_match; i++) {
@@ -803,10 +781,8 @@ static double gexeval_normalized_contribution_l1(const double *sim_contrib,
     if (n_compare <= 0)
         return -1.0;
 
-    sim_sorted = (double *)calloc(n_true, sizeof(double));
-    fit_sorted = (double *)calloc(n_fit, sizeof(double));
-    if (sim_sorted == NULL || fit_sorted == NULL)
-        goto cleanup;
+    sim_sorted = scalloc(n_true, sizeof(double));
+    fit_sorted = scalloc(n_fit, sizeof(double));
 
     for (i = 0; i < n_true; i++)
         sim_sorted[i] = sim_contrib[i];
@@ -846,11 +822,7 @@ static GexEvalSummary *gexeval_read_summary(const char *filename) {
     if (in == NULL)
         return NULL;
 
-    summary = (GexEvalSummary *)calloc(1, sizeof(GexEvalSummary));
-    if (summary == NULL) {
-        fclose(in);
-        return NULL;
-    }
+    summary = scalloc(1, sizeof(GexEvalSummary));
 
     while (fgets(line, sizeof(line), in) != NULL) {
         char *tab = strchr(line, '\t');
@@ -871,14 +843,8 @@ static GexEvalSummary *gexeval_read_summary(const char *filename) {
             int old_k = summary->k;
             summary->k = atoi(value);
             if (summary->k > 0 && summary->k != old_k) {
-                double *tmp = (double *)realloc(summary->sigma2_latent,
+                double *tmp = srealloc(summary->sigma2_latent,
                                                 (size_t)summary->k * sizeof(double));
-                if (tmp == NULL) {
-                    fclose(in);
-                    free(summary->sigma2_latent);
-                    free(summary);
-                    return NULL;
-                }
                 summary->sigma2_latent = tmp;
                 memset(summary->sigma2_latent, 0, (size_t)summary->k * sizeof(double));
             }

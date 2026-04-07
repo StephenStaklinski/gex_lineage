@@ -5,6 +5,8 @@
 #include "brownian.h"
 #include "gex.h"
 
+#include <phast/misc.h>
+
 /* Parse a comma-separated list of double values into an array 
 and count the number of values */
 static int parse_double_list(const char *spec,
@@ -31,11 +33,7 @@ static int parse_double_list(const char *spec,
             free(copy);
             return -1;
         }
-        tmp = (double *)realloc(*values_io, (size_t)(*n_values_io + 1) * sizeof(double));
-        if (tmp == NULL) {
-            free(copy);
-            return -1;
-        }
+        tmp = srealloc(*values_io, (size_t)(*n_values_io + 1) * sizeof(double));
         *values_io = tmp;
         (*values_io)[*n_values_io] = val;
         (*n_values_io)++;
@@ -184,11 +182,7 @@ int main(int argc, char *argv[]) {
     n_cells = lst_size(leaf_list);
 
     /* Convert leaf list to cell names array*/
-    cell_names = (char **)calloc(n_cells, sizeof(char *));
-    if (cell_names == NULL) {
-        fprintf(stderr, "ERROR: failed to allocate cell names.\n");
-        goto cleanup;
-    }
+    cell_names = scalloc(n_cells, sizeof(char *));
     for (i = 0; i < n_cells; i++) {
         String *s = lst_get_ptr(leaf_list, i);
         if (s == NULL) {
@@ -215,9 +209,7 @@ int main(int argc, char *argv[]) {
     }
     selected_n_trees = (use_n_trees == 0 ? n_trees : use_n_trees);
     /* Allocate and initialize the latent variance parameters */
-    sigma2_latent = (double *)calloc((size_t)k, sizeof(double));
-    if (sigma2_latent == NULL)
-        goto cleanup;
+    sigma2_latent = scalloc((size_t)k, sizeof(double));
     if (n_sigma_latent_raw == 1) {
         /* Use one variance value for all latent dimensions. */
         for (i = 0; i < k; i++)
@@ -233,11 +225,7 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    Sigmas = (Matrix **)calloc(n_trees, sizeof(Matrix *));
-    if (Sigmas == NULL) {
-        fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix list.\n");
-        goto cleanup;
-    }
+    Sigmas = scalloc(n_trees, sizeof(Matrix *));
     for (i = 0; i < n_trees; i++) {
         Sigmas[i] = covariance_from_tree(trees[i], cell_names, n_cells);
         if (Sigmas[i] == NULL) {

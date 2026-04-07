@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <phast/misc.h>
 
 /* Find the most recent common ancestor (MRCA) of two nodes in a tree.
 Returns a pointer to the MRCA node or NULL if no common ancestor is found. */
@@ -47,25 +48,6 @@ static int fill_node_depths(TreeNode *node, double *depth_by_id, int nnodes, dou
                                   nnodes,
                                   depth + (node->rchild ? node->rchild->dparent : 0.0)) != 0)
         return -1;
-
-    return 0;
-}
-
-static int brownian_copy_cell_names(GexMatrix *gex, char **names, int n) {
-    int i;
-
-    if (gex == NULL || names == NULL || n <= 0)
-        return -1;
-
-    gex->cell_names = (char **)calloc(n, sizeof(char *));
-    if (gex->cell_names == NULL)
-        return -1;
-
-    for (i = 0; i < n; i++) {
-        gex->cell_names[i] = strdup(names[i]);
-        if (gex->cell_names[i] == NULL)
-            return -1;
-    }
 
     return 0;
 }
@@ -132,19 +114,10 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     }
 
     Sigma = mat_new(n, n);  /* Allocate the covariance matrix based on the input n tips */
-    if (Sigma == NULL) {
-        fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix\n");
-        return NULL;
-    }
     mat_zero(Sigma);
 
     /* Allocate an array to hold pointers to the tree tips in the order of the input names */
-    tips = (TreeNode **)calloc(n, sizeof(TreeNode *));
-    if (tips == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating Brownian tip map\n");
-        mat_free(Sigma);
-        return NULL;
-    }
+    tips = scalloc(n, sizeof(TreeNode *));
 
     /* Fill the tip mapping from the input names to tips in the tree */
     fill_tip_map(tree, names, n, tips);
@@ -177,13 +150,7 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     }
 
     /* Allocate an array to hold the depths from the origin to each node in the tree */
-    depth_by_id = (double *)malloc(tree->nnodes * sizeof(double));
-    if (depth_by_id == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating Brownian node depths\n");
-        free(tips);
-        mat_free(Sigma);
-        return NULL;
-    }
+    depth_by_id = smalloc(tree->nnodes * sizeof(double));
 
     /* Fill the node depth array with the depth from the origin to each node in the tree. 
     This allows for fast lookup of MRCA depths when building the covariance matrix. */
@@ -296,10 +263,6 @@ Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
     /* Allocate the weight matrix with the same dimensions as the covariance matrix*/
     n = Sigma->nrows;  
     W = mat_new(n, n);
-    if (W == NULL) {
-        fprintf(stderr, "ERROR: failed to allocate weight matrix\n");
-        return NULL;
-    }
 
     /* Calculate the maximum pairwise distance from the covariance matrix to use for setting eps
     and simultaneously fill the weight matrix with initial pairwise distance values */
@@ -404,17 +367,9 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
         }
     }
 
-    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    gex = scalloc(1, sizeof(GexMatrix));
     Sigma_reg = mat_create_copy(Sigma);
     chol = mat_new(n, n);
-    if (gex == NULL || Sigma_reg == NULL || chol == NULL) {
-        gex_free_matrix_data(gex);
-        if (Sigma_reg != NULL)
-            mat_free(Sigma_reg);
-        if (chol != NULL)
-            mat_free(chol);
-        return NULL;
-    }
 
     for (i = 0; i < n; i++) {
         double diag = mat_get(Sigma, i, i);
@@ -435,23 +390,10 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     gex->n_cells = n;
     gex->n_genes = ngenes;
     gex->X = mat_new(n, ngenes);
-    gex->gene_names = (char **)calloc(ngenes, sizeof(char *));
-    if (gex->X == NULL || gex->gene_names == NULL ||
-        brownian_copy_cell_names(gex, names, n) != 0) {
-        gex_free_matrix_data(gex);
-        mat_free(Sigma_reg);
-        mat_free(chol);
-        return NULL;
-    }
+    gex->gene_names = scalloc(ngenes, sizeof(char *));
     generate_gene_names(gex->gene_names, ngenes);
 
-    std_normals = (double *)calloc(n, sizeof(double));
-    if (std_normals == NULL) {
-        gex_free_matrix_data(gex);
-        mat_free(Sigma_reg);
-        mat_free(chol);
-        return NULL;
-    }
+    std_normals = scalloc(n, sizeof(double));
 
     for (j = 0; j < ngenes; j++) {
         double sigma2_j = (n_sigma2 == 1 ? sigma2[0] : sigma2[j]);
@@ -486,20 +428,11 @@ GexMatrix *simulate_standard_normal_expression(char **names,
         return NULL;
     }
 
-    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    if (gex == NULL)
-        return NULL;
-
+    gex = scalloc(1, sizeof(GexMatrix));
     gex->n_cells = n;
     gex->n_genes = n_genes;
     gex->X = mat_new(n, n_genes);
-    gex->gene_names = (char **)calloc(n_genes, sizeof(char *));
-    if (gex->X == NULL || gex->gene_names == NULL ||
-        brownian_copy_cell_names(gex, names, n) != 0) {
-        gex_free_matrix_data(gex);
-        return NULL;
-    }
-
+    gex->gene_names = scalloc(n_genes, sizeof(char *));
     generate_gene_names(gex->gene_names, n_genes);
 
     /* Draw expression values from standard normal distribution */
@@ -523,19 +456,11 @@ GexMatrix *combine_expression_matrices(GexMatrix *pos_gex,
         pos_gex->n_genes <= 0 || neg_gex->n_genes <= 0)
         return NULL;
 
-    combined = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    if (combined == NULL)
-        return NULL;
-
+    combined = scalloc(1, sizeof(GexMatrix));
     combined->n_cells = pos_gex->n_cells;   /* Assume same number of cells */
     combined->n_genes = pos_gex->n_genes + neg_gex->n_genes;    /* Sum of genes from each matrix */
     combined->X = mat_new(combined->n_cells, combined->n_genes);
-    combined->gene_names = (char **)calloc(combined->n_genes, sizeof(char *));
-    if (combined->X == NULL || combined->gene_names == NULL ||
-        brownian_copy_cell_names(combined, pos_gex->cell_names, combined->n_cells) != 0) {
-        gex_free_matrix_data(combined);
-        return NULL;
-    }
+    combined->gene_names = scalloc(combined->n_genes, sizeof(char *));
 
     for (j = 0; j < pos_gex->n_genes; j++) {
         combined->gene_names[j] = strdup(pos_gex->gene_names[j]);

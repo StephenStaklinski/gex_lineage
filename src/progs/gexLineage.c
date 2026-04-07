@@ -7,6 +7,8 @@
 #include "pca.h"
 #include "brownian.h"
 
+#include <phast/misc.h>
+
 /* Select a subset of covariance matrices (trees) for latent model fitting
 by sampling without replacement. */
 static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
@@ -24,9 +26,7 @@ static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
     if (n_keep <= 0 || n_keep >= n_sigmas)
         n_keep = n_sigmas;
 
-    selected = (Matrix **)calloc(n_keep, sizeof(Matrix *));
-    if (selected == NULL)
-        return NULL;
+    selected = scalloc(n_keep, sizeof(Matrix *));
 
     if (n_keep == n_sigmas) {
         for (i = 0; i < n_sigmas; i++)
@@ -34,11 +34,7 @@ static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
         return selected;
     }
 
-    indices = (int *)malloc(n_sigmas * sizeof(int));
-    if (indices == NULL) {
-        free(selected);
-        return NULL;
-    }
+    indices = smalloc(n_sigmas * sizeof(int));
 
     for (i = 0; i < n_sigmas; i++)
         indices[i] = i;
@@ -349,11 +345,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Calculate the phylogenetic covariance matrix for each input tree. */
-    Sigmas = (Matrix **)calloc(n_trees, sizeof(Matrix *));
-    if (Sigmas == NULL) {
-        fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix list.\n");
-        goto cleanup;
-    }
+    Sigmas = scalloc(n_trees, sizeof(Matrix *));
     for (i = 0; i < n_trees; i++) {
         Sigmas[i] = covariance_from_tree(trees[i], gex->cell_names, gex->n_cells);
         if (Sigmas[i] == NULL) {
@@ -374,11 +366,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: failed to compute average covariance for filtering.\n");
             goto cleanup;
         }
-        filter_Sigmas = (Matrix **)calloc(1, sizeof(Matrix *));
-        if (filter_Sigmas == NULL) {
-            fprintf(stderr, "ERROR: failed to allocate average covariance wrapper.\n");
-            goto cleanup;
-        }
+        filter_Sigmas = scalloc(1, sizeof(Matrix *));
         filter_Sigmas[0] = filter_avg_Sigma;
     }
     else {

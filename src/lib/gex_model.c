@@ -440,11 +440,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Build regularized versions of the phylogenetic covariance matrices and
     precompute the inverse and log-determinant for each tree. */
     n = gex->n_cells;
-    ws.tree_priors = (GexLatentBrownianTreePrior *)calloc(n_sigmas, sizeof(GexLatentBrownianTreePrior));
-    ws.prior_log_terms = (double *)calloc(n_sigmas, sizeof(double));
-    ws.prior_weights = (double *)calloc(n_sigmas, sizeof(double));
-    if (ws.tree_priors == NULL || ws.prior_log_terms == NULL || ws.prior_weights == NULL)
-        goto cleanup_fit_latent_brownian_model;
+    ws.tree_priors = scalloc(n_sigmas, sizeof(GexLatentBrownianTreePrior));
+    ws.prior_log_terms = scalloc(n_sigmas, sizeof(double));
+    ws.prior_weights = scalloc(n_sigmas, sizeof(double));
     ws.n_tree_priors = n_sigmas;
 
     for (i = 0; i < n_sigmas; i++) {
@@ -498,21 +496,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     k = pca->K; 
 
     /* Allocate the model object and its core parameter matrices. */
-    model = (GexLatentBrownianModel *)calloc(1, sizeof(GexLatentBrownianModel));
-    if (model == NULL) {
-        printf("ERROR: failed to allocate memory for the model object.\n");
-        goto cleanup_fit_latent_brownian_model;
-    }
+    model = scalloc(1, sizeof(GexLatentBrownianModel));
     model->n_cells = n_cells;
     model->n_genes = n_genes;
     model->k = k;
     model->Z = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
-    model->sigma2_latent = (double *)calloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    if (model->L == NULL || model->Z == NULL || model->sigma2_latent == NULL) {
-        printf("ERROR: failed to allocate memory for the model parameter matrices.\n");
-        goto cleanup_fit_latent_brownian_model;
-    }
+    model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
     for (i = 0; i < k; i++)
         model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
     model->sigma2_obs = 1.0;    /* Initialize the observation variance parameter to 1.0 */
@@ -555,27 +545,20 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     Use a log-variance parameterization during optimization for the variance parameters 
     to enforce positivity and for numerical stability. */
     log_sigma_obs = log(model->sigma2_obs); /* Log of observation variance, since we optimize in log-space */
-    log_sigma_latent = (double *)calloc(k, sizeof(double)); /* Log of latent variances, since we optimize in log-space */
-    grad_log_sigma_latent = (double *)calloc(k, sizeof(double));    /* Gradient of log latent variances */
-    m_log_sigma_latent = (double *)calloc(k, sizeof(double));   /* First moment of log latent variances */
-    v_log_sigma_latent = (double *)calloc(k, sizeof(double));   /* Second moment of log latent variances */
+    log_sigma_latent = scalloc(k, sizeof(double)); /* Log of latent variances, since we optimize in log-space */
+    grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
+    m_log_sigma_latent = scalloc(k, sizeof(double));   /* First moment of log latent variances */
+    v_log_sigma_latent = scalloc(k, sizeof(double));   /* Second moment of log latent variances */
     grad_Z = mat_new(model->n_cells, k);    /* Gradient of latent coordinates */
     grad_L = mat_new(k, model->n_genes);    /* Gradient of factor loadings */
     mZ = mat_new(model->n_cells, k);    /* First moment of latent coordinates */
     vZ = mat_new(model->n_cells, k);    /* Second moment of latent coordinates */
     mL = mat_new(k, model->n_genes);    /* First moment of factor loadings */
     vL = mat_new(k, model->n_genes);    /* Second moment of factor loadings */
-    if (log_sigma_latent == NULL || grad_log_sigma_latent == NULL ||
-        m_log_sigma_latent == NULL || v_log_sigma_latent == NULL ||
-        grad_Z == NULL || grad_L == NULL || mZ == NULL || vZ == NULL ||
-        mL == NULL || vL == NULL)
-        goto cleanup_fit_latent_brownian_model;
 
     /* Initialize history arrays for running averages of the objective function */
-    objective_hist_long = (double *)calloc(running_avg_window_long, sizeof(double));
-    objective_hist_short = (double *)calloc(running_avg_window_short, sizeof(double));
-    if (objective_hist_long == NULL || objective_hist_short == NULL)
-        goto cleanup_fit_latent_brownian_model;
+    objective_hist_long = scalloc(running_avg_window_long, sizeof(double));
+    objective_hist_short = scalloc(running_avg_window_short, sizeof(double));
 
     /* Initialize the log-variance parameters from the initial variance values. */
     for (step = 0; step < k; step++)
