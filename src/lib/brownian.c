@@ -596,11 +596,7 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
 
     /* Set sigma2 value based on tree height */
     int n_sigma2 = 1;
-    double *sigma2 = (double *)calloc(n_sigma2, sizeof(double));
-    if (sigma2 == NULL) {
-        fprintf(stderr, "ERROR: out of memory allocating sigma2 array\n");
-        return NULL;
-    }
+    double sigma2[n_sigma2];
     double desired_tip_variance = 1.0;
     sigma2[0] = desired_tip_variance / mat_get(Sigma, 0, 0);  /* Set sigma2 relative to an assumed ultrametric tree height T to achieve a desired tip variance */
 
@@ -619,8 +615,6 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
     combined = combine_expression_matrices(pos_gex, neg_gex);
 
 cleanup:
-    if (sigma2 != NULL)
-        free(sigma2);
     gex_free_matrix_data(pos_gex);
     gex_free_matrix_data(neg_gex);
     return combined;

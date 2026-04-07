@@ -6,7 +6,9 @@
 #include "gex.h"
 #include "gex_sim.h"
 
-static int parse_sigma_latent_values(const char *spec,
+/* Parse a comma-separated list of sigma2-latent values into an array 
+and count the number of values */
+static int parse_sigma2_latent_values(const char *spec,
                                      double **values_io,
                                      int *n_values_io) {
     char *copy = NULL;
@@ -41,7 +43,7 @@ static int parse_sigma_latent_values(const char *spec,
     }
 
     free(copy);
-    return (n > 0 ? 0 : -1);
+    return (n > 0 ? 0 : 1);
 }
 
 
@@ -53,9 +55,9 @@ static void usage(const char *progname) {
             "--k <int> "
             "--n-genes <int> "
             "[--use-n-trees <int>] "
-            "[--sigma-obs <float>] "
-            "[--sigma-latent <comma-list>] "
-            "[--sigma-latent <float> ...] "
+            "[--sigma2-obs <float>] "
+            "[--sigma2-latent <comma-list>] "
+            "[--sigma2-latent <float> ...] "
             "[--seed <int>]\n",
             progname);
 }
@@ -120,7 +122,7 @@ int main(int argc, char *argv[]) {
             }
             n_genes = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "--sigma-obs") == 0) {
+        else if (strcmp(argv[i], "--sigma2-obs") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
                 goto cleanup;
@@ -134,13 +136,13 @@ int main(int argc, char *argv[]) {
             }
             use_n_trees = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "--sigma-latent") == 0) {
+        else if (strcmp(argv[i], "--sigma2-latent") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
                 goto cleanup;
             }
-            if (parse_sigma_latent_values(argv[++i], &sigma2_latent_raw, &n_sigma_latent_raw) != 0) {
-                fprintf(stderr, "ERROR: failed to parse --sigma-latent values.\n");
+            if (parse_sigma2_latent_values(argv[++i], &sigma2_latent_raw, &n_sigma_latent_raw) != 0) {
+                fprintf(stderr, "ERROR: failed to parse --sigma2-latent values.\n");
                 goto cleanup;
             }
         }
@@ -189,23 +191,20 @@ int main(int argc, char *argv[]) {
     }
     selected_n_trees = (use_n_trees == 0 ? n_trees : use_n_trees);
     /* Allocate and initialize the latent variance parameters */
-    sigma2_latent = (double *)calloc(k, sizeof(double));
+    sigma2_latent = (double *)calloc(n_sigma_latent_raw, sizeof(double));
     if (sigma2_latent == NULL)
         goto cleanup;
-    if (n_sigma_latent_raw == 0) {
-        for (i = 0; i < k; i++)
-            sigma2_latent[i] = 1.0;
-    }
-    else if (n_sigma_latent_raw == 1) {
-        for (i = 0; i < k; i++)
-            sigma2_latent[i] = sigma2_latent_raw[0];
+    if (n_sigma_latent_raw == 1) {
+        /* Only copy one variance for all latent dimensions*/
+        sigma2_latent[0] = sigma2_latent_raw[0];
     }
     else if (n_sigma_latent_raw == k) {
+        /* Copy each provided variance for each latent dimension */
         for (i = 0; i < k; i++)
             sigma2_latent[i] = sigma2_latent_raw[i];
     }
     else {
-        fprintf(stderr, "ERROR: --sigma-latent must provide either 1 value or exactly k=%d values.\n", k);
+        fprintf(stderr, "ERROR: --sigma2-latent must provide either 1 value or exactly k=%d values.\n", k);
         goto cleanup;
     }
 
@@ -237,28 +236,15 @@ int main(int argc, char *argv[]) {
     }
 
     for (i = 0; i < n_sim_sigmas; i++) {
-
-        /* Dummy for now */
-        int n_sigma2 = 1;
-        double *sigma2 = (double *)calloc(n_sigma2, sizeof(double));
-        if (sigma2 == NULL) {
-            fprintf(stderr, "ERROR: out of memory allocating sigma2 array\n");
-            return NULL;
-        }
-        sigma2[0] = 1.0;
-
-        /* Simulate the latent factors matrix Z from Brownian motion */
+        /* Simulate the latent factors matrix Z from Brownian motion given
+        the input latent factors sigma2 values */
         per_sim_Z = brownian_simulate_expression_from_covariance(sim_Sigmas[i],
                                                         cell_names,
                                                         n_cells,
                                                         n_genes,
-                                                        sigma2,
-                                                        n_sigma2,
+                                                        sigma2_latent,
+                                                        n_sigma_latent_raw,
                                                         seed + (unsigned int)(104729u * i));
-        
-        /* Dummy */
-        free(sigma2);
-        sigma2 = NULL;
 
         if (per_sim_Z == NULL) {
             fprintf(stderr, "ERROR: failed to simulate latent factors from Brownian covariance for tree %d.\n", i + 1);
@@ -280,7 +266,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Scale the latent factors matrix Z to get the expectation */
+    /* Scale the latent factors matrix Z to complete the expectation over the simulated matrices */
     if (sim_Z == NULL || scale_matrix_in_place(sim_Z, 1.0 / (double)n_sim_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to finalize simulated latent factor matrix Z.\n");
         goto cleanup;
