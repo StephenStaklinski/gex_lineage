@@ -6,9 +6,9 @@
 #include "gex.h"
 #include "gex_sim.h"
 
-/* Parse a comma-separated list of sigma2-latent values into an array 
+/* Parse a comma-separated list of double values into an array 
 and count the number of values */
-static int parse_sigma2_latent_values(const char *spec,
+static int parse_double_list(const char *spec,
                                      double **values_io,
                                      int *n_values_io) {
     char *copy = NULL;
@@ -23,6 +23,7 @@ static int parse_sigma2_latent_values(const char *spec,
     if (copy == NULL)
         return -1;
 
+    /* Split on commas and parse each value */
     for (tok = strtok_r(copy, ",", &saveptr); tok != NULL; tok = strtok_r(NULL, ",", &saveptr)) {
         double *tmp = NULL;
         char *endptr = NULL;
@@ -43,7 +44,7 @@ static int parse_sigma2_latent_values(const char *spec,
     }
 
     free(copy);
-    return (n > 0 ? 0 : 1);
+    return (n > 0 ? 0 : 1); /* Return 0 if successful, 1 if no values parsed */
 }
 
 
@@ -54,9 +55,9 @@ static void usage(const char *progname) {
             "--outprefix <prefix> "
             "--k <int> "
             "--n-genes <int> "
+            "--sigma2-obs <float> "
+            "--sigma2-latent <comma-list-floats> "
             "[--use-n-trees <int>] "
-            "[--sigma2-obs <float>] "
-            "[--sigma2-latent <comma-list-floats>] "
             "[--seed <int>]\n",
             progname);
 }
@@ -83,11 +84,11 @@ int main(int argc, char *argv[]) {
     int n_genes = 0;
     int use_n_trees = -1; /* Match gexLineage: -1 average covariance, 0 all trees, >0 first N trees */
     int selected_n_trees = 0;
-    int n_sigma_latent_raw = 0;
+    int n_sigma_latent_raw = -1;
     int n_sim_sigmas = 0;
     int i;
     int status = 1;
-    double sigma2_obs = 0.05;
+    double sigma2_obs = -1.0;
     unsigned int seed = 1u;
     const double ultrametric_tol = 1e-3;
 
@@ -139,7 +140,7 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
                 goto cleanup;
             }
-            if (parse_sigma2_latent_values(argv[++i], &sigma2_latent_raw, &n_sigma_latent_raw) != 0) {
+            if (parse_double_list(argv[++i], &sigma2_latent_raw, &n_sigma_latent_raw) != 0) {
                 fprintf(stderr, "ERROR: failed to parse --sigma2-latent values.\n");
                 goto cleanup;
             }
@@ -157,7 +158,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (trees_file == NULL || outprefix == NULL || k <= 0 || n_genes <= 0 || sigma2_obs < 0.0 || n_sigma_latent_raw <= 0) {
+    if (trees_file == NULL || outprefix == NULL || k <= 0 || 
+        n_genes <= 0 || sigma2_obs < 0.0 || n_sigma_latent_raw <= 0) {
         usage(argv[0]);
         goto cleanup;
     }
