@@ -400,8 +400,7 @@ int main(int argc, char *argv[]) {
             printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
                    n_filter_trees);
         }
-        if (!brownian_run_simulation_check((n_filter_trees == -1 ? NULL : trees),
-                                           gex->cell_names,
+        if (!brownian_run_simulation_check(gex->cell_names,
                                            gex->n_cells,
                                            n_sims,
                                            n_sims,

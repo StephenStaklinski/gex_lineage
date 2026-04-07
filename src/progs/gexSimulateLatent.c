@@ -79,11 +79,14 @@ int main(int argc, char *argv[]) {
     TreeNode **trees = NULL;
     char **cell_names = NULL;
     char *expr_path = NULL;
+    Matrix **Sigmas = NULL;
     Matrix *Sigma = NULL;
-    GexSimulationTruth *tree_truth = NULL;
-    GexMatrix *tree_gex = NULL;
+    Matrix *avg_Sigmas[1] = {NULL};
+    Matrix **sim_Sigmas = NULL;
     GexSimulationTruth *truth = NULL;
     GexMatrix *gex = NULL;
+    GexSimulationTruth *tree_truth = NULL;
+    GexMatrix *tree_gex = NULL;
     double *sigma2_latent_raw = NULL;
     double *sigma2_latent = NULL;
     int n_trees = 0;
@@ -91,7 +94,9 @@ int main(int argc, char *argv[]) {
     int k = 0;
     int n_genes = 0;
     int use_n_trees = -1; /* Match gexLineage: -1 average covariance, 0 all trees, >0 first N trees */
+    int selected_n_trees = 0;
     int n_sigma_latent_raw = 0;
+    int n_sim_sigmas = 0;
     int i;
     int status = 1;
     double sigma2_obs = 0.05;
@@ -194,9 +199,7 @@ int main(int argc, char *argv[]) {
                 use_n_trees, n_trees);
         goto cleanup;
     }
-    if (use_n_trees == 0)
-        use_n_trees = n_trees;
-
+    selected_n_trees = (use_n_trees == 0 ? n_trees : use_n_trees);
     /* Allocate and initialize the latent variance parameters */
     sigma2_latent = (double *)calloc(k, sizeof(double));
     if (sigma2_latent == NULL)
@@ -218,68 +221,64 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
+    Sigmas = (Matrix **)calloc(n_trees, sizeof(Matrix *));
+    if (Sigmas == NULL) {
+        fprintf(stderr, "ERROR: failed to allocate Brownian covariance matrix list.\n");
+        goto cleanup;
+    }
+    for (i = 0; i < n_trees; i++) {
+        Sigmas[i] = covariance_from_tree(trees[i], cell_names, n_cells);
+        if (Sigmas[i] == NULL) {
+            fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
+            goto cleanup;
+        }
+    }
+
     if (use_n_trees == -1) {
-        /* Preserve the existing default behavior: simulate once from the
-        average covariance across all trees. */
         Sigma = gex_average_tree_covariance(trees, n_trees, cell_names, n_cells);
         if (Sigma == NULL) {
             fprintf(stderr, "ERROR: failed to compute the average Brownian covariance matrix.\n");
             goto cleanup;
         }
+        avg_Sigmas[0] = Sigma;
+        sim_Sigmas = avg_Sigmas;
+        n_sim_sigmas = 1;
+    } else {
+        sim_Sigmas = Sigmas;
+        n_sim_sigmas = (use_n_trees == 0 ? n_trees : use_n_trees);
+    }
 
-        truth = gex_simulate_latent_brownian_expression(Sigma, cell_names, n_cells, k, n_genes,
-                                                        sigma2_latent, sigma2_obs, seed, &gex);
-        if (truth == NULL || gex == NULL) {
-            fprintf(stderr, "ERROR: failed to simulate latent Brownian expression from the average covariance.\n");
+    for (i = 0; i < n_sim_sigmas; i++) {
+        tree_truth = gex_simulate_latent_brownian_expression(sim_Sigmas[i], cell_names, n_cells, k, n_genes,
+                                                             sigma2_latent, sigma2_obs,
+                                                             seed + (unsigned int)(104729u * i), &tree_gex);
+        if (tree_truth == NULL || tree_gex == NULL) {
+            fprintf(stderr, "ERROR: failed to simulate latent Brownian expression for covariance %d.\n", i + 1);
             goto cleanup;
+        }
+
+        if (truth == NULL) {
+            truth = tree_truth;
+            gex = tree_gex;
+            tree_truth = NULL;
+            tree_gex = NULL;
+        } else {
+            if (gexsim_average_simulation_in_place(truth, gex, tree_truth, tree_gex) != 0) {
+                fprintf(stderr, "ERROR: failed to accumulate expectation-over-covariances simulation.\n");
+                goto cleanup;
+            }
+            gex_free_simulation_truth(tree_truth);
+            gex_free_matrix_data(tree_gex);
+            tree_truth = NULL;
+            tree_gex = NULL;
         }
     }
-    else {
-        int n_sim_trees = use_n_trees;
 
-        /* In the expectation-over-trees mode, reuse the same seed for each
-        tree so the latent loadings and observation noise are aligned, and only
-        the tree-dependent covariance draw changes before averaging. */
-        for (i = 0; i < n_sim_trees; i++) {
-            Sigma = covariance_from_tree(trees[i], cell_names, n_cells);
-            if (Sigma == NULL) {
-                fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
-                goto cleanup;
-            }
-
-            tree_truth = gex_simulate_latent_brownian_expression(Sigma, cell_names, n_cells, k, n_genes,
-                                                                 sigma2_latent, sigma2_obs, seed, &tree_gex);
-            mat_free(Sigma);
-            Sigma = NULL;
-            if (tree_truth == NULL || tree_gex == NULL) {
-                fprintf(stderr, "ERROR: failed to simulate latent Brownian expression for tree %d.\n", i + 1);
-                goto cleanup;
-            }
-
-            if (truth == NULL) {
-                truth = tree_truth;
-                gex = tree_gex;
-                tree_truth = NULL;
-                tree_gex = NULL;
-            }
-            else {
-                if (gexsim_average_simulation_in_place(truth, gex, tree_truth, tree_gex) != 0) {
-                    fprintf(stderr, "ERROR: failed to accumulate expectation-over-trees simulation.\n");
-                    goto cleanup;
-                }
-                gex_free_simulation_truth(tree_truth);
-                gex_free_matrix_data(tree_gex);
-                tree_truth = NULL;
-                tree_gex = NULL;
-            }
-        }
-
-        if (truth == NULL || gex == NULL ||
-            scale_matrix_in_place(truth->Z, 1.0 / (double)n_sim_trees) != 0 ||
-            scale_matrix_in_place(gex->X, 1.0 / (double)n_sim_trees) != 0) {
-            fprintf(stderr, "ERROR: failed to finalize expectation-over-trees simulation.\n");
-            goto cleanup;
-        }
+    if (truth == NULL || gex == NULL ||
+        scale_matrix_in_place(truth->Z, 1.0 / (double)n_sim_sigmas) != 0 ||
+        scale_matrix_in_place(gex->X, 1.0 / (double)n_sim_sigmas) != 0) {
+        fprintf(stderr, "ERROR: failed to finalize latent Brownian simulation.\n");
+        goto cleanup;
     }
 
     expr_path = (char *)malloc(strlen(outprefix) + 16u);
@@ -302,10 +301,10 @@ int main(int argc, char *argv[]) {
            n_cells, n_genes, k);
     if (use_n_trees == -1)
         printf("Simulation mode: average covariance across all %d tree(s).\n", n_trees);
-    else if (use_n_trees == n_trees)
+    else if (selected_n_trees == n_trees)
         printf("Simulation mode: expectation over all %d tree(s).\n", n_trees);
     else
-        printf("Simulation mode: expectation over the first %d tree(s).\n", use_n_trees);
+        printf("Simulation mode: expectation over the first %d tree(s).\n", selected_n_trees);
     printf("Wrote expression matrix to %s\n", expr_path);
     printf("Wrote truth files with prefix %s.truth.*\n", outprefix);
     status = 0;
@@ -327,6 +326,11 @@ cleanup:
         gex_free_matrix_data(gex);
     if (Sigma != NULL)
         mat_free(Sigma);
+    if (Sigmas != NULL) {
+        for (i = 0; i < n_trees; i++)
+            mat_free(Sigmas[i]);
+        free(Sigmas);
+    }
     if (cell_names != NULL) {
         for (i = 0; i < n_cells; i++)
             free(cell_names[i]);

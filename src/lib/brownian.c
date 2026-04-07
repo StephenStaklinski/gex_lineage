@@ -96,68 +96,6 @@ static void fill_tip_map(TreeNode *node,
     fill_tip_map(node->rchild, names, n, tips);
 }
 
-/* Compute the maximum height from the origin to any tip in the tree. 
-Does a depth-first search from the origin to find the maximum distance. */
-static double max_origin_to_tip_height(TreeNode *node) {
-    double left_h, right_h;
-    double here = 0.0;
-
-    if (node == NULL)
-        return 0.0;
-
-    /* Use all branch lengths including the branch from the origin to the root where the root node parent would be NULL */
-    here = node->dparent;
-    if (here < 0.0)
-        here = 0.0;
-
-    if (is_leaf(node))
-        return here;
-
-    left_h = max_origin_to_tip_height(node->lchild);
-    right_h = max_origin_to_tip_height(node->rchild);
-    return here + (left_h > right_h ? left_h : right_h);
-}
-
-/* Simulate gene expression values along a phylogenetic tree under a Brownian motion model
-starting from the root that is passed in to define the tree. Sets the values in the 
-output array. */
-static void brownian_simulate_gene_recursive(TreeNode *node,
-                                             double curval,
-                                             double sigma2,
-                                             TreeNode **tips,
-                                             int n,
-                                             double *out,
-                                             unsigned int *state) {
-    if (node == NULL)
-        return;
-
-    /* Get the branch length from parent to this node */
-    double bl = node->dparent;
-    if (bl < 0.0)
-        bl = 0.0;
-    
-    /* Propagate the simulated value down the tree by effectively drawing 
-    a value from from N(curval, sigma2 * bl) */
-    curval += sqrt(sigma2 * bl) * brownian_rand_normal(state);
-
-    /* Once a leaf node is reached, store the simulated value */
-    int i;
-    if (is_leaf(node)) {
-        for (i = 0; i < n; i++) {
-            if (tips[i] == node) {
-                out[i] = curval;
-                return;
-            }
-        }
-        return;
-    }
-
-    /* Recursively simulate gene expression values for the left and right subtrees 
-    when at an internal node. */
-    brownian_simulate_gene_recursive(node->lchild, curval, sigma2, tips, n, out, state);
-    brownian_simulate_gene_recursive(node->rchild, curval, sigma2, tips, n, out, state);
-}
-
 /* Calculate the phylogenetic covariance matrix for an input tree.
 Covariance is the distance from root to MRCA for each pair of tips. 
 Tips are matched to the order of the input names.
@@ -401,131 +339,6 @@ Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
     return W;
 }
 
-/* Simulate gene expression data under a Brownian motion model 
-with variance set relative to the tree height for reasonable signal 
-strength. Both true and null genes are simulated in one matrix. Returns a pointer to the 
-simulated gene expression matrix. */
-GexMatrix *brownian_simulate_expression(TreeNode *tree,
-                                        char **names,
-                                        int n,
-                                        int n_tree_genes,
-                                        int n_null_genes,
-                                        unsigned int seed) {
-    int i, j;   /* Loop counters */
-    int ngenes; /* Total number of genes to simulate */
-    double tree_height; /* Height of the input tree */
-    double sigma2;  /* Brownian motion variance parameter */
-    unsigned int rng_state; /* Random number generator state */
-    TreeNode **tips = NULL; /* Array of tree tips */
-    GexMatrix *gex = NULL;  /* Simulated gene expression matrix */
-
-    if (tree == NULL || names == NULL || n <= 0 ||
-        n_tree_genes < 0 || n_null_genes < 0) {
-        fprintf(stderr, "ERROR: brownian_simulate_expression got invalid input\n");
-        return NULL;
-    }
-
-    ngenes = n_tree_genes + n_null_genes;   /* Total number of true + null genes to simulate*/
-    if (ngenes <= 0) {
-        fprintf(stderr, "ERROR: brownian_simulate_expression needs at least one gene\n");
-        return NULL;
-    }
-
-    /* Set sigma2 based on input tree height, as 1/tree_height, to get a reasonable Brownian 
-    diffusion signal strength */
-    tree_height = max_origin_to_tip_height(tree);
-    sigma2 = (tree_height > 0.0 ? 1.0 / tree_height : 1.0);
-
-    /* Allocate the tree tip array and the gene expression matrix for the simulated data */
-    tips = (TreeNode **)calloc(n, sizeof(TreeNode *));
-    gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    if (tips == NULL || gex == NULL) {
-        free(tips);
-        free(gex);
-        return NULL;
-    }
-
-    /* Fill the tip mapping from the input ordered gex matrix cell names to tips in the tree */
-    fill_tip_map(tree, names, n, tips);
-    for (i = 0; i < n; i++) {
-        if (tips[i] == NULL) {
-            fprintf(stderr, "ERROR: could not match simulated tip '%s'\n", names[i]);
-            free(tips);
-            gex_free_matrix_data(gex);
-            return NULL;
-        }
-    }
-
-    /* Setup the simulated gene expression matrix and fill the cell and gene names. */
-    gex->n_cells = n;
-    gex->n_genes = ngenes;
-    gex->X = mat_new(n, ngenes);
-    gex->cell_names = (char **)calloc(n, sizeof(char *));
-    gex->gene_names = (char **)calloc(ngenes, sizeof(char *));
-    if (gex->X == NULL || gex->cell_names == NULL || gex->gene_names == NULL) {
-        free(tips);
-        gex_free_matrix_data(gex);
-        return NULL;
-    }
-    for (i = 0; i < n; i++) {
-        gex->cell_names[i] = strdup(names[i]);
-        if (gex->cell_names[i] == NULL) {
-            free(tips);
-            gex_free_matrix_data(gex);
-            return NULL;
-        }
-    }
-    for (j = 0; j < n_tree_genes; j++) {
-        char gene_name[64];
-        snprintf(gene_name, sizeof(gene_name), "sim_pos_%02d", j + 1);
-        gex->gene_names[j] = strdup(gene_name);
-        if (gex->gene_names[j] == NULL) {
-            free(tips);
-            gex_free_matrix_data(gex);
-            return NULL;
-        }
-    }
-    for (j = 0; j < n_null_genes; j++) {
-        char gene_name[64];
-        snprintf(gene_name, sizeof(gene_name), "sim_neg_%02d", j + 1);
-        gex->gene_names[n_tree_genes + j] = strdup(gene_name);
-        if (gex->gene_names[n_tree_genes + j] == NULL) {
-            free(tips);
-            gex_free_matrix_data(gex);
-            return NULL;
-        }
-    }
-
-    /* Simulate the true genes */
-    rng_state = (seed == 0u ? 1u : seed);
-    for (j = 0; j < n_tree_genes; j++) {
-        double root = brownian_rand_normal(&rng_state); /* Sample the root value from a standard normal distribution */
-        double *vals = (double *)calloc(n, sizeof(double));
-        if (vals == NULL) {
-            free(tips);
-            gex_free_matrix_data(gex);
-            return NULL;
-        }
-
-        /* Simulate the true gene expression values along the tree */
-        brownian_simulate_gene_recursive(tree, root, sigma2, tips, n, vals, &rng_state);
-        for (i = 0; i < n; i++)
-            mat_set(gex->X, i, j, vals[i]);
-        free(vals);
-    }
-
-    /* Simulate the null genes with no phylogenetic signal with a 
-    draw of expression values from a standard normal distribution */
-    for (j = 0; j < n_null_genes; j++) {
-        int col = n_tree_genes + j; /* Null genes are the columns that come after the true genes */
-        for (i = 0; i < n; i++)
-            mat_set(gex->X, i, col, brownian_rand_normal(&rng_state));
-    }
-
-    free(tips);
-    return gex;
-}
-
 /* Simulate expression directly from a covariance matrix.  This is used when
 we want the average covariance across trees to define the simulation instead
 of averaging a separate simulation from each tree. */
@@ -700,8 +513,7 @@ Sets up a simulation with the specified number of tree and null genes, runs the 
 filter(s), and evaluates how many tree genes are correctly identified as true positives and how 
 many null genes are incorrectly identified as false positives. Prints a summary of the results.
 Returns 1 if successful, 0 if failed. */
-int brownian_run_simulation_check(TreeNode **trees,
-                                  char **names,
+int brownian_run_simulation_check(char **names,
                                   int n,
                                   int n_tree_genes,
                                   int n_null_genes,
@@ -717,7 +529,7 @@ int brownian_run_simulation_check(TreeNode **trees,
     int i, j;
     int tp = 0, fn = 0, fp = 0, tn = 0;
     GexMatrix *sim = NULL;  /* Simulated gene expression matrix */
-    GexMatrix *tree_sim = NULL; /* Per-tree simulated matrix */
+    GexMatrix *tree_sim = NULL; /* Per-covariance simulated matrix */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation on simulated data */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation on simulated data */
 
@@ -726,52 +538,34 @@ int brownian_run_simulation_check(TreeNode **trees,
         return 0;
     }
 
-    /* There are two supported simulation modes:
-    1. trees != NULL: simulate on each tree separately and average the results.
-    2. trees == NULL: simulate once from the supplied covariance matrix directly. */
-    if (trees == NULL) {
-        if (n_sigmas != 1) {
-            fprintf(stderr, "ERROR: covariance-only simulation check expects exactly one covariance matrix\n");
+    for (i = 0; i < n_sigmas; i++) {
+        if (Sigmas[i] == NULL) {
+            fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL covariance at index %d\n", i);
             goto cleanup_simulation_check;
         }
-        sim = brownian_simulate_expression_from_covariance(Sigmas[0], names, n,
-                                                           n_tree_genes, n_null_genes,
-                                                           seed);
-        if (sim == NULL)
+
+        tree_sim = brownian_simulate_expression_from_covariance(Sigmas[i], names, n,
+                                                                n_tree_genes, n_null_genes,
+                                                                seed + (unsigned int)(104729u * i));
+        if (tree_sim == NULL)
             goto cleanup_simulation_check;
+
+        if (sim == NULL) {
+            sim = tree_sim;
+            tree_sim = NULL;
+        } else {
+            if (add_matrix_in_place(sim->X, tree_sim->X) != 0) {
+                fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
+                goto cleanup_simulation_check;
+            }
+            gex_free_matrix_data(tree_sim);
+            tree_sim = NULL;
+        }
     }
-    else {
-        /* Run the Brownian simulation on each tree and average the resulting
-        expression matrices to form the expected simulated matrix. */
-        for (i = 0; i < n_sigmas; i++) {
-            if (trees[i] == NULL) {
-                fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL tree at index %d\n", i);
-                goto cleanup_simulation_check;
-            }
 
-            tree_sim = brownian_simulate_expression(trees[i], names, n,
-                                                    n_tree_genes, n_null_genes,
-                                                    seed + (unsigned int)(104729u * i));
-            if (tree_sim == NULL)
-                goto cleanup_simulation_check;
-
-            if (sim == NULL) {
-                sim = tree_sim;
-                tree_sim = NULL;
-            } else {
-                if (add_matrix_in_place(sim->X, tree_sim->X) != 0) {
-                    fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
-                    goto cleanup_simulation_check;
-                }
-                gex_free_matrix_data(tree_sim);
-                tree_sim = NULL;
-            }
-        }
-
-        if (sim == NULL || scale_matrix_in_place(sim->X, 1.0 / (double)n_sigmas) != 0) {
-            fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
-            goto cleanup_simulation_check;
-        }
+    if (sim == NULL || scale_matrix_in_place(sim->X, 1.0 / (double)n_sigmas) != 0) {
+        fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
+        goto cleanup_simulation_check;
     }
 
     /* Run the specified filter(s) on the simulated data. */

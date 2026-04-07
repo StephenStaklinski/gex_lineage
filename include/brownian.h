@@ -26,15 +26,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
                                                         int n_null_genes,
                                                         unsigned int seed);
 
-GexMatrix *brownian_simulate_expression(TreeNode *tree,
-                                        char **names,
-                                        int n,
-                                        int n_tree_genes,
-                                        int n_null_genes,
-                                        unsigned int seed);
-
-int brownian_run_simulation_check(TreeNode **trees,
-                                  char **names,
+int brownian_run_simulation_check(char **names,
                                   int n,
                                   int n_tree_genes,
                                   int n_null_genes,
