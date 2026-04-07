@@ -311,6 +311,8 @@ cleanup:
         gex_free_matrix_data(per_sim_Z);
     if (Z != NULL)
         gex_free_matrix_data(Z);
+    if (L != NULL)
+        gex_free_matrix_data(L);
     if (gex != NULL)
         gex_free_matrix_data(gex);
     if (Sigma != NULL)

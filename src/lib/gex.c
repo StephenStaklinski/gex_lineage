@@ -852,7 +852,10 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         return NULL;
     }
 
-    gex->gene_names = (char **)malloc(n_genes * sizeof(char *));    /* Allocate array for gene names */
+    gex->n_cells = 0;
+    gex->n_genes = n_genes;
+
+    gex->gene_names = (char **)calloc(n_genes, sizeof(char *));    /* Allocate array for gene names */
     if (gex->gene_names == NULL) {
         free(fields);
         free(line_copy);
@@ -866,6 +869,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         if (gex->gene_names[i] == NULL) {
             free(fields);
             free(line_copy);
+            gex_free_matrix_data(gex);
             fclose(f);
             return NULL;
         }
@@ -891,14 +895,16 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
     gex->n_cells = n_cells;
     gex->n_genes = n_genes;
 
-    gex->cell_names = (char **)malloc(n_cells * sizeof(char *));    /* Allocate array for cell names */
+    gex->cell_names = (char **)calloc(n_cells, sizeof(char *));    /* Allocate array for cell names */
     if (gex->cell_names == NULL) {
+        gex_free_matrix_data(gex);
         fclose(f);
         return NULL;
     }
 
     gex->X = mat_new(n_cells, n_genes);    /* Allocate expression matrix */
     if (gex->X == NULL) {
+        gex_free_matrix_data(gex);
         fclose(f);
         return NULL;
     }
@@ -925,6 +931,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
 
         line_copy = strdup(line);   /* Duplicate the line for tokenization since strtok modifies the string */
         if (line_copy == NULL) {
+            gex_free_matrix_data(gex);
             fclose(f);
             return NULL;
         }
@@ -933,6 +940,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         if (nfields != n_genes + 1) {
             fprintf(stderr, "ERROR: row %d has wrong number of columns in %s\n", row + 1, filename);
             free(line_copy);
+            gex_free_matrix_data(gex);
             fclose(f);
             return NULL;
         }
@@ -941,6 +949,7 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         if (gex->cell_names[row] == NULL) {
             free(fields);
             free(line_copy);
+            gex_free_matrix_data(gex);
             fclose(f);
             return NULL;
         }
