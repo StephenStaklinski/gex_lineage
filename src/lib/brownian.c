@@ -601,7 +601,8 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
         fprintf(stderr, "ERROR: out of memory allocating sigma2 array\n");
         return NULL;
     }
-    sigma2[0] = 1.0 / mat_get(Sigma, 0, 0);  /* Set sigma2 to 1/T assuming ultrametric tree height T to get a desired tip variance of ~1.0 */
+    double desired_tip_variance = 1.0;
+    sigma2[0] = desired_tip_variance / mat_get(Sigma, 0, 0);  /* Set sigma2 relative to an assumed ultrametric tree height T to achieve a desired tip variance */
 
     pos_gex = brownian_simulate_expression_from_covariance(Sigma, names, n,
                                                            n_tree_genes, sigma2, 
