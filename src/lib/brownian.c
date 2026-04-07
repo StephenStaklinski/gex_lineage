@@ -608,10 +608,6 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
                                                            n_tree_genes, sigma2, 
                                                            n_sigma2, seed);
 
-    /* Dummy */
-    free(sigma2);
-    sigma2 = NULL;
-
     if (pos_gex == NULL)
         goto cleanup;
 
@@ -623,6 +619,8 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
     combined = combine_expression_matrices(pos_gex, neg_gex);
 
 cleanup:
+    if (sigma2 != NULL)
+        free(sigma2);
     gex_free_matrix_data(pos_gex);
     gex_free_matrix_data(neg_gex);
     return combined;
