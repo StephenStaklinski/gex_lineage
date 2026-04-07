@@ -333,20 +333,22 @@ int gex_write_simulation_truth(const char *outprefix,
     char **factor_names = NULL;
     FILE *summary_out = NULL;
     int j;
-    int status = -1;
+    int status = 1;
 
     if (outprefix == NULL || gex == NULL || cell_names == NULL || gene_names == NULL)
-        return -1;
+        goto cleanup;
 
     factor_names = gexsim_make_factor_names(k);
     if (factor_names == NULL)
-        return -1;
+        goto cleanup;
 
-    snprintf(summary_path, sizeof(summary_path), "%s.truth.summary.tsv", outprefix);
-    snprintf(z_path, sizeof(z_path), "%s.truth.Z.tsv", outprefix);
-    snprintf(l_path, sizeof(l_path), "%s.truth.L.tsv", outprefix);
-    snprintf(expr_path, sizeof(expr_path), "%s.truth.expr.tsv", outprefix);
+    snprintf(summary_path, sizeof(summary_path), "%s.summary.tsv", outprefix);
+    snprintf(z_path, sizeof(z_path), "%s.Z.tsv", outprefix);
+    snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
+    snprintf(expr_path, sizeof(expr_path), "%s.expr.tsv", outprefix);
 
+    /* Write out the summary parameters file to match the format used
+    by model fitting output */
     summary_out = fopen(summary_path, "w");
     if (summary_out == NULL)
         goto cleanup;
@@ -360,6 +362,10 @@ int gex_write_simulation_truth(const char *outprefix,
     fclose(summary_out);
     summary_out = NULL;
 
+    /* Write out the simulated matrices */
+    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->n_cells,
+                                     gene_names, gex->n_genes, "cell") != 0)
+        goto cleanup;
     if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->n_cells,
                                      factor_names, k, "cell") != 0)
         goto cleanup;
@@ -372,6 +378,7 @@ int gex_write_simulation_truth(const char *outprefix,
 cleanup:
     if (summary_out != NULL)
         fclose(summary_out);
-    gexsim_free_string_array(factor_names, k);
+    if (factor_names != NULL)
+        gexsim_free_string_array(factor_names, k);
     return status;
 }

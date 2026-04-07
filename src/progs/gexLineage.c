@@ -555,7 +555,6 @@ int main(int argc, char *argv[]) {
         printf("Wrote resulting model parameters to outprefix %s.\n", outprefix);
     }
 
-    /* End of program */
     printf("Done.\n");
     status = 0; /* Success */
     goto cleanup;

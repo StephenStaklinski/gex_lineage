@@ -56,8 +56,7 @@ static void usage(const char *progname) {
             "--n-genes <int> "
             "[--use-n-trees <int>] "
             "[--sigma2-obs <float>] "
-            "[--sigma2-latent <comma-list>] "
-            "[--sigma2-latent <float> ...] "
+            "[--sigma2-latent <comma-list-floats>] "
             "[--seed <int>]\n",
             progname);
 }
@@ -158,7 +157,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (trees_file == NULL || outprefix == NULL || k <= 0 || n_genes <= 0 || sigma2_obs < 0.0) {
+    if (trees_file == NULL || outprefix == NULL || k <= 0 || n_genes <= 0 || sigma2_obs < 0.0 || n_sigma_latent_raw <= 0) {
         usage(argv[0]);
         goto cleanup;
     }
