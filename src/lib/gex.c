@@ -2036,26 +2036,26 @@ cleanup:
 }
 
 /* Use the provides latent factors . */
-int gex_simulate_from_latent_factors(GexMatrix *Z,
+int gex_simulate_from_latent_factors(Matrix *Z,
                                      char **cell_names,
                                      int n_cells,
                                      int k,
                                      int n_genes,
                                      double sigma2_obs,
                                      unsigned int seed,
-                                     GexMatrix **L_out,
+                                     Matrix **L_out,
                                      GexMatrix **gex_out) {
     int i, j, d;    /* Loop indices */
     int success = 1; /* Whether the simulation succeeded; Failure by default */
     GexMatrix *gex = NULL;  /* Simulation output gene expression object */
-    GexMatrix *L = NULL;    /* Simulation output gene loadings object */
+    Matrix *L = NULL;    /* Simulation output gene loadings object */
     char **gene_names = NULL;   /* Gene names */
     unsigned int rng_state = (seed == 0u ? 1u : seed);  /* Random number generator state */
 
-    if (Z == NULL || Z->X == NULL || L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
+    if (Z == NULL || L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
         k <= 0 || n_genes <= 0 || sigma2_obs < 0.0)
         return 1;
-    if (Z->n_cells != n_cells || Z->n_genes != k)
+    if (Z->nrows != n_cells || Z->ncols != k)
         return 1;
 
     /* Make sure the simulation output is initialized as empty */
@@ -2064,7 +2064,9 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
 
     /* Allocate objects in memory */
     gex = (GexMatrix *)calloc(1, sizeof(GexMatrix));
-    L = (GexMatrix *)calloc(1, sizeof(GexMatrix));
+    L = mat_new(k, n_genes);
+
+    /* Get simulated gene names */
     gene_names = (char **)calloc(n_genes, sizeof(char *));
     if (gene_names == NULL) 
         goto cleanup;
@@ -2073,11 +2075,9 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
     if (L == NULL || gex == NULL || gene_names == NULL)
         goto cleanup;
 
-    L->n_cells = k;
-    L->n_genes = n_genes;
-    L->X = mat_new(k, n_genes);
-    if (L->X == NULL)
-        goto cleanup;
+    /* Setup dimensions of L */
+    L->nrows = k;
+    L->ncols = n_genes;
 
     /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
     sqrt(n_genes / k), ensuring each latent dimension contributes
@@ -2087,13 +2087,13 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
         double target_norm = sqrt((double)n_genes / (double)k);
         for (j = 0; j < n_genes; j++) {
             double val = rand_normal(&rng_state);
-            mat_set(L->X, d, j, val);
+            mat_set(L, d, j, val);
             row_ss += val * val;
         }
         if (row_ss > 0.0) {
             double row_scale = target_norm / sqrt(row_ss);
             for (j = 0; j < n_genes; j++)
-                mat_set(L->X, d, j, row_scale * mat_get(L->X, d, j));
+                mat_set(L, d, j, row_scale * mat_get(L, d, j));
         }
     }
 
@@ -2106,7 +2106,7 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
 
     /* Compute the noiseless expression matrix from the 
     simulated Z and L matrix factorization. */
-    mat_mult(gex->X, Z->X, L->X);
+    mat_mult(gex->X, Z, L);
 
     /* Initialize the cell and gene names */
     gex->cell_names = (char **)calloc(n_cells, sizeof(char *));
@@ -2146,7 +2146,7 @@ int gex_simulate_from_latent_factors(GexMatrix *Z,
     if (gene_names != NULL)
         free_string_array(gene_names, n_genes);
     if (L != NULL)
-        gex_free_matrix_data(L);
+        mat_free(L);
     if (gex != NULL)
         gex_free_matrix_data(gex);
     return success;

@@ -72,8 +72,8 @@ int main(int argc, char *argv[]) {
     Matrix *avg_Sigmas[1] = {NULL};
     Matrix **sim_Sigmas = NULL;
     GexMatrix *per_sim_Z = NULL; /* Temporarily stores the simulated latent factors for each individual tree */
-    GexMatrix *Z = NULL; /* Stores the overall simulated latent factors from Brownian motion */
-    GexMatrix *L = NULL;
+    Matrix *Z = NULL; /* Stores the overall simulated latent factors from Brownian motion */
+    Matrix *L = NULL;
     GexMatrix *gex = NULL;
     double *sigma2_latent_raw = NULL;
     double *sigma2_latent = NULL;
@@ -278,11 +278,11 @@ int main(int argc, char *argv[]) {
         
         if (i == 0) {
             /* Take the first simulation as is */
-            Z = per_sim_Z;
+            Z = per_sim_Z->X;
             per_sim_Z = NULL;
         } else {
             /* Add in place for subsequent simulations */
-            if (add_matrix_in_place(Z->X, per_sim_Z->X) != 0) {
+            if (add_matrix_in_place(Z, per_sim_Z->X) != 0) {
                 fprintf(stderr, "ERROR: failed to accumulate simulated latent factor matrices\n");
                 goto cleanup;
             }
@@ -292,8 +292,8 @@ int main(int argc, char *argv[]) {
     }
 
     /* Scale the latent factors matrix Z to complete the expectation over the simulated matrices */
-    if (Z == NULL || Z->X == NULL ||
-        scale_matrix_in_place(Z->X, 1.0 / (double)n_sim_sigmas) != 0) {
+    if (Z == NULL ||
+        scale_matrix_in_place(Z, 1.0 / (double)n_sim_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to finalize simulated latent factor matrix Z.\n");
         goto cleanup;
     }
@@ -306,7 +306,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Write the simulated data to output files */
-    if (gex_write_model(outprefix, gex, L->X, Z->X, gex->cell_names, gex->gene_names, k, sigma2_obs, sigma2_latent) != 0) {
+    if (gex_write_model(outprefix, gex, L, Z, gex->cell_names, gex->gene_names, k, sigma2_obs, sigma2_latent) != 0) {
         fprintf(stderr, "ERROR: failed to write simulation outputs.\n");
         goto cleanup;
     }
@@ -336,9 +336,9 @@ cleanup:
     if (per_sim_Z != NULL)
         gex_free_matrix_data(per_sim_Z);
     if (Z != NULL)
-        gex_free_matrix_data(Z);
+        mat_free(Z);
     if (L != NULL)
-        gex_free_matrix_data(L);
+        mat_free(L);
     if (gex != NULL)
         gex_free_matrix_data(gex);
     if (Sigma != NULL)

@@ -36,11 +36,11 @@ GexMatrix *brownian_combine_expression_matrices(GexMatrix *pos_gex,
                                                 GexMatrix *neg_gex);
 
 GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
-                                                   char **names,
-                                                   int n,
-                                                   int n_tree_genes,
-                                                   int n_null_genes,
-                                                        unsigned int seed);
+                                                  char **names,
+                                                  int n,
+                                                  int n_tree_genes,
+                                                  int n_null_genes,
+                                                  unsigned int seed);
 
 int brownian_run_simulation_check(char **names,
                                   int n,
