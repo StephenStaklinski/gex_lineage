@@ -328,8 +328,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
         return HUGE_VAL;
     }
 
-    /* Add the gradient contribution for L under the Gaussian likelihood and
-    the L2 regularization penalty on L. */
+    /* Add the L2 regularization penalty on L and compute the gradient w.r.t. L. */
     model->l2_objective = l2_regularized_L_term(model, resid, grad_L, sigma2_obs, lambda_L);
     obj += model->l2_objective;
 
