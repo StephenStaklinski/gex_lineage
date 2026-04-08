@@ -27,6 +27,7 @@ typedef struct {
     Matrix *L;              /* k latent factors x n_genes */
     double *sigma2_latent;  /* length k */
     double sigma2_obs;
+    double l2_strength;
     double objective;
     MVN *latent_mvn;
 } GexLatentBrownianModel;
@@ -35,6 +36,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix **Sigmas,
                                                       int n_sigmas,
                                                       GexPCA *pca,
+                                                      double l2_strength,
                                                       unsigned int seed,
                                                       const char *outprefix);
 

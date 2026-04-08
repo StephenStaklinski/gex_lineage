@@ -97,6 +97,7 @@ static void usage(const char *progname) {
         "[--n-model-trees N] "
         "[--filter-test lrt|moran|both] "
         "[--lrt-alt lambda|full] "
+        "[--l2-strength S] "
         "[--pca-var-threshold V] "
         "[--n-sims N] "
         "[--n-perms N] "
@@ -124,6 +125,7 @@ int main(int argc, char *argv[]) {
     double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
+    double l2_strength = 1e-3;  /* L2 regularization strength for loadings; 0 disables the penalty. */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
@@ -206,6 +208,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             pca_var_threshold = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--l2-strength") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            l2_strength = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--lrt-alt") == 0) {
             if (i + 1 >= argc) {
@@ -306,6 +315,10 @@ int main(int argc, char *argv[]) {
     if (n_model_trees > n_trees) {
         fprintf(stderr, "ERROR: --n-model-trees (%d) cannot exceed the number of loaded trees (%d)\n",
                 n_model_trees, n_trees);
+        return 1;
+    }
+    if (l2_strength < 0.0) {
+        fprintf(stderr, "ERROR: --l2-strength must be nonnegative (0 disables L2 regularization)\n");
         return 1;
     }
 
@@ -523,7 +536,8 @@ int main(int argc, char *argv[]) {
 
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
-    model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees, pca, seed, outprefix);
+    model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees,
+                                          pca, l2_strength, seed, outprefix);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model.\n");
         return 1;

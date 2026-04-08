@@ -232,15 +232,18 @@ static double l2_regularized_L_term(GexLatentBrownianModel *model,
                 gl += -mat_get(model->Z, i, d) *
                       mat_get(resid, i, j) / sigma2_obs;
 
-            /* Add L2 regularization gradient: lambda_L * L_{d,j} */
-            gl += lambda_L * mat_get(model->L, d, j);
+            /* Only add the L2 penalty and gradient when regularization is enabled. */
+            if (lambda_L > 0.0)
+                gl += lambda_L * mat_get(model->L, d, j);
 
             /* Store gradient for L_{d,j} */
             mat_set(grad_L, d, j, gl);
 
-            /* Add L2 penalty to objective: (lambda_L / 2) * L_{d,j}^2 */
-            obj += 0.5 * lambda_L *
-                   mat_get(model->L, d, j) * mat_get(model->L, d, j);
+            if (lambda_L > 0.0) {
+                /* Add L2 penalty to objective: (lambda_L / 2) * L_{d,j}^2 */
+                obj += 0.5 * lambda_L *
+                       mat_get(model->L, d, j) * mat_get(model->L, d, j);
+            }
         }
     }
 
@@ -275,11 +278,11 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *grad_L,
                                            double *grad_log_sigma_latent,
                                            double *grad_log_sigma_obs) {
-    const double lambda_L = 1e-3;   /* L2 regularization strength for L */
     int d;
     int n = model->n_cells; /* Number of cells */
     int p = model->n_genes; /* Number of genes */
     int k = model->k;   /* Number of latent factors */
+    double lambda_L = model->l2_strength;   /* L2 regularization strength for L */
     double sigma2_obs = model->sigma2_obs;  /* Observation noise variance */
     double obj = 0.0;   /* Objective function value */
     Matrix *resid = NULL;   /* Residual matrix */
@@ -452,6 +455,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix **Sigmas,
                                                       int n_sigmas,
                                                       GexPCA *pca,
+                                                      double l2_strength,
                                                       unsigned int seed,
                                                       const char *outprefix) {
     /* Optimization related */
@@ -598,6 +602,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     for (i = 0; i < k; i++)
         model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
     model->sigma2_obs = 1.0;    /* Initialize the observation variance parameter to 1.0 */
+    model->l2_strength = l2_strength;
 
     /* Initialize the factor loading matrix directly from the retained PCA
     components, then initialize latent coordinates as the corresponding PCA
