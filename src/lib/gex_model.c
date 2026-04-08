@@ -150,6 +150,69 @@ static double gex_model_logsumexp(double *x, int n) {
     return max_x + log(sum);
 }
 
+/* Build a jitter-regularized copy of a symmetric matrix, then compute its
+inverse and log-determinant. Returns 0 on success and -1 on failure. */
+static int compute_matrix_inv_and_logdet(Matrix *Sigma,
+                                   Matrix *Sigma_inv,
+                                   double *logdet_sigma) {
+    int j;
+    int n;
+    double max_diag = 0.0;
+    double jitter;
+    Matrix *Sigma_reg = NULL;
+    Matrix *L = NULL;
+
+    if (Sigma == NULL || Sigma_inv == NULL || logdet_sigma == NULL)
+        return -1;
+    if (Sigma->nrows != Sigma->ncols ||
+        Sigma_inv->nrows != Sigma->nrows ||
+        Sigma_inv->ncols != Sigma->ncols)
+        return -1;
+
+    n = Sigma->nrows;
+    Sigma_reg = mat_create_copy(Sigma);
+    L = mat_new(n, n);
+    if (Sigma_reg == NULL || L == NULL) {
+        if (Sigma_reg != NULL)
+            mat_free(Sigma_reg);
+        if (L != NULL)
+            mat_free(L);
+        return -1;
+    }
+
+    for (j = 0; j < n; j++) {
+        double diag = mat_get(Sigma, j, j);
+        if (diag > max_diag)
+            max_diag = diag;
+    }
+    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
+
+    for (j = 0; j < n; j++)
+        mat_set(Sigma_reg, j, j, mat_get(Sigma_reg, j, j) + jitter);
+
+    if (mat_invert(Sigma_inv, Sigma_reg) != 0 ||
+        mat_cholesky(L, Sigma_reg) != 0) {
+        mat_free(Sigma_reg);
+        mat_free(L);
+        return -1;
+    }
+
+    *logdet_sigma = 0.0;
+    for (j = 0; j < n; j++) {
+        double diag = mat_get(L, j, j);
+        if (diag <= 0.0) {
+            mat_free(Sigma_reg);
+            mat_free(L);
+            return -1;
+        }
+        *logdet_sigma += 2.0 * log(diag);
+    }
+
+    mat_free(Sigma_reg);
+    mat_free(L);
+    return 0;
+}
+
 /* Compute the mixture-of-Brownian Gaussian prior contribution for the latent
 factors Z across all latent dimensions. Returns the contribution to the
 objective, adds the prior gradient to Z, and computes gradients with respect
@@ -568,7 +631,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Other */
     int i, j, d, n;    /* Loop indices */
-    Matrix *L = NULL;   /* Temporary Cholesky factor for covariance calculations */
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
 
@@ -598,50 +660,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
 
     for (i = 0; i < n_sigmas; i++) {
-        Matrix *Sigma_reg = NULL;
-        double max_diag = 0.0;
-        double jitter;
-
         if (Sigmas[i] == NULL || Sigmas[i]->nrows != n || Sigmas[i]->ncols != n)
             return NULL;
 
         Sigma_invs[i] = mat_new(n, n);
-        Sigma_reg = mat_create_copy(Sigmas[i]);
-        L = mat_new(n, n);
-        if (Sigma_invs[i] == NULL || Sigma_reg == NULL || L == NULL) {
-            if (Sigma_reg != NULL) mat_free(Sigma_reg);
+        if (Sigma_invs[i] == NULL)
             return NULL;
-        }
 
-        for (j = 0; j < n; j++) {
-            double d = mat_get(Sigmas[i], j, j);
-            if (d > max_diag)
-                max_diag = d;
-        }
-        jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
-
-        for (j = 0; j < n; j++)
-            mat_set(Sigma_reg, j, j, mat_get(Sigma_reg, j, j) + jitter);
-
-        if (mat_invert(Sigma_invs[i], Sigma_reg) != 0 ||
-            mat_cholesky(L, Sigma_reg) != 0) {
-            mat_free(Sigma_reg);
+        if (compute_matrix_inv_and_logdet(Sigmas[i], Sigma_invs[i], &logdet_sigmas[i]) != 0)
             return NULL;
-        }
-
-        logdet_sigmas[i] = 0.0;
-        for (j = 0; j < n; j++) {
-            double diag = mat_get(L, j, j);
-            if (diag <= 0.0) {
-                mat_free(Sigma_reg);
-                return NULL;
-            }
-            logdet_sigmas[i] += 2.0 * log(diag);
-        }
-
-        mat_free(Sigma_reg);
-        mat_free(L);
-        L = NULL;
     }
 
     /* Use the number of input PCA components as the number of latent dimensions */
@@ -911,7 +938,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (vL != NULL) mat_free(vL);
     if (sched_state != NULL) free(sched_state);
     if (sched != NULL) free(sched);
-    if (L != NULL) mat_free(L);
     if (logf != NULL) fclose(logf);
     if (Xc != NULL) mat_free(Xc);
     if (Sigma_invs != NULL) {
