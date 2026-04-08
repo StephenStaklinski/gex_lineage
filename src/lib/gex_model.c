@@ -528,7 +528,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     the latent Brownian model. */
     snprintf(log_path, sizeof(log_path), "%s.model.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tobservation_negll\tbrownian_neglprior\tl2_penalty\tgrad_norm\tsigma_obs");
+    fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
     for (i = 0; i < pca->K; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_norm\tL_norm\n");
@@ -603,11 +603,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->k = k;
     model->Z = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
-    model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    for (i = 0; i < k; i++)
-        model->sigma2_latent[i] = 1.0;  /* Initialize the latent variance parameters to 1.0 */
-    model->sigma2_obs = 1.0;    /* Initialize the observation variance parameter to 1.0 */
     model->l2_strength = l2_strength;
+
+    /* Initialize the latent variance parameters to a desired tip variance on the given tree scale (assuming an ultrametric tree) */
+    model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
+    double desired_tip_variance = 1.0;
+    for (i = 0; i < k; i++)
+        model->sigma2_latent[i] = desired_tip_variance / mat_get(Sigmas[0], 0, 0);
 
     /* Initialize the factor loading matrix directly from the retained PCA
     components, then initialize latent coordinates as the corresponding PCA
@@ -626,10 +628,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
     }
 
-    /* Compute the residual sum of squares for the observation variance parameter.
+    /* Initialize the observation variance parameter by computing the residual sum of squares.
     This accounts for the difference between the observed and predicted values given
-    the retention of only a subset of PCA components. If all components were retained,
-    the residual sum of squares would be zero here. */
+    the retention of only a subset of PCA components. */
     double sse = 0.0;
     for (i = 0; i < model->n_cells; i++) {
         for (j = 0; j < model->n_genes; j++) {
@@ -776,10 +777,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 running_objective_avg_short,
                 rel_objective_change,
                 stable_steps,
+                metrics.grad_norm,
                 model->observation_objective,
                 model->brownian_prior_objective,
                 model->l2_objective,
-                metrics.grad_norm,
                 model->sigma2_obs);
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
