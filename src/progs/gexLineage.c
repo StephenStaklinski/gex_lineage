@@ -287,7 +287,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Check that all required inputs are specified */
-    if (trees_file == NULL || ((expr_file == NULL || outprefix == NULL) && !sim_filter_only)) {
+    if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
         return 1;
     }
@@ -332,27 +332,24 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Real expression matrix data is not needed for simulation-based filtering only mode */
-    if (!sim_filter_only) {
-        /* Load the input real expression matrix */
-        gex = gex_read_labeled_matrix(expr_file);
-        if (gex == NULL) {
-            fprintf(stderr, "ERROR: failed to load expression matrix.\n");
-            return 1;
-        }
-        printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
+    /* Load the input real expression matrix */
+    gex = gex_read_labeled_matrix(expr_file);
+    if (gex == NULL) {
+        fprintf(stderr, "ERROR: failed to load expression matrix.\n");
+        return 1;
+    }
+    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
-        if (verbose) {
-            /* Print input/output summary for user verification */
-            gex_print_io_summary(trees, n_trees, gex);
-        }
+    if (verbose) {
+        /* Print input/output summary for user verification */
+        gex_print_io_summary(trees, n_trees, gex);
+    }
 
-        /* Reconcile tree tips and expression cell names to the intersection of both sets
-        if they do not perfectly match. */
-        if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
-            fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
-            return 1;
-        }
+    /* Reconcile tree tips and expression cell names to the intersection of both sets
+    if they do not perfectly match. */
+    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
+        fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
+        return 1;
     }
 
     /* Rescale the trees to a specified total height if requested */
