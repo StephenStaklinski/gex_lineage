@@ -145,111 +145,110 @@ int main(int argc, char *argv[]) {
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
-    int status = 1; /* Assume failure by default */
     
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             trees_file = argv[++i];
         }
         else if (strcmp(argv[i], "--expr") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             expr_file = argv[++i];
         }
         else if (strcmp(argv[i], "--outprefix") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             outprefix = argv[++i];
         }
         else if (strcmp(argv[i], "--tree-total-time") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             tree_total_time = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-filter-trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             n_filter_trees = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-model-trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             n_model_trees = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
                 fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt, both\n");
-                goto cleanup;
+                return 1;
             }
         }
         else if (strcmp(argv[i], "--pca-var-threshold") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             pca_var_threshold = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--lrt-alt") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             if (parse_lrt_alt_mode(argv[++i], &lrt_alt_mode) != 0) {
                 fprintf(stderr, "ERROR: --lrt-alt must be one of full, lambda\n");
-                goto cleanup;
+                return 1;
             }
         }
         else if (strcmp(argv[i], "--n-sims") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             n_sims = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-perms") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             n_perms = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--max-q") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             max_q = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--moran-min-i") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             moran_min_i = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             seed = (unsigned int)strtoul(argv[++i], NULL, 10);
         }
@@ -264,63 +263,62 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
-            status = 0; /* Success since the user just wants command line help */
-            goto cleanup;
+            return 0;   /* Success since user just wants cli help */
         }
         else {
             fprintf(stderr, "ERROR: unknown argument: %s\n", argv[i]);
             usage(argv[0]);
-            goto cleanup;
+            return 1;
         }
     }
 
     /* Check that all required inputs are specified */
     if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
-        goto cleanup;
+        return 1;
     }
     if (filter_only && no_filter) {
         fprintf(stderr, "ERROR: --filter-only and --no-filter cannot be used together.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Load the input trees */
     trees = gex_read_nexus(trees_file, &n_trees);
     if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
         fprintf(stderr, "ERROR: failed to load tree(s).\n");
-        goto cleanup;
+        return 1;
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
     if (n_filter_trees < -1) {
         fprintf(stderr, "ERROR: --n-filter-trees must be -1, 0, or a positive integer\n");
-        goto cleanup;
+        return 1;
     }
     if (n_filter_trees > n_trees) {
         fprintf(stderr, "ERROR: --n-filter-trees (%d) cannot exceed the number of loaded trees (%d)\n",
                 n_filter_trees, n_trees);
-        goto cleanup;
+        return 1;
     }
     if (n_model_trees < 0) {
         fprintf(stderr, "ERROR: --n-model-trees must be nonnegative (0 means use all trees)\n");
-        goto cleanup;
+        return 1;
     }
     if (n_model_trees > n_trees) {
         fprintf(stderr, "ERROR: --n-model-trees (%d) cannot exceed the number of loaded trees (%d)\n",
                 n_model_trees, n_trees);
-        goto cleanup;
+        return 1;
     }
 
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
-        goto cleanup;
+        return 1;
     }
 
     /* Load the input expression matrix */
     gex = gex_read_labeled_matrix(expr_file);
     if (gex == NULL) {
         fprintf(stderr, "ERROR: failed to load expression matrix.\n");
-        goto cleanup;
+        return 1;
     }
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->n_cells, gex->n_genes);
 
@@ -333,13 +331,13 @@ int main(int argc, char *argv[]) {
     if they do not perfectly match. */
     if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
         fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Rescale the trees to a specified total height if requested */
     if (tree_total_time > 0.0) {
         if (gex_rescale_trees_total_height(trees, n_trees, tree_total_time) != 0) {
-            goto cleanup;
+            return 1;
         }
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
@@ -350,7 +348,7 @@ int main(int argc, char *argv[]) {
         Sigmas[i] = covariance_from_tree(trees[i], gex->cell_names, gex->n_cells);
         if (Sigmas[i] == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
-            goto cleanup;
+            return 1;
         }
     }
     if (verbose) {
@@ -364,7 +362,7 @@ int main(int argc, char *argv[]) {
                                                        gex->cell_names, gex->n_cells);
         if (filter_avg_Sigma == NULL) {
             fprintf(stderr, "ERROR: failed to compute average covariance for filtering.\n");
-            goto cleanup;
+            return 1;
         }
         filter_Sigmas = scalloc(1, sizeof(Matrix *));
         filter_Sigmas[0] = filter_avg_Sigma;
@@ -427,7 +425,7 @@ int main(int argc, char *argv[]) {
                                           n_perms, seed);
             if (morans == NULL) {
                 fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
-                goto cleanup;
+                return 1;
             }
             if (verbose) {
                 gex_print_morans_summary(morans, gex, max_q, moran_min_i);
@@ -439,7 +437,7 @@ int main(int argc, char *argv[]) {
                 if (gex_write_morans_tsv(corr_path, morans, gex, max_q, moran_min_i) != 0) {
                     fprintf(stderr, "ERROR: failed to write Moran correlation results to %s.\n",
                             corr_path);
-                    goto cleanup;
+                    return 1;
                 }
                 if (verbose) {
                     printf("Wrote Moran correlation results to %s.\n", corr_path);
@@ -454,7 +452,7 @@ int main(int argc, char *argv[]) {
                                            n_perms, seed, lrt_alt_mode);
             if (lrt == NULL) {
                 fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
-                goto cleanup;
+                return 1;
             }
             if (verbose) {
                 gex_print_lrt_summary(lrt, gex, max_q);
@@ -466,7 +464,7 @@ int main(int argc, char *argv[]) {
                 if (gex_write_lrt_tsv(lrt_path, lrt, gex, max_q) != 0) {
                     fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
                             lrt_path);
-                    goto cleanup;
+                    return 1;
                 }
                 if (verbose) {
                     printf("Wrote LRT correlation results to %s.\n", lrt_path);
@@ -477,8 +475,7 @@ int main(int argc, char *argv[]) {
         /* Stop early if only phylogenetic signal filtering is requested */
         if (filter_only) {
             printf("Done\n");
-            status = 0;
-            goto cleanup;
+            return 0; /* Success since user just wants to filter genes */
         }
 
         /* Filter genes based on the results of the correlation and/or LRT test(s) */
@@ -486,7 +483,7 @@ int main(int argc, char *argv[]) {
                                                    max_q, moran_min_i);
         if (gex_filtered == NULL) {
             fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
-            goto cleanup;
+            return 1;
         }
         printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->n_cells, gex_filtered->n_genes);
         printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
@@ -503,7 +500,7 @@ int main(int argc, char *argv[]) {
     pca = gex_compute_pca(gex_filtered, pca_var_threshold);
     if (pca == NULL) {
         fprintf(stderr, "ERROR: PCA failed.\n");
-        goto cleanup;
+        return 1;
     }
     printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n",
            pca->K, 100.0 * pca_var_threshold);
@@ -516,7 +513,7 @@ int main(int argc, char *argv[]) {
         model_Sigmas = gexlineage_select_model_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u);
         if (model_Sigmas == NULL) {
             fprintf(stderr, "ERROR: failed to select covariance matrices for latent model fitting.\n");
-            goto cleanup;
+            return 1;
         }
         printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
     } else {
@@ -529,7 +526,7 @@ int main(int argc, char *argv[]) {
     model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees, pca, seed, outprefix);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Write the fitted latent Brownian model parameters to files */
@@ -537,42 +534,38 @@ int main(int argc, char *argv[]) {
                         gex_filtered->cell_names, gex_filtered->gene_names, 
                         pca->K, model->sigma2_obs, model->sigma2_latent) != 0) {
         fprintf(stderr, "ERROR: failed to write latent Brownian model outputs with prefix %s.\n", outprefix);
-        goto cleanup;
-    }
-    if (verbose) {
-        printf("Wrote resulting model parameters to outprefix %s.\n", outprefix);
+        return 1;
     }
 
-    printf("Done.\n");
-    status = 0; /* Success */
-    goto cleanup;
+    printf("Wrote resulting model parameters to outprefix %s.\n", outprefix);
 
-    /* Free allocated memory */
-    cleanup:
-        gex_free_trees(trees, n_trees);
-        gex_free_matrix_data(gex);
-        gex_free_matrix_data(gex_filtered);
-        gex_free_morans_result(morans);
-        gex_free_lrt_result(lrt);
-        gex_free_pca(pca);
-        gex_free_latent_brownian_model(model);
-        if (Sigmas != NULL) {
-            for (i = 0; i < n_trees; i++) {
-                if (Sigmas[i] != NULL)
-                    mat_free(Sigmas[i]);
-            }
-            free(Sigmas);
-        }
-        /* Only free model_Sigmas if it is separately allocated */
-        if (model_Sigmas != NULL && model_Sigmas != Sigmas) {
-            free(model_Sigmas);
-        }
-        if (filter_Sigmas != NULL && filter_Sigmas != Sigmas) {
-            free(filter_Sigmas);
-        }
-        if (filter_avg_Sigma != NULL) {
-            mat_free(filter_avg_Sigma);
-        }
+    return 0; /* Success */
 
-        return status;
+    /* Free memory */
+    gex_free_trees(trees, n_trees);
+    gex_free_matrix_data(gex);
+    gex_free_matrix_data(gex_filtered);
+    gex_free_morans_result(morans);
+    gex_free_lrt_result(lrt);
+    gex_free_pca(pca);
+    gex_free_latent_brownian_model(model);
+    if (Sigmas != NULL) {
+        for (i = 0; i < n_trees; i++) {
+            if (Sigmas[i] != NULL)
+                mat_free(Sigmas[i]);
+        }
+        free(Sigmas);
+    }
+    /* Only free model_Sigmas if it is separately allocated */
+    if (model_Sigmas != NULL && model_Sigmas != Sigmas) {
+        free(model_Sigmas);
+    }
+    if (filter_Sigmas != NULL && filter_Sigmas != Sigmas) {
+        free(filter_Sigmas);
+    }
+    if (filter_avg_Sigma != NULL) {
+        mat_free(filter_avg_Sigma);
+    }
+
+    return 0; /* Success */
 }

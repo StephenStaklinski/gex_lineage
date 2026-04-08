@@ -1035,18 +1035,18 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     for (i = 0; i < n_trees; i++) {
         if (trees[i] == NULL) {
             fprintf(stderr, "ERROR: tree %d is NULL during reconciliation\n", i + 1);
-            goto cleanup_reconcile_tree_and_expression;
+            return 1;
         }
         tree_name_lists[i] = tr_leaf_names(trees[i]);   /* Collect the leaf names from the tree into a list of strings */
         if (tree_name_lists[i] == NULL) {
             fprintf(stderr, "ERROR: failed to collect tree tip names for tree %d\n", i + 1);
-            goto cleanup_reconcile_tree_and_expression;
+            return 1;
         }
     }
 
     keep_names = lst_new_ptr(gex->n_cells > 0 ? gex->n_cells : 1);  /* List to hold the names of the shared tree tips and expression matrix cells */
     if (keep_names == NULL) {
-        goto cleanup_reconcile_tree_and_expression;
+        return 1;
     }
 
     /* Check which tree tips are missing from the expression matrix across all trees. */
@@ -1072,7 +1072,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         } else {
             String *s = str_new_charstr(gex->cell_names[i]);
             if (s == NULL) {
-                goto cleanup_reconcile_tree_and_expression;
+                return 1;
             }
             lst_push_ptr(keep_names, s);
             n_keep++;
@@ -1088,7 +1088,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 
     if (n_keep <= 0) {
         fprintf(stderr, "ERROR: no shared names between the expression matrix and all trees\n");
-        goto cleanup_reconcile_tree_and_expression;
+        return 1;
     }
 
     /* Initialize the subsetted matrix */
@@ -1105,7 +1105,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         if (subset->gene_names[j] == NULL) {
             gex_free_matrix_data(subset);
             subset = NULL;
-            goto cleanup_reconcile_tree_and_expression;
+            return 1;
         }
     }
 
@@ -1117,7 +1117,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
             if (subset->cell_names[j] == NULL) {
                 gex_free_matrix_data(subset);
                 subset = NULL;
-                goto cleanup_reconcile_tree_and_expression;
+                return 1;
             }
             for (g = 0; g < gex->n_genes; g++)
                 mat_set(subset->X, j, g, mat_get(gex->X, i, g));
@@ -1134,20 +1134,11 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
                 fprintf(stderr, "ERROR: tree %d became empty after reconciliation across all trees\n", i + 1);
                 gex_free_matrix_data(subset);
                 subset = NULL;
-                goto cleanup_reconcile_tree_and_expression;
+                return 1;
             }
         }
     }
-
-    gex_free_matrix_data(gex);
     *gex_ptr = subset;
-
-    for (i = 0; i < n_trees; i++) {
-        if (tree_name_lists[i] != NULL)
-            gex_free_string_ptr_list(tree_name_lists[i]);
-    }
-    free(tree_name_lists);
-    gex_free_string_ptr_list(keep_names);
 
     /* Print result summary */
     if (n_keep < gex->n_cells) {
@@ -1157,19 +1148,16 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         printf("All tree tip names and expression cell names match in the input data.\n");
     }
 
-    return 0;
+    /* Free memory */
+    gex_free_matrix_data(gex);
+    for (i = 0; i < n_trees; i++) {
+        gex_free_string_ptr_list(tree_name_lists[i]);
+    }
+    if (tree_name_lists != NULL)
+        free(tree_name_lists);
+    gex_free_string_ptr_list(keep_names);
 
-    cleanup_reconcile_tree_and_expression:
-        if (tree_name_lists != NULL) {
-            for (i = 0; i < n_trees; i++) {
-                if (tree_name_lists[i] != NULL)
-                    gex_free_string_ptr_list(tree_name_lists[i]);
-            }
-            free(tree_name_lists);
-        }
-        if (keep_names != NULL)
-            gex_free_string_ptr_list(keep_names);
-        return -1;
+    return 0;
 }
 
 /* Compute Moran's I for each gene in the expression matrix.
@@ -1184,7 +1172,6 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
                                       int n_perm,
                                       unsigned int seed) {
     int i, j, k, t;    /* Loop indices */
-    int success = 0;    /* Whether computation finished successfully */
     int n_cells;    /* Number of cells (rows in the expression matrix) */
     int n_genes;    /* Number of genes (columns in the expression matrix) */
     unsigned int rng_state; /* State for the random number generator used in permutation testing */
@@ -1208,12 +1195,12 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
             Sigmas[t]->nrows != n_cells ||
             Sigmas[t]->ncols != n_cells) {
             fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells\n");
-            goto cleanup_compute_morans_i;
+            return NULL;
         }
         Ws[t] = weight_matrix_from_covariance(Sigmas[t]);
         if (Ws[t] == NULL) {
             fprintf(stderr, "ERROR: failed to derive Moran weight matrix from covariance\n");
-            goto cleanup_compute_morans_i;
+            return NULL;
         }
     }
 
@@ -1221,13 +1208,13 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     Z = gex_standardize_columns(gex);
     if (Z == NULL) {
         fprintf(stderr, "ERROR: failed to standardize gene expression matrix\n");
-        goto cleanup_compute_morans_i;
+        return NULL;
     }
 
     /* Compute E[W * Z] across the tree set. */
     B = mat_new(n_cells, n_genes);
     if (B == NULL) {
-        goto cleanup_compute_morans_i;
+        return NULL;
     }
     mat_zero(B);
     for (i = 0; i < n_cells; i++) {
@@ -1293,29 +1280,25 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     /* Adjust p-values for multiple testing and count significant genes */
     gex_bh_adjust(res->pvals, res->qvals, n_genes);
     res->n_significant = gex_count_kept_genes(res, 0.05, 0.0);
-    success = 1;
 
-    cleanup_compute_morans_i:
-        if (zcol != NULL)
-            free(zcol);
-        if (perm != NULL)
-            free(perm);
-        if (Z != NULL)
-            mat_free(Z);
-        if (Ws != NULL) {
-            for (t = 0; t < n_sigmas; t++) {
-                if (Ws[t] != NULL)
-                    mat_free(Ws[t]);
-            }
-            free(Ws);
+    /* Free memory */
+    if (zcol != NULL)
+        free(zcol);
+    if (perm != NULL)
+        free(perm);
+    if (Z != NULL)
+        mat_free(Z);
+    if (Ws != NULL) {
+        for (t = 0; t < n_sigmas; t++) {
+            if (Ws[t] != NULL)
+                mat_free(Ws[t]);
         }
-        if (B != NULL)
-            mat_free(B);
-        if (!success) {
-            gex_free_morans_result(res);
-            res = NULL;
-        }
-        return res;
+        free(Ws);
+    }
+    if (B != NULL)
+        mat_free(B);
+    
+    return res;
 }
 
 /* Print a summary of the Moran's I results */
@@ -1451,7 +1434,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         if (Sigmas[t] == NULL || Sigmas[t]->nrows != n || Sigmas[t]->ncols != n) {
             fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells for tree %d\n",
                     t + 1);
-            goto cleanup_compute_brownian_lrt;
+            return NULL;
         }
 
         Sigma_regs[t] = mat_new(n, n);
@@ -1461,7 +1444,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
             Sigma_lambdas[t] = mat_new(n, n);
         if (Sigma_regs[t] == NULL || Sigma_invs[t] == NULL || Ls[t] == NULL ||
             (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambdas[t] == NULL)) {
-            goto cleanup_compute_brownian_lrt;
+            return NULL;
         }
 
         for (i = 0; i < n; i++) {
@@ -1482,13 +1465,13 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                 mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
                 fprintf(stderr, "ERROR: failed to initialize Brownian covariance matrices for LRT tree %d\n",
                         t + 1);
-                goto cleanup_compute_brownian_lrt;
+                return NULL;
             }
             for (i = 0; i < n; i++) {
                 double diag = mat_get(Ls[t], i, i);
                 if (diag <= 0.0) {
                     fprintf(stderr, "ERROR: invalid Cholesky factor for LRT tree %d\n", t + 1);
-                    goto cleanup_compute_brownian_lrt;
+                    return NULL;
                 }
                 logdet_sigmas[t] += 2.0 * log(diag);
             }
@@ -1611,7 +1594,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
     res->n_significant = gex_count_kept_lrt_genes(res, 0.05);   /* Number of significant genes to keep*/
 
-cleanup_compute_brownian_lrt:
+    /* Free memory */
     free(y);
     free(y_sim);
     if (Sigma_regs != NULL) {
@@ -1644,6 +1627,7 @@ cleanup_compute_brownian_lrt:
     }
     free(logdet_sigmas);
     free(jitters);
+
     return res;
 }
 
@@ -1883,17 +1867,16 @@ int gex_write_model(const char *outprefix,
     char **factor_names = NULL;
     FILE *summary_out = NULL;
     int j;
-    int status = 1;
 
     if (outprefix == NULL || gex == NULL || L == NULL || Z == NULL ||
         L == NULL || Z == NULL || cell_names == NULL || gene_names == NULL ||
         k <= 0 || sigma2_latent == NULL)
-        goto cleanup;
+        return 1;
 
     /* Draw latent factor names incrementally */
     factor_names = generate_factor_names(k);
     if (factor_names == NULL)
-        goto cleanup;
+        return 1;
 
     snprintf(summary_path, sizeof(summary_path), "%s.summary.tsv", outprefix);
     snprintf(z_path, sizeof(z_path), "%s.Z.tsv", outprefix);
@@ -1904,7 +1887,7 @@ int gex_write_model(const char *outprefix,
     by model fitting output */
     summary_out = fopen(summary_path, "w");
     if (summary_out == NULL)
-        goto cleanup;
+        return 1;
     fprintf(summary_out, "parameter\tvalue\n");
     fprintf(summary_out, "n_cells\t%d\n", gex->n_cells);
     fprintf(summary_out, "n_genes\t%d\n", gex->n_genes);
@@ -1918,22 +1901,21 @@ int gex_write_model(const char *outprefix,
     /* Write out the simulated matrices */
     if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->n_cells,
                                      gene_names, gex->n_genes, "cell") != 0)
-        goto cleanup;
+        return 1;
     if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->n_cells,
                                      factor_names, k, "cell") != 0)
-        goto cleanup;
+        return 1;
     if (gex_write_labeled_matrix_tsv(l_path, L, factor_names, k,
                                      gene_names, gex->n_genes, "factor") != 0)
-        goto cleanup;
+        return 1;
 
-    status = 0;
-
-cleanup:
+    /* Free memory */
     if (summary_out != NULL)
         fclose(summary_out);
     if (factor_names != NULL)
         free_string_array(factor_names, k);
-    return status;
+
+    return 0;
 }
 
 /* Use the provides latent factors . */
@@ -1947,7 +1929,6 @@ int gex_simulate_from_latent_factors(Matrix *Z,
                                      Matrix **L_out,
                                      GexMatrix **gex_out) {
     int i, j, d;    /* Loop indices */
-    int success = 1; /* Whether the simulation succeeded; Failure by default */
     GexMatrix *gex = NULL;  /* Simulation output gene expression object */
     Matrix *L = NULL;    /* Simulation output gene loadings object */
     char **gene_names = NULL;   /* Gene names */
@@ -1972,7 +1953,7 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     generate_gene_names(gene_names, n_genes);
 
     if (L == NULL || gex == NULL || gene_names == NULL)
-        goto cleanup;
+        return 1;
 
     /* Setup dimensions of L */
     L->nrows = k;
@@ -2001,7 +1982,7 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     gex->n_genes = n_genes;
     gex->X = mat_new(n_cells, n_genes);
     if (gex->X == NULL)
-        goto cleanup;
+        return 1;
 
     /* Compute the noiseless expression matrix from the 
     simulated Z and L matrix factorization. */
@@ -2013,7 +1994,7 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     for (i = 0; i < n_cells; i++) {
         gex->cell_names[i] = strdup(cell_names[i]);
         if (gex->cell_names[i] == NULL)
-            goto cleanup;
+            return 1;
     }
     for (j = 0; j < n_genes; j++) {
         gex->gene_names[j] = gene_names[j];
@@ -2031,20 +2012,19 @@ int gex_simulate_from_latent_factors(Matrix *Z,
         }
     }
 
-    success = 0; /* Simulation succeeded */
-
     *L_out = L;
     L = NULL;
     *gex_out = gex;
     gex = NULL;
 
-    cleanup:
+    /* Free memory */
     if (gene_names != NULL)
         free_string_array(gene_names, n_genes);
     if (L != NULL)
         mat_free(L);
     if (gex != NULL)
         gex_free_matrix_data(gex);
-    return success;
+
+    return 0;
 }
 

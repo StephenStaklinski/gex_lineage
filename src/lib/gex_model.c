@@ -423,8 +423,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     the latent Brownian model. */
     snprintf(log_path, sizeof(log_path), "%s.model.log", outprefix);
     logf = fopen(log_path, "w");
-    if (logf == NULL)
-        goto cleanup_fit_latent_brownian_model;
     fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tgrad_norm\tsigma_obs");
     for (i = 0; i < pca->K; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
@@ -434,8 +432,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     This ensures the latent factor model is fit to the residual structure
     after removing per-gene offsets. */
     ws.Xc = center_matrix(gex->X);
-    if (ws.Xc == NULL)
-        goto cleanup_fit_latent_brownian_model;
 
     /* Build regularized versions of the phylogenetic covariance matrices and
     precompute the inverse and log-determinant for each tree. */
@@ -451,14 +447,14 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         double jitter;
 
         if (Sigmas[i] == NULL || Sigmas[i]->nrows != n || Sigmas[i]->ncols != n)
-            goto cleanup_fit_latent_brownian_model;
+            return NULL;
 
         ws.tree_priors[i].Sigma_inv = mat_new(n, n);
         Sigma_reg = mat_create_copy(Sigmas[i]);
         L = mat_new(n, n);
         if (ws.tree_priors[i].Sigma_inv == NULL || Sigma_reg == NULL || L == NULL) {
             if (Sigma_reg != NULL) mat_free(Sigma_reg);
-            goto cleanup_fit_latent_brownian_model;
+            return NULL;
         }
 
         for (j = 0; j < n; j++) {
@@ -474,7 +470,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         if (mat_invert(ws.tree_priors[i].Sigma_inv, Sigma_reg) != 0 ||
             mat_cholesky(L, Sigma_reg) != 0) {
             mat_free(Sigma_reg);
-            goto cleanup_fit_latent_brownian_model;
+            return NULL;
         }
 
         ws.tree_priors[i].logdet_sigma = 0.0;
@@ -482,7 +478,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             double diag = mat_get(L, j, j);
             if (diag <= 0.0) {
                 mat_free(Sigma_reg);
-                goto cleanup_fit_latent_brownian_model;
+                return NULL;
             }
             ws.tree_priors[i].logdet_sigma += 2.0 * log(diag);
         }
@@ -573,7 +569,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5); /* Parameter order: n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
     sched_state = sched_new_state(sched);
     if (sched == NULL || sched_state == NULL)
-        goto cleanup_fit_latent_brownian_model;
+        return NULL;
     metrics.grad_norm = 0.0;    /* Initialize the gradient norm */
 
     /* Run gradient-based optimization of latent coordinates, gene loadings,
@@ -735,43 +731,35 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
     fflush(logf);
 
-    success = 1;
-
-    cleanup_fit_latent_brownian_model:
-        if (log_sigma_latent != NULL) free(log_sigma_latent);
-        if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
-        if (m_log_sigma_latent != NULL) free(m_log_sigma_latent);
-        if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
-        if (objective_hist_long != NULL) free(objective_hist_long);
-        if (objective_hist_short != NULL) free(objective_hist_short);
-        if (grad_Z != NULL) mat_free(grad_Z);
-        if (grad_L != NULL) mat_free(grad_L);
-        if (mZ != NULL) mat_free(mZ);
-        if (vZ != NULL) mat_free(vZ);
-        if (mL != NULL) mat_free(mL);
-        if (vL != NULL) mat_free(vL);
-        if (sched_state != NULL) free(sched_state);
-        if (sched != NULL) free(sched);
-        if (L != NULL) mat_free(L);
-        if (logf != NULL) fclose(logf);
-        if (ws.Xc != NULL) mat_free(ws.Xc);
-        if (ws.tree_priors != NULL) {
-            for (i = 0; i < ws.n_tree_priors; i++) {
-                if (ws.tree_priors[i].Sigma_inv != NULL)
-                    mat_free(ws.tree_priors[i].Sigma_inv);
-            }
-            free(ws.tree_priors);
+    /* Free memory */
+    if (log_sigma_latent != NULL) free(log_sigma_latent);
+    if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
+    if (m_log_sigma_latent != NULL) free(m_log_sigma_latent);
+    if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
+    if (objective_hist_long != NULL) free(objective_hist_long);
+    if (objective_hist_short != NULL) free(objective_hist_short);
+    if (grad_Z != NULL) mat_free(grad_Z);
+    if (grad_L != NULL) mat_free(grad_L);
+    if (mZ != NULL) mat_free(mZ);
+    if (vZ != NULL) mat_free(vZ);
+    if (mL != NULL) mat_free(mL);
+    if (vL != NULL) mat_free(vL);
+    if (sched_state != NULL) free(sched_state);
+    if (sched != NULL) free(sched);
+    if (L != NULL) mat_free(L);
+    if (logf != NULL) fclose(logf);
+    if (ws.Xc != NULL) mat_free(ws.Xc);
+    if (ws.tree_priors != NULL) {
+        for (i = 0; i < ws.n_tree_priors; i++) {
+            if (ws.tree_priors[i].Sigma_inv != NULL)
+                mat_free(ws.tree_priors[i].Sigma_inv);
         }
-        if (ws.prior_log_terms != NULL) free(ws.prior_log_terms);
-        if (ws.prior_weights != NULL) free(ws.prior_weights);
+        free(ws.tree_priors);
+    }
+    if (ws.prior_log_terms != NULL) free(ws.prior_log_terms);
+    if (ws.prior_weights != NULL) free(ws.prior_weights);
 
-        if (!success) {
-            if (model != NULL)
-                gex_free_latent_brownian_model(model);
-            return NULL;
-        }
-
-        return model;
+    return model;
 }
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {

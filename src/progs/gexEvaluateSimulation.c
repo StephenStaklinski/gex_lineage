@@ -433,7 +433,7 @@ static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) 
     Q_true = gexeval_orthonormal_basis(Z_true, &r_true);
     Q_fit = gexeval_orthonormal_basis(Z_fit, &r_fit);
     if (Q_true == NULL || Q_fit == NULL)
-        goto cleanup;
+        return 1;
 
     /* Allocate working matrices */
     cross = mat_new(r_true, r_fit);
@@ -465,12 +465,12 @@ static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) 
 
     /* Eigenvalues = squared cosines of principal angles between subspaces */
     if (mat_diagonalize_sym(gram_copy, evals, evecs) != 0)
-        goto cleanup;
+        return 1;
 
     /* Normalize by smaller subspace dimension */
     denom_rank = (r_true < r_fit ? r_true : r_fit);
     if (denom_rank <= 0)
-        goto cleanup;
+        return 1;
 
     /* Average squared cosine overlap (clamp for numerical stability) */
     overlap = 0.0;
@@ -482,7 +482,7 @@ static double gexeval_latent_subspace_similarity(Matrix *Z_true, Matrix *Z_fit) 
     }
     overlap /= (double)denom_rank;
 
-cleanup:
+    /* Free memory */
     if (Q_true != NULL) mat_free(Q_true);
     if (Q_fit != NULL) mat_free(Q_fit);
     if (cross != NULL) mat_free(cross);
@@ -730,7 +730,7 @@ static double gexeval_greedy_factor_match_score(Matrix *Z_true, Matrix *Z_fit) {
 
         if (best_true < 0 || best_fit < 0 || best_corr < 0.0) {
             score = -1.0;
-            goto cleanup;
+            return 1;
         }
 
         used_true[best_true] = 1;
@@ -740,11 +740,12 @@ static double gexeval_greedy_factor_match_score(Matrix *Z_true, Matrix *Z_fit) {
 
     score /= (double)n_match;
 
-cleanup:
+    /* Free memory */
     if (used_true != NULL)
         free(used_true);
     if (used_fit != NULL)
         free(used_fit);
+
     return score;
 }
 
@@ -795,11 +796,11 @@ static double gexeval_normalized_contribution_l1(const double *sim_contrib,
     sim_p = gexeval_normalize_nonnegative_vector(sim_sorted, n_compare);
     fit_p = gexeval_normalize_nonnegative_vector(fit_sorted, n_compare);
     if (sim_p == NULL || fit_p == NULL)
-        goto cleanup;
+        return 1;
 
     out = gexeval_vector_l1_distance(sim_p, fit_p, n_compare);
 
-cleanup:
+    /* Free memory */
     if (sim_sorted != NULL)
         free(sim_sorted);
     if (fit_sorted != NULL)
@@ -808,6 +809,7 @@ cleanup:
         free(sim_p);
     if (fit_p != NULL)
         free(fit_p);
+
     return out;
 }
 
@@ -922,7 +924,6 @@ int main(int argc, char *argv[]) {
     int n_common_cells = 0;
     int n_common_genes = 0;
     int i;
-    int status = 1;
     FILE *out = NULL;
 
     for (i = 1; i < argc; i++) {
@@ -977,7 +978,7 @@ int main(int argc, char *argv[]) {
     if (sim_summary == NULL || fit_summary == NULL || sim_Z == NULL || sim_L == NULL ||
         fit_Z == NULL || fit_L == NULL) {
         fprintf(stderr, "ERROR: failed to read required sim/model files.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Derive the set of common cells and genes between the sim and fitted outputs 
@@ -989,7 +990,7 @@ int main(int argc, char *argv[]) {
                                      sim_L->gene_names, sim_L->n_genes,
                                      &common_genes, &n_common_genes) != 0) {
         fprintf(stderr, "ERROR: failed to derive shared cells/genes between sim and fitted outputs.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Subset Z and L to the common cells and genes */
@@ -999,7 +1000,7 @@ int main(int argc, char *argv[]) {
     fit_L_common = gexeval_subset_cols_by_names(fit_L, common_genes, n_common_genes);
     if (sim_Z_aligned == NULL || fit_Z_aligned == NULL || sim_L_common == NULL || fit_L_common == NULL) {
         fprintf(stderr, "ERROR: failed to align sim and fitted matrices on shared names.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Compute the reconstructed gex matrix X from Z and L for both simulated and fitted models */
@@ -1016,7 +1017,7 @@ int main(int argc, char *argv[]) {
     if (sim_signal == NULL || fit_signal == NULL || sim_latent_cov == NULL ||
         fit_latent_cov == NULL || sim_gene_cov == NULL || fit_gene_cov == NULL) {
         fprintf(stderr, "ERROR: failed to derive fitted covariance summaries.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Compute the similarity between the latent subspaces of the sim and fitted models */
@@ -1053,7 +1054,7 @@ int main(int argc, char *argv[]) {
     out = fopen(eval_summary_path, "w");
     if (out == NULL) {
         fprintf(stderr, "ERROR: failed to open evaluator output file.\n");
-        goto cleanup;
+        return 1;
     }
 
     fprintf(out, "metric\tvalue\n");
@@ -1073,10 +1074,9 @@ int main(int argc, char *argv[]) {
     fclose(out);
     out = NULL;
 
-    printf("Done. Evaluation summary written to: %s\n", eval_summary_path);
-    status = 0;
+    printf("Evaluation summary written to: %s\n", eval_summary_path);
 
-cleanup:
+    /* Free memory */
     if (out != NULL)
         fclose(out);
     if (sim_contrib != NULL)
@@ -1119,5 +1119,6 @@ cleanup:
         gex_free_matrix_data(sim_L_common);
     if (fit_L_common != NULL)
         gex_free_matrix_data(fit_L_common);
-    return status;
+
+    return 0; /* Success */
 }

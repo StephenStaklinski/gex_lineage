@@ -84,7 +84,6 @@ int main(int argc, char *argv[]) {
     int n_sigma_latent_raw = 0;
     int n_sim_sigmas = 0;
     int i;
-    int status = 1;
     double sigma2_obs = 0.0;
     unsigned int seed = 1u;
     const double ultrametric_tol = 1e-3;
@@ -93,83 +92,83 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "--trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             trees_file = argv[++i];
         }
         else if (strcmp(argv[i], "--outprefix") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             outprefix = argv[++i];
         }
         else if (strcmp(argv[i], "--k") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             k = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-genes") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             n_genes = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--sigma2-obs") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             sigma2_obs = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--use-n-trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             use_n_trees = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--sigma2-latent") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             if (parse_double_list(argv[++i], &sigma2_latent_raw, &n_sigma_latent_raw) != 0) {
                 fprintf(stderr, "ERROR: failed to parse --sigma2-latent values.\n");
-                goto cleanup;
+                return 1;
             }
         }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
-                goto cleanup;
+                return 1;
             }
             seed = (unsigned int)strtoul(argv[++i], NULL, 10);
         }
         else {
             usage(argv[0]);
-            goto cleanup;
+            return 1;
         }
     }
 
     if (trees_file == NULL || outprefix == NULL || k <= 0 || 
         n_genes <= 0 || sigma2_obs < 0.0 || n_sigma_latent_raw <= 0) {
         usage(argv[0]);
-        goto cleanup;
+        return 1;
     }
 
     /* Read in trees to use for the simulation */
     trees = gex_read_nexus(trees_file, &n_trees);
     if (trees == NULL || n_trees <= 0) {
         fprintf(stderr, "ERROR: failed to load trees from %s\n", trees_file);
-        goto cleanup;
+        return 1;
     }
     if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
         fprintf(stderr, "ERROR: simulator requires ultrametric trees.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Get cell names and number of cells from the first tree 
@@ -177,7 +176,7 @@ int main(int argc, char *argv[]) {
     List *leaf_list = tr_leaf_names(trees[0]);
     if (leaf_list == NULL || lst_size(leaf_list) <= 0) {
         fprintf(stderr, "ERROR: failed to get leaf names from first tree.\n");
-        goto cleanup;
+        return 1;
     }
     n_cells = lst_size(leaf_list);
 
@@ -187,12 +186,12 @@ int main(int argc, char *argv[]) {
         String *s = lst_get_ptr(leaf_list, i);
         if (s == NULL) {
             fprintf(stderr, "ERROR: failed to get leaf name %d.\n", i);
-            goto cleanup;
+            return 1;
         }
         cell_names[i] = strdup(s->chars);
         if (cell_names[i] == NULL) {
             fprintf(stderr, "ERROR: failed to allocate cell name.\n");
-            goto cleanup;
+            return 1;
         }
     }
     lst_free_strings(leaf_list);
@@ -200,12 +199,12 @@ int main(int argc, char *argv[]) {
 
     if (use_n_trees < -1) {
         fprintf(stderr, "ERROR: --use-n-trees must be -1, 0, or a positive integer\n");
-        goto cleanup;
+        return 1;
     }
     if (use_n_trees > n_trees) {
         fprintf(stderr, "ERROR: --use-n-trees (%d) cannot exceed the number of loaded trees (%d)\n",
                 use_n_trees, n_trees);
-        goto cleanup;
+        return 1;
     }
     selected_n_trees = (use_n_trees == 0 ? n_trees : use_n_trees);
     /* Allocate and initialize the latent variance parameters */
@@ -222,7 +221,7 @@ int main(int argc, char *argv[]) {
     }
     else {
         fprintf(stderr, "ERROR: --sigma2-latent must provide either 1 value or exactly k=%d values.\n", k);
-        goto cleanup;
+        return 1;
     }
 
     Sigmas = scalloc(n_trees, sizeof(Matrix *));
@@ -230,7 +229,7 @@ int main(int argc, char *argv[]) {
         Sigmas[i] = covariance_from_tree(trees[i], cell_names, n_cells);
         if (Sigmas[i] == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
-            goto cleanup;
+            return 1;
         }
     }
 
@@ -238,7 +237,7 @@ int main(int argc, char *argv[]) {
         Sigma = gex_average_tree_covariance(trees, n_trees, cell_names, n_cells);
         if (Sigma == NULL) {
             fprintf(stderr, "ERROR: failed to compute the average Brownian covariance matrix.\n");
-            goto cleanup;
+            return 1;
         }
         avg_Sigmas[0] = Sigma;
         sim_Sigmas = avg_Sigmas;
@@ -261,7 +260,7 @@ int main(int argc, char *argv[]) {
 
         if (per_sim_Z == NULL) {
             fprintf(stderr, "ERROR: failed to simulate latent factors from Brownian covariance for tree %d.\n", i + 1);
-            goto cleanup;
+            return 1;
         }
         
         if (i == 0) {
@@ -272,7 +271,7 @@ int main(int argc, char *argv[]) {
             /* Add in place for subsequent simulations */
             if (add_matrix_in_place(Z, per_sim_Z->X) != 0) {
                 fprintf(stderr, "ERROR: failed to accumulate simulated latent factor matrices\n");
-                goto cleanup;
+                return 1;
             }
             gex_free_matrix_data(per_sim_Z);
             per_sim_Z = NULL;
@@ -283,20 +282,20 @@ int main(int argc, char *argv[]) {
     if (Z == NULL ||
         scale_matrix_in_place(Z, 1.0 / (double)n_sim_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to finalize simulated latent factor matrix Z.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Use the expected latent factors matrix Z to simulate L and the expression matrix X
     for the input parameters. */
     if (gex_simulate_from_latent_factors(Z, cell_names, n_cells, k, n_genes, sigma2_obs, seed + 7919u, &L, &gex) != 0) {
         fprintf(stderr, "ERROR: failed to simulate expression matrix from latent factors.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Write the simulated data to output files */
     if (gex_write_model(outprefix, gex, L, Z, gex->cell_names, gex->gene_names, k, sigma2_obs, sigma2_latent) != 0) {
         fprintf(stderr, "ERROR: failed to write simulation outputs.\n");
-        goto cleanup;
+        return 1;
     }
 
     /* Log simulation run settings and progress to the terminal */
@@ -311,10 +310,7 @@ int main(int argc, char *argv[]) {
 
     printf("Wrote simulated data files with prefix %s.*\n", outprefix);
 
-    printf("Done.\n");
-    status = 0; /* Success */
-
-cleanup:
+    /* Free memory */
     if (expr_path != NULL)
         free(expr_path);
     if (sigma2_latent_raw != NULL)
@@ -343,5 +339,6 @@ cleanup:
     }
     if (trees != NULL)
         gex_free_trees(trees, n_trees);
-    return status;
+
+    return 0;   /* Success */
 }

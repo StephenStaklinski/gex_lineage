@@ -512,19 +512,15 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
                                                            n_tree_genes, sigma2, 
                                                            n_sigma2, seed);
 
-    if (pos_gex == NULL)
-        goto cleanup;
-
     neg_gex = simulate_standard_normal_expression(names, n, n_null_genes,
                                                    seed + 7919u);
-    if (neg_gex == NULL)
-        goto cleanup;
 
     combined = combine_expression_matrices(pos_gex, neg_gex);
 
-cleanup:
+    /* Free memory */
     gex_free_matrix_data(pos_gex);
     gex_free_matrix_data(neg_gex);
+
     return combined;
 }
 
@@ -578,7 +574,6 @@ int brownian_run_simulation_check(char **names,
                                   Matrix **Sigmas,
                                   int n_sigmas,
                                   unsigned int seed) {
-    int status = 0;   /* Assume failure to start */
     int i, j;
     int tp = 0, fn = 0, fp = 0, tn = 0;
     GexMatrix *sim = NULL;  /* Simulated gene expression matrix */
@@ -594,14 +589,14 @@ int brownian_run_simulation_check(char **names,
     for (i = 0; i < n_sigmas; i++) {
         if (Sigmas[i] == NULL) {
             fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL covariance at index %d\n", i);
-            goto cleanup_simulation_check;
+            return 1;
         }
 
         tree_sim = brownian_simulate_expression_with_nulls(Sigmas[i], names, n,
                                                            n_tree_genes, n_null_genes,
                                                            seed + (unsigned int)(104729u * i));
         if (tree_sim == NULL)
-            goto cleanup_simulation_check;
+            return 1;
 
         if (sim == NULL) {
             sim = tree_sim;
@@ -609,7 +604,7 @@ int brownian_run_simulation_check(char **names,
         } else {
             if (add_matrix_in_place(sim->X, tree_sim->X) != 0) {
                 fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
-                goto cleanup_simulation_check;
+                return 1;
             }
             gex_free_matrix_data(tree_sim);
             tree_sim = NULL;
@@ -618,7 +613,7 @@ int brownian_run_simulation_check(char **names,
 
     if (sim == NULL || scale_matrix_in_place(sim->X, 1.0 / (double)n_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
-        goto cleanup_simulation_check;
+        return 1;
     }
 
     /* Run the specified filter(s) on the simulated data. */
@@ -635,7 +630,7 @@ int brownian_run_simulation_check(char **names,
     if (Sigmas == NULL || n_sigmas <= 0 ||
         ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && morans == NULL) ||
         ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) && lrt == NULL)) {
-        goto cleanup_simulation_check;
+        return 1;
     }
 
     /* Evaluate the performance of the filter(s) */
@@ -675,14 +670,13 @@ int brownian_run_simulation_check(char **names,
     printf("  negatives simulated: %d, rejected: %d, false positives: %d\n",
            n_null_genes, tn, fp);
 
-    status = (fn == 0 && fp == 0); /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
+    /* Free memory */
+    gex_free_matrix_data(tree_sim);
+    gex_free_matrix_data(sim);
+    gex_free_morans_result(morans);
+    gex_free_lrt_result(lrt);
 
-    cleanup_simulation_check:
-        gex_free_matrix_data(tree_sim);
-        gex_free_matrix_data(sim);
-        gex_free_morans_result(morans);
-        gex_free_lrt_result(lrt);
-        return status;
+    return (fn == 0 && fp == 0); /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
 }
 
 /* Print a summary of the covariance matrix. */

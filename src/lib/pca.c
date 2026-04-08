@@ -99,7 +99,6 @@ static int gex_pca_components_for_variance_threshold_internal(double *var_explai
 /* Compute PCA for a gene expression matrix. 
 Return a pointer to the result or NULL on failure. */
 GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
-    int success = 0; /* Flag indicating if the function succeeded; Default is failure */
     int i, j;   /* Loop indices */
     int p;  /* Number of genes */
     int keep_K; /* Number of components to keep based on variance threshold */
@@ -144,7 +143,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     /* Perform eigendecomposition of the symmetric covariance matrix */
     if (mat_diagonalize_sym(Cov, eigvals, eigvecs) != 0) {
         fprintf(stderr, "ERROR: symmetric eigendecomposition failed in PCA\n");
-        goto cleanup_compute_pca;
+        return NULL;
     }
 
     /* Create an array of eigenvalue/index pairs to sort the eigenvalues in descending order while keeping track of their original indices */
@@ -222,29 +221,19 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     out->var_explained = new_var;
     out->K = keep_K;
 
-    success = 1; /* Mark as successful */
+    /* Free memory */
+    if (pairs != NULL)
+        free(pairs);
+    if (Xc != NULL)
+        mat_free(Xc);
+    if (Cov != NULL)
+        mat_free(Cov);
+    if (eigvals != NULL)
+        vec_free(eigvals);
+    if (eigvecs != NULL)
+        mat_free(eigvecs);
 
-    cleanup_compute_pca:
-        if (pairs != NULL)
-            free(pairs);
-        if (Xc != NULL)
-            mat_free(Xc);
-        if (Cov != NULL)
-            mat_free(Cov);
-        if (eigvals != NULL)
-            vec_free(eigvals);
-        if (eigvecs != NULL)
-            mat_free(eigvecs);
-        if (!success) {
-            if (out != NULL)
-                gex_free_pca(out);
-            if (new_components != NULL)
-                mat_free(new_components);
-            if (new_var != NULL)
-                free(new_var);
-            return NULL;
-        }
-        return out;
+    return out;
 }
 
 /* Print a summary of the PCA results */
