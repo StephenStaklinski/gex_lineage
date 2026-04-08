@@ -486,7 +486,12 @@ int main(int argc, char *argv[]) {
 
             {
                 char lrt_path[4096];
-                snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.tsv", outprefix);
+                if (lrt_alt_mode == GEX_LRT_ALT_FULL) {
+                    snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.full.tsv", outprefix);
+                } else if (lrt_alt_mode == GEX_LRT_ALT_LAMBDA) {
+                    snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.lambda.tsv", outprefix);
+                }
+
                 if (gex_write_lrt_tsv(lrt_path, lrt, gex, max_q) != 0) {
                     fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
                             lrt_path);
