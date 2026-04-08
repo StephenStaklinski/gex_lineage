@@ -103,6 +103,7 @@ static void usage(const char *progname) {
         "[--n-perms N] "
         "[--max-q Q] "
         "[--moran-min-i I] "
+        "[--sim-filter-only] "
         "[--filter-only] "
         "[--no-filter] "
         "[--verbose] "
@@ -117,7 +118,7 @@ int main(int argc, char *argv[]) {
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
-    int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
+    int n_sims = 1000;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
@@ -126,6 +127,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double l2_strength = 1e-3;  /* L2 regularization strength for loadings; 0 disables the penalty. */
+    int sim_filter_only = 0; /* If nonzero, only run the simulation-based filter step. */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
@@ -261,6 +263,9 @@ int main(int argc, char *argv[]) {
             }
             seed = (unsigned int)strtoul(argv[++i], NULL, 10);
         }
+        else if (strcmp(argv[i], "--sim-filter-only") == 0) {
+            sim_filter_only = 1;
+        }
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
         }
@@ -282,12 +287,12 @@ int main(int argc, char *argv[]) {
     }
 
     /* Check that all required inputs are specified */
-    if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
+    if (trees_file == NULL || ((expr_file == NULL || outprefix == NULL) && !sim_filter_only)) {
         usage(argv[0]);
         return 1;
     }
-    if (filter_only && no_filter) {
-        fprintf(stderr, "ERROR: --filter-only and --no-filter cannot be used together.\n");
+    if ((filter_only && no_filter )|| (sim_filter_only && no_filter)) {
+        fprintf(stderr, "ERROR: --no-filter cannot be used together with --filter-only or --sim-filter-only.\n");
         return 1;
     }
 
@@ -327,24 +332,27 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Load the input expression matrix */
-    gex = gex_read_labeled_matrix(expr_file);
-    if (gex == NULL) {
-        fprintf(stderr, "ERROR: failed to load expression matrix.\n");
-        return 1;
-    }
-    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
+    /* Real expression matrix data is not needed for simulation-based filtering only mode */
+    if (!sim_filter_only) {
+        /* Load the input real expression matrix */
+        gex = gex_read_labeled_matrix(expr_file);
+        if (gex == NULL) {
+            fprintf(stderr, "ERROR: failed to load expression matrix.\n");
+            return 1;
+        }
+        printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
-    if (verbose) {
-        /* Print input/output summary for user verification */
-        gex_print_io_summary(trees, n_trees, gex);
-    }
+        if (verbose) {
+            /* Print input/output summary for user verification */
+            gex_print_io_summary(trees, n_trees, gex);
+        }
 
-    /* Reconcile tree tips and expression cell names to the intersection of both sets
-    if they do not perfectly match. */
-    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
-        fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
-        return 1;
+        /* Reconcile tree tips and expression cell names to the intersection of both sets
+        if they do not perfectly match. */
+        if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
+            fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
+            return 1;
+        }
     }
 
     /* Rescale the trees to a specified total height if requested */
@@ -419,6 +427,11 @@ int main(int argc, char *argv[]) {
                 printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree.\n");
             }
         }
+
+        /* Stop early if only the simulation test of phylogenetic signal filtering is requested */
+        if (sim_filter_only) {
+            return 0;
+        }
     }
 
     if (!no_filter) {
@@ -487,8 +500,7 @@ int main(int argc, char *argv[]) {
 
         /* Stop early if only phylogenetic signal filtering is requested */
         if (filter_only) {
-            printf("Done\n");
-            return 0; /* Success since user just wants to filter genes */
+            return 0;
         }
 
         /* Filter genes based on the results of the correlation and/or LRT test(s) */

@@ -641,7 +641,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Open a log file to record the optimization trajectory while fitting
     the latent Brownian model. */
-    snprintf(log_path, sizeof(log_path), "%s.model.log", outprefix);
+    snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
     fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
     for (i = 0; i < pca->K; i++)
