@@ -453,31 +453,31 @@ static Matrix *gex_standardize_columns(GexMatrix *gex) {
     if (gex == NULL || gex->X == NULL)
         return NULL;
 
-    Z = mat_new(gex->n_cells, gex->n_genes);    /* Initialize the standardized matrix */
+    Z = mat_new(gex->X->nrows, gex->X->ncols);    /* Initialize the standardized matrix */
     if (Z == NULL)
         return NULL;
-    col = smalloc(gex->n_cells * sizeof(double));
+    col = smalloc(gex->X->nrows * sizeof(double));
 
     /* Standardize each column (gene) of the expression matrix */
-    for (j = 0; j < gex->n_genes; j++) {
+    for (j = 0; j < gex->X->ncols; j++) {
         double mean = 0.0;
         double var = 0.0;
         double sd;
 
-        for (i = 0; i < gex->n_cells; i++)
+        for (i = 0; i < gex->X->nrows; i++)
             col[i] = mat_get(gex->X, i, j);
 
-        calculate_mean_variance(col, gex->n_cells, &mean, &var);
+        calculate_mean_variance(col, gex->X->nrows, &mean, &var);
         sd = sqrt(var);
 
         /* If the standard deviation is very small, set all values to 0. Otherwise, standardize the values 
         by subtracting the mean and dividing by the standard deviation */
         if (sd < 1e-12) {
-            for (i = 0; i < gex->n_cells; i++)
+            for (i = 0; i < gex->X->nrows; i++)
                 mat_set(Z, i, j, 0.0);
         }
         else {
-            for (i = 0; i < gex->n_cells; i++) {
+            for (i = 0; i < gex->X->nrows; i++) {
                 double z = (col[i] - mean) / sd;
                 mat_set(Z, i, j, z);
             }
@@ -855,8 +855,6 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
 
     gex = scalloc(1, sizeof(GexMatrix));    /* Allocate matrix structure */
 
-    gex->n_cells = 0;
-    gex->n_genes = n_genes;
     gex->gene_names = scalloc(n_genes, sizeof(char *));    /* Allocate array for gene names */
     for (i = 0; i < n_genes; i++) {
         gex->gene_names[i] = strdup(fields[i + 1]); /* Duplicate gene name strings from header fields */
@@ -886,8 +884,6 @@ GexMatrix *gex_read_labeled_matrix(const char *filename) {
         return NULL;
     }
 
-    gex->n_cells = n_cells;
-    gex->n_genes = n_genes;
     gex->cell_names = scalloc(n_cells, sizeof(char *));    /* Allocate array for cell names */
     gex->X = mat_new(n_cells, n_genes);    /* Allocate expression matrix */
 
@@ -956,13 +952,13 @@ void gex_free_matrix_data(GexMatrix *gex) {
     if (gex == NULL) return;
 
     if (gex->cell_names != NULL) {
-        for (i = 0; i < gex->n_cells; i++)
+        for (i = 0; i < gex->X->nrows; i++)
             free(gex->cell_names[i]);
         free(gex->cell_names);
     }
 
     if (gex->gene_names != NULL) {
-        for (i = 0; i < gex->n_genes; i++)
+        for (i = 0; i < gex->X->ncols; i++)
             free(gex->gene_names[i]);
         free(gex->gene_names);
     }
@@ -981,18 +977,18 @@ void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
     if (gex != NULL && gex->X != NULL) {
         printf("\n");
         printf("First few cell names:\n");
-        for (i = 0; i < gex->n_cells && i < n_print; i++)
+        for (i = 0; i < gex->X->nrows && i < n_print; i++)
             printf("  %s\n", gex->cell_names[i]);
 
         printf("First few gene names:\n");
-        for (i = 0; i < gex->n_genes && i < n_print; i++)
+        for (i = 0; i < gex->X->ncols && i < n_print; i++)
             printf("  %s\n", gex->gene_names[i]);
 
         printf("First few entries of matrix:\n");
-        for (i = 0; i < gex->n_cells && i < n_print; i++) {
+        for (i = 0; i < gex->X->nrows && i < n_print; i++) {
             int j;
             printf("  %s:", gex->cell_names[i]);
-            for (j = 0; j < gex->n_genes && j < n_print; j++)
+            for (j = 0; j < gex->X->ncols && j < n_print; j++)
                 printf(" %g", mat_get(gex->X, i, j));
             printf("\n");
         }
@@ -1044,7 +1040,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         }
     }
 
-    keep_names = lst_new_ptr(gex->n_cells > 0 ? gex->n_cells : 1);  /* List to hold the names of the shared tree tips and expression matrix cells */
+    keep_names = lst_new_ptr(gex->X->nrows > 0 ? gex->X->nrows : 1);  /* List to hold the names of the shared tree tips and expression matrix cells */
     if (keep_names == NULL) {
         return 1;
     }
@@ -1053,13 +1049,13 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     for (i = 0; i < n_trees; i++) {
         for (j = 0; j < lst_size(tree_name_lists[i]); j++) {
             String *s = lst_get_ptr(tree_name_lists[i], j);
-            if (!gex_name_in_char_array(s->chars, gex->cell_names, gex->n_cells))
+            if (!gex_name_in_char_array(s->chars, gex->cell_names, gex->X->nrows))
                 tree_missing_from_expr++;
         }
     }
 
     /* Keep only expression cells that are present in every tree. */
-    for (i = 0; i < gex->n_cells; i++) {
+    for (i = 0; i < gex->X->nrows; i++) {
         int present_in_all_trees = 1;
         for (j = 0; j < n_trees; j++) {
             if (!gex_name_in_string_list(gex->cell_names[i], tree_name_lists[j])) {
@@ -1093,14 +1089,14 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 
     /* Initialize the subsetted matrix */
     subset = scalloc(1, sizeof(GexMatrix)); /* Allocate memory for the subsetted matrix */
-    subset->n_cells = n_keep;
-    subset->n_genes = gex->n_genes;
-    subset->X = mat_new(n_keep, gex->n_genes);
+    subset->X->nrows = n_keep;
+    subset->X->ncols = gex->X->ncols;
+    subset->X = mat_new(n_keep, gex->X->ncols);
     subset->cell_names = scalloc(n_keep, sizeof(char *));
-    subset->gene_names = scalloc(gex->n_genes, sizeof(char *));
+    subset->gene_names = scalloc(gex->X->ncols, sizeof(char *));
 
     /* Fill the gene names in the subsetted matrix (same as original since we keep all genes) */
-    for (j = 0; j < gex->n_genes; j++) {
+    for (j = 0; j < gex->X->ncols; j++) {
         subset->gene_names[j] = strdup(gex->gene_names[j]);
         if (subset->gene_names[j] == NULL) {
             gex_free_matrix_data(subset);
@@ -1110,7 +1106,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     }
 
     /* Fill the cell names and expression values in the subsetted matrix for the shared names */
-    for (i = 0, j = 0; i < gex->n_cells; i++) {
+    for (i = 0, j = 0; i < gex->X->nrows; i++) {
         if (gex_name_in_string_list(gex->cell_names[i], keep_names)) {
             int g;
             subset->cell_names[j] = strdup(gex->cell_names[i]);
@@ -1119,7 +1115,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
                 subset = NULL;
                 return 1;
             }
-            for (g = 0; g < gex->n_genes; g++)
+            for (g = 0; g < gex->X->ncols; g++)
                 mat_set(subset->X, j, g, mat_get(gex->X, i, g));
             j++;
         }
@@ -1141,9 +1137,9 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     *gex_ptr = subset;
 
     /* Print result summary */
-    if (n_keep < gex->n_cells) {
+    if (n_keep < gex->X->nrows) {
         printf("After reconciling mismatched tree and expression matrix names, %d tree tip(s) and %d expression cell(s) are shared and kept for downstream analysis.\n\n",
-            subset->n_cells, subset->n_cells);
+            subset->X->nrows, subset->X->nrows);
     } else {
         printf("All tree tip names and expression cell names match in the input data.\n");
     }
@@ -1187,8 +1183,8 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
         fprintf(stderr, "ERROR: gex_compute_morans_i got invalid input\n");
         return NULL;
     }
-    n_cells = gex->n_cells;
-    n_genes = gex->n_genes;
+    n_cells = gex->X->nrows;
+    n_genes = gex->X->ncols;
     Ws = scalloc(n_sigmas, sizeof(Matrix *));
     for (t = 0; t < n_sigmas; t++) {
         if (Sigmas[t] == NULL ||
@@ -1419,7 +1415,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         return NULL;
     }
 
-    n = gex->n_cells;
+    n = gex->X->nrows;
     Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
     Sigma_invs = scalloc(n_sigmas, sizeof(Matrix *));
     Ls = scalloc(n_sigmas, sizeof(Matrix *));
@@ -1483,19 +1479,19 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     y = smalloc(n * sizeof(double));
     if (alt_mode == GEX_LRT_ALT_FULL)
         y_sim = smalloc(n * sizeof(double));
-    res->ll_null = scalloc(gex->n_genes, sizeof(double));
-    res->ll_alt = scalloc(gex->n_genes, sizeof(double));
+    res->ll_null = scalloc(gex->X->ncols, sizeof(double));
+    res->ll_alt = scalloc(gex->X->ncols, sizeof(double));
     if (alt_mode == GEX_LRT_ALT_LAMBDA)
-        res->lambda_hat = scalloc(gex->n_genes, sizeof(double));
-    res->lrt_stat = scalloc(gex->n_genes, sizeof(double));
-    res->pvals = scalloc(gex->n_genes, sizeof(double));
-    res->qvals = scalloc(gex->n_genes, sizeof(double));
+        res->lambda_hat = scalloc(gex->X->ncols, sizeof(double));
+    res->lrt_stat = scalloc(gex->X->ncols, sizeof(double));
+    res->pvals = scalloc(gex->X->ncols, sizeof(double));
+    res->qvals = scalloc(gex->X->ncols, sizeof(double));
     res->alt_mode = alt_mode;
-    res->n_genes = gex->n_genes;
+    res->n_genes = gex->X->ncols;
 
     /* Run the LRT on each gene */
     rng_state = (seed == 0u ? 1u : seed);
-    for (j = 0; j < gex->n_genes; j++) {
+    for (j = 0; j < gex->X->ncols; j++) {
         double ll_null; /* Log-likelihood under the null model */
         double ll_alt;  /* Log-likelihood under the alternative model */
         double mu0; /* Mean under the null model (estimated from the data) */
@@ -1714,7 +1710,6 @@ int gex_write_lrt_tsv(const char *filename,
 void gex_free_morans_result(GexMoransResult *res) {
     if (res == NULL)
         return;
-
     if (res->corr != NULL)
         mat_free(res->corr);
     if (res->morans_i != NULL)
@@ -1765,14 +1760,14 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
     if (gex == NULL)
         return NULL;
     if ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) &&
-        (morans == NULL || gex->n_genes != morans->n_genes))
+        (morans == NULL || gex->X->ncols != morans->n_genes))
         return NULL;
     if ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) &&
-        (lrt == NULL || gex->n_genes != lrt->n_genes))
+        (lrt == NULL || gex->X->ncols != lrt->n_genes))
         return NULL;
 
     /* Count how many genes pass the filter(s) to determine the size of the output matrix */
-    for (j = 0; j < gex->n_genes; j++) {
+    for (j = 0; j < gex->X->ncols; j++) {
         if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i))
             nkeep++;
     }
@@ -1783,14 +1778,14 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
 
     /* Initialize the output matrix */
     out = scalloc(1, sizeof(GexMatrix));
-    out->n_cells = gex->n_cells;
-    out->n_genes = nkeep;
-    out->X = mat_new(out->n_cells, out->n_genes);
-    out->cell_names = smalloc(out->n_cells * sizeof(char *));
-    out->gene_names = smalloc(out->n_genes * sizeof(char *));
+    out->X->nrows = gex->X->nrows;
+    out->X->ncols = nkeep;
+    out->X = mat_new(out->X->nrows, out->X->ncols);
+    out->cell_names = smalloc(out->X->nrows * sizeof(char *));
+    out->gene_names = smalloc(out->X->ncols * sizeof(char *));
 
     /* Copy cell names */
-    for (i = 0; i < out->n_cells; i++) {
+    for (i = 0; i < out->X->nrows; i++) {
         out->cell_names[i] = strdup(gex->cell_names[i]);
         if (out->cell_names[i] == NULL) {
             gex_free_matrix_data(out);
@@ -1799,7 +1794,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
     }
 
     /* Fill the output matrix with passing genes  */
-    for (j = 0; j < gex->n_genes; j++) {
+    for (j = 0; j < gex->X->ncols; j++) {
         if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i)) {
             /* Copy gene name that passed the filter(s) */
             out->gene_names[out_j] = strdup(gex->gene_names[j]);
@@ -1808,7 +1803,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                 return NULL;
             }
             /* Copy expression values for the passing gene */
-            for (i = 0; i < gex->n_cells; i++)
+            for (i = 0; i < gex->X->nrows; i++)
                 mat_set(out->X, i, out_j, mat_get(gex->X, i, j));
             out_j++;
         }
@@ -1889,8 +1884,8 @@ int gex_write_model(const char *outprefix,
     if (summary_out == NULL)
         return 1;
     fprintf(summary_out, "parameter\tvalue\n");
-    fprintf(summary_out, "n_cells\t%d\n", gex->n_cells);
-    fprintf(summary_out, "n_genes\t%d\n", gex->n_genes);
+    fprintf(summary_out, "n_cells\t%d\n", gex->X->nrows);
+    fprintf(summary_out, "n_genes\t%d\n", gex->X->ncols);
     fprintf(summary_out, "k\t%d\n", k);
     fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
     for (j = 0; j < k; j++)
@@ -1899,14 +1894,14 @@ int gex_write_model(const char *outprefix,
     summary_out = NULL;
 
     /* Write out the simulated matrices */
-    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->n_cells,
-                                     gene_names, gex->n_genes, "cell") != 0)
+    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->X->nrows,
+                                     gene_names, gex->X->ncols, "cell") != 0)
         return 1;
-    if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->n_cells,
+    if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->X->nrows,
                                      factor_names, k, "cell") != 0)
         return 1;
     if (gex_write_labeled_matrix_tsv(l_path, L, factor_names, k,
-                                     gene_names, gex->n_genes, "factor") != 0)
+                                     gene_names, gex->X->ncols, "factor") != 0)
         return 1;
 
     /* Free memory */
@@ -1978,8 +1973,8 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     }
 
     /* Initialize the gene expression matrix */
-    gex->n_cells = n_cells;
-    gex->n_genes = n_genes;
+    gex->X->nrows = n_cells;
+    gex->X->ncols = n_genes;
     gex->X = mat_new(n_cells, n_genes);
     if (gex->X == NULL)
         return 1;

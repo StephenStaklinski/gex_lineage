@@ -387,8 +387,6 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
         return NULL;
     }
 
-    gex->n_cells = n;
-    gex->n_genes = ngenes;
     gex->X = mat_new(n, ngenes);
     gex->gene_names = scalloc(ngenes, sizeof(char *));
     generate_gene_names(gex->gene_names, ngenes);
@@ -429,8 +427,6 @@ GexMatrix *simulate_standard_normal_expression(char **names,
     }
 
     gex = scalloc(1, sizeof(GexMatrix));
-    gex->n_cells = n;
-    gex->n_genes = n_genes;
     gex->X = mat_new(n, n_genes);
     gex->gene_names = scalloc(n_genes, sizeof(char *));
     generate_gene_names(gex->gene_names, n_genes);
@@ -452,25 +448,23 @@ GexMatrix *combine_expression_matrices(GexMatrix *pos_gex,
 
     if (pos_gex == NULL || neg_gex == NULL ||
         pos_gex->X == NULL || neg_gex->X == NULL ||
-        pos_gex->n_cells != neg_gex->n_cells ||
-        pos_gex->n_genes <= 0 || neg_gex->n_genes <= 0)
+        pos_gex->X->nrows != neg_gex->X->nrows ||
+        pos_gex->X->ncols <= 0 || neg_gex->X->ncols <= 0)
         return NULL;
 
     combined = scalloc(1, sizeof(GexMatrix));
-    combined->n_cells = pos_gex->n_cells;   /* Assume same number of cells */
-    combined->n_genes = pos_gex->n_genes + neg_gex->n_genes;    /* Sum of genes from each matrix */
-    combined->X = mat_new(combined->n_cells, combined->n_genes);
-    combined->gene_names = scalloc(combined->n_genes, sizeof(char *));
+    combined->X = mat_new(pos_gex->X->nrows, pos_gex->X->ncols + neg_gex->X->ncols);
+    combined->gene_names = scalloc(combined->X->ncols, sizeof(char *));
 
-    for (j = 0; j < pos_gex->n_genes; j++) {
+    for (j = 0; j < pos_gex->X->ncols; j++) {
         combined->gene_names[j] = strdup(pos_gex->gene_names[j]);
         if (combined->gene_names[j] == NULL) {
             gex_free_matrix_data(combined);
             return NULL;
         }
     }
-    for (j = 0; j < neg_gex->n_genes; j++) {
-        int col = pos_gex->n_genes + j;
+    for (j = 0; j < neg_gex->X->ncols; j++) {
+        int col = pos_gex->X->ncols + j;
         combined->gene_names[col] = strdup(neg_gex->gene_names[j]);
         if (combined->gene_names[col] == NULL) {
             gex_free_matrix_data(combined);
@@ -478,11 +472,11 @@ GexMatrix *combine_expression_matrices(GexMatrix *pos_gex,
         }
     }
 
-    for (i = 0; i < combined->n_cells; i++) {
-        for (j = 0; j < pos_gex->n_genes; j++)
+    for (i = 0; i < combined->X->nrows; i++) {
+        for (j = 0; j < pos_gex->X->ncols; j++)
             mat_set(combined->X, i, j, mat_get(pos_gex->X, i, j));
-        for (j = 0; j < neg_gex->n_genes; j++)
-            mat_set(combined->X, i, pos_gex->n_genes + j, mat_get(neg_gex->X, i, j));
+        for (j = 0; j < neg_gex->X->ncols; j++)
+            mat_set(combined->X, i, pos_gex->X->ncols + j, mat_get(neg_gex->X, i, j));
     }
 
     return combined;

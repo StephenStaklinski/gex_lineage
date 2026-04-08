@@ -6,11 +6,9 @@
 #include <phast/trees.h>
 
 typedef struct {
-    Matrix *X;
+    Matrix *X;  /* cells (nrows) x genes (ncols) */
     char **cell_names;
     char **gene_names;
-    int n_cells;
-    int n_genes;
 } GexMatrix;
 
 typedef enum {

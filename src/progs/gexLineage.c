@@ -320,7 +320,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: failed to load expression matrix.\n");
         return 1;
     }
-    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->n_cells, gex->n_genes);
+    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
     if (verbose) {
         /* Print input/output summary for user verification */
@@ -345,7 +345,7 @@ int main(int argc, char *argv[]) {
     /* Calculate the phylogenetic covariance matrix for each input tree. */
     Sigmas = scalloc(n_trees, sizeof(Matrix *));
     for (i = 0; i < n_trees; i++) {
-        Sigmas[i] = covariance_from_tree(trees[i], gex->cell_names, gex->n_cells);
+        Sigmas[i] = covariance_from_tree(trees[i], gex->cell_names, gex->X->nrows);
         if (Sigmas[i] == NULL) {
             fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
             return 1;
@@ -353,13 +353,13 @@ int main(int argc, char *argv[]) {
     }
     if (verbose) {
         printf("Computed phylogenetic covariance matrix for the first tree:\n");
-        print_covariance_summary(Sigmas[0], gex->cell_names, gex->n_cells);
+        print_covariance_summary(Sigmas[0], gex->cell_names, gex->X->nrows);
     }
 
     /* Compute average covariance matrix over input trees if needed */
     if (n_filter_trees == -1) {
         filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
-                                                       gex->cell_names, gex->n_cells);
+                                                       gex->cell_names, gex->X->nrows);
         if (filter_avg_Sigma == NULL) {
             fprintf(stderr, "ERROR: failed to compute average covariance for filtering.\n");
             return 1;
@@ -387,7 +387,7 @@ int main(int argc, char *argv[]) {
                    n_filter_trees);
         }
         if (!brownian_run_simulation_check(gex->cell_names,
-                                           gex->n_cells,
+                                           gex->X->nrows,
                                            n_sims,
                                            n_sims,
                                            filter_mode,
@@ -485,13 +485,13 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
             return 1;
         }
-        printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->n_cells, gex_filtered->n_genes);
+        printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
         printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
     } else {
         gex_filtered = gex;
         gex = NULL;
         printf("Skipping phylogenetic signal gene filtering and using all %d gene(s) for modeling.\n",
-               gex_filtered->n_genes);
+               gex_filtered->X->ncols);
         printf("Running PCA on the input unfiltered gene expression matrix to select the number of latent factor dimensions for the model...\n");
     }
 

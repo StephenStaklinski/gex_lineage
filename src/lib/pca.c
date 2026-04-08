@@ -117,12 +117,12 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         return NULL;
     }
 
-    if (gex->n_cells < 2) {
+    if (gex->X->nrows < 2) {
         fprintf(stderr, "ERROR: need at least 2 rows to compute PCA\n");
         return NULL;
     }
 
-    p = gex->n_genes;
+    p = gex->X->ncols;
 
     /* Center the gene expression matrix by subtracting the mean of each column (gene) */
     Xc = center_matrix(gex->X);

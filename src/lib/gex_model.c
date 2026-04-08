@@ -477,8 +477,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Model related */
     int k;  /* Number of latent dimensions */
-    int n_cells = gex->n_cells;
-    int n_genes = gex->n_genes;
+    int n_cells = gex->X->nrows;
+    int n_genes = gex->X->ncols;
     GexLatentBrownianWorkspace ws;  /* Workspace for precomputed matrices and intermediate calculations */
     GexLatentBrownianModel *model = NULL;   /* Fitted model */
 
@@ -526,7 +526,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Build regularized versions of the phylogenetic covariance matrices and
     precompute the inverse and log-determinant for each tree. */
-    n = gex->n_cells;
+    n = gex->X->nrows;
     ws.tree_priors = scalloc(n_sigmas, sizeof(GexLatentBrownianTreePrior));
     ws.prior_log_terms = scalloc(n_sigmas, sizeof(double));
     ws.prior_weights = scalloc(n_sigmas, sizeof(double));

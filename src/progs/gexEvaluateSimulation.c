@@ -52,13 +52,11 @@ static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
     if (src == NULL || target_names == NULL || n_target <= 0)
         return NULL;
     out = scalloc(1, sizeof(GexMatrix));
-    out->n_cells = n_target;
-    out->n_genes = src->n_genes;
-    out->X = mat_new(n_target, src->n_genes);
+    out->X = mat_new(n_target, src->X->ncols);
     out->cell_names = scalloc(n_target, sizeof(char *));
-    out->gene_names = scalloc(src->n_genes, sizeof(char *));
+    out->gene_names = scalloc(src->X->ncols, sizeof(char *));
 
-    for (j = 0; j < src->n_genes; j++) {
+    for (j = 0; j < src->X->ncols; j++) {
         out->gene_names[j] = strdup(src->gene_names[j]);
         if (out->gene_names[j] == NULL) {
             gex_free_matrix_data(out);
@@ -67,7 +65,7 @@ static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
     }
 
     for (i = 0; i < n_target; i++) {
-        int src_idx = gexeval_find_name(src->cell_names, src->n_cells, target_names[i]);
+        int src_idx = gexeval_find_name(src->cell_names, src->X->nrows, target_names[i]);
         if (src_idx < 0) {
             gex_free_matrix_data(out);
             return NULL;
@@ -77,7 +75,7 @@ static GexMatrix *gexeval_subset_rows_by_names(GexMatrix *src,
             gex_free_matrix_data(out);
             return NULL;
         }
-        for (j = 0; j < src->n_genes; j++)
+        for (j = 0; j < src->X->ncols; j++)
             mat_set(out->X, i, j, mat_get(src->X, src_idx, j));
     }
 
@@ -93,13 +91,11 @@ static GexMatrix *gexeval_subset_cols_by_names(GexMatrix *src,
     if (src == NULL || target_names == NULL || n_target <= 0)
         return NULL;
     out = scalloc(1, sizeof(GexMatrix));
-    out->n_cells = src->n_cells;
-    out->n_genes = n_target;
-    out->X = mat_new(src->n_cells, n_target);
-    out->cell_names = scalloc(src->n_cells, sizeof(char *));
+    out->X = mat_new(src->X->nrows, n_target);
+    out->cell_names = scalloc(src->X->nrows, sizeof(char *));
     out->gene_names = scalloc(n_target, sizeof(char *));
 
-    for (i = 0; i < src->n_cells; i++) {
+    for (i = 0; i < src->X->nrows; i++) {
         out->cell_names[i] = strdup(src->cell_names[i]);
         if (out->cell_names[i] == NULL) {
             gex_free_matrix_data(out);
@@ -108,7 +104,7 @@ static GexMatrix *gexeval_subset_cols_by_names(GexMatrix *src,
     }
 
     for (j = 0; j < n_target; j++) {
-        int src_idx = gexeval_find_name(src->gene_names, src->n_genes, target_names[j]);
+        int src_idx = gexeval_find_name(src->gene_names, src->X->ncols, target_names[j]);
         if (src_idx < 0) {
             gex_free_matrix_data(out);
             return NULL;
@@ -118,7 +114,7 @@ static GexMatrix *gexeval_subset_cols_by_names(GexMatrix *src,
             gex_free_matrix_data(out);
             return NULL;
         }
-        for (i = 0; i < src->n_cells; i++)
+        for (i = 0; i < src->X->nrows; i++)
             mat_set(out->X, i, j, mat_get(src->X, i, src_idx));
     }
 
@@ -983,11 +979,11 @@ int main(int argc, char *argv[]) {
 
     /* Derive the set of common cells and genes between the sim and fitted outputs 
     so that we are not comparing model fits on the subset of genes simulated. */
-    if (gexeval_collect_common_names(fit_Z->cell_names, fit_Z->n_cells,
-                                     sim_Z->cell_names, sim_Z->n_cells,
+    if (gexeval_collect_common_names(fit_Z->cell_names, fit_Z->X->nrows,
+                                     sim_Z->cell_names, sim_Z->X->nrows,
                                      &common_cells, &n_common_cells) != 0 ||
-        gexeval_collect_common_names(fit_L->gene_names, fit_L->n_genes,
-                                     sim_L->gene_names, sim_L->n_genes,
+        gexeval_collect_common_names(fit_L->gene_names, fit_L->X->ncols,
+                                     sim_L->gene_names, sim_L->X->ncols,
                                      &common_genes, &n_common_genes) != 0) {
         fprintf(stderr, "ERROR: failed to derive shared cells/genes between sim and fitted outputs.\n");
         return 1;
