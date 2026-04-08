@@ -717,6 +717,7 @@ TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
         char *trimmed;
 
         trimmed = gex_lstrip(line); /* Strip leading whitespace */
+        gex_rstrip_inplace(trimmed); /* Remove line-ending whitespace before buffering wrapped trees */
 
         if (!collecting_tree) {
             if (!gex_starts_with_tree_keyword(trimmed))
