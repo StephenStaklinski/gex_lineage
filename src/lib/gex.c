@@ -1089,8 +1089,6 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
 
     /* Initialize the subsetted matrix */
     subset = scalloc(1, sizeof(GexMatrix)); /* Allocate memory for the subsetted matrix */
-    subset->X->nrows = n_keep;
-    subset->X->ncols = gex->X->ncols;
     subset->X = mat_new(n_keep, gex->X->ncols);
     subset->cell_names = scalloc(n_keep, sizeof(char *));
     subset->gene_names = scalloc(gex->X->ncols, sizeof(char *));
@@ -1778,11 +1776,9 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
 
     /* Initialize the output matrix */
     out = scalloc(1, sizeof(GexMatrix));
-    out->X->nrows = gex->X->nrows;
-    out->X->ncols = nkeep;
-    out->X = mat_new(out->X->nrows, out->X->ncols);
-    out->cell_names = smalloc(out->X->nrows * sizeof(char *));
-    out->gene_names = smalloc(out->X->ncols * sizeof(char *));
+    out->X = mat_new(gex->X->nrows, nkeep);
+    out->cell_names = smalloc(gex->X->nrows * sizeof(char *));
+    out->gene_names = smalloc(nkeep * sizeof(char *));
 
     /* Copy cell names */
     for (i = 0; i < out->X->nrows; i++) {
@@ -1973,8 +1969,6 @@ int gex_simulate_from_latent_factors(Matrix *Z,
     }
 
     /* Initialize the gene expression matrix */
-    gex->X->nrows = n_cells;
-    gex->X->ncols = n_genes;
     gex->X = mat_new(n_cells, n_genes);
     if (gex->X == NULL)
         return 1;
