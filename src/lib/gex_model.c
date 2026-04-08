@@ -643,7 +643,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     the latent Brownian model. */
     snprintf(log_path, sizeof(log_path), "%s.model.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
+    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
     for (i = 0; i < pca->K; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_norm\tL_norm\n");
