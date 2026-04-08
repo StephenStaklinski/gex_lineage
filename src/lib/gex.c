@@ -1892,9 +1892,9 @@ int gex_write_model(const char *outprefix,
     fprintf(summary_out, "n_cells\t%d\n", gex->n_cells);
     fprintf(summary_out, "n_genes\t%d\n", gex->n_genes);
     fprintf(summary_out, "k\t%d\n", k);
-    fprintf(summary_out, "sigma_obs\t%.17g\n", sigma2_obs);
+    fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
     for (j = 0; j < k; j++)
-        fprintf(summary_out, "sigma_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
+        fprintf(summary_out, "sigma2_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
     fclose(summary_out);
     summary_out = NULL;
 
