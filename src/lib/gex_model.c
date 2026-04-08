@@ -302,11 +302,15 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
 
     /* Add the likelihood from the gaussian observation model X_ij ~ N((ZL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. Z and log(sigma2_obs). */
-    obj += gaussian_observation_term(model, ws, sigma2_obs, resid, grad_Z, grad_log_sigma_obs);
+    model->observation_objective =
+        gaussian_observation_term(model, ws, sigma2_obs, resid, grad_Z, grad_log_sigma_obs);
+    obj += model->observation_objective;
 
     /* Add the mixture-of-Brownian prior contribution on Z and accumulate the
     gradients w.r.t. Z and log(sigma2_latent). */
-    obj += latent_brownian_prior_term(model, ws, grad_Z, grad_log_sigma_latent);
+    model->brownian_prior_objective =
+        latent_brownian_prior_term(model, ws, grad_Z, grad_log_sigma_latent);
+    obj += model->brownian_prior_objective;
     if (!isfinite(obj)) {
         mat_free(resid);
         return HUGE_VAL;
@@ -314,7 +318,8 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
 
     /* Add the gradient contribution for L under the Gaussian likelihood and
     the L2 regularization penalty on L. */
-    obj += l2_regularized_L_term(model, resid, grad_L, sigma2_obs, lambda_L);
+    model->l2_objective = l2_regularized_L_term(model, resid, grad_L, sigma2_obs, lambda_L);
+    obj += model->l2_objective;
 
     mat_free(resid);
     return obj;
@@ -523,10 +528,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     the latent Brownian model. */
     snprintf(log_path, sizeof(log_path), "%s.model.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tgrad_norm\tsigma_obs");
+    fprintf(logf, "step\tobjective\tlong_objective_running_avg\tshort_objective_running_avg\trel_objective_running_avg_change\tstable_steps\tobservation_negll\tbrownian_neglprior\tl2_penalty\tgrad_norm\tsigma_obs");
     for (i = 0; i < pca->K; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
-    fprintf(logf, "\tZ_norm\tL_norm\tstable_steps\n");
+    fprintf(logf, "\tZ_norm\tL_norm\n");
 
     /* Center the expression matrix by subtracting the mean of each gene.
     This ensures the latent factor model is fit to the residual structure
@@ -764,13 +769,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Log the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
-        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g",
+        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
                 step,
                 model->objective,
                 running_objective_avg_long,
                 running_objective_avg_short,
                 rel_objective_change,
                 stable_steps,
+                model->observation_objective,
+                model->brownian_prior_objective,
+                model->l2_objective,
                 metrics.grad_norm,
                 model->sigma2_obs);
         for (d = 0; d < k; d++)

@@ -29,6 +29,9 @@ typedef struct {
     double sigma2_obs;
     double l2_strength;
     double objective;
+    double observation_objective;
+    double brownian_prior_objective;
+    double l2_objective;
     MVN *latent_mvn;
 } GexLatentBrownianModel;
 
