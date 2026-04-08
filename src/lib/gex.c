@@ -41,13 +41,40 @@ static int gex_starts_with_tree_keyword(const char *s) {
             tolower((unsigned char)s[3]) == 'e');
 }
 
+static int gex_append_text(char **buf, size_t *len, size_t *capacity, const char *text) {
+    size_t text_len;
+    size_t needed;
+
+    if (buf == NULL || len == NULL || capacity == NULL || text == NULL)
+        return -1;
+
+    text_len = strlen(text);
+    needed = *len + text_len + 1;
+
+    if (needed > *capacity) {
+        size_t new_capacity = (*capacity == 0 ? 256 : *capacity);
+
+        while (needed > new_capacity)
+            new_capacity *= 2;
+
+        *buf = srealloc(*buf, new_capacity * sizeof(char));
+        *capacity = new_capacity;
+    }
+
+    memcpy(*buf + *len, text, text_len + 1);
+    *len += text_len;
+    return 0;
+}
+
 /* Extract a Newick string from a NEXUS tree line.
 Returns a pointer to the extracted string or NULL on failure. */
 static char *gex_extract_newick_from_tree_line(const char *line) {
     const char *eq;
+    const char *end;
     char *tmp;
     char *s;
     char *out;
+    size_t out_len;
 
     if (line == NULL) return NULL;
 
@@ -66,7 +93,11 @@ static char *gex_extract_newick_from_tree_line(const char *line) {
         s = gex_lstrip(s);
     }
 
-    out = strdup(s);
+    end = strchr(s, ';');
+    out_len = (end == NULL ? strlen(s) : (size_t)(end - s + 1));
+    out = smalloc((out_len + 1) * sizeof(char));
+    memcpy(out, s, out_len);
+    out[out_len] = '\0';
     free(tmp);
     return out;
 }
@@ -662,10 +693,14 @@ TODO: Make the function map names from the nexus file header
 the trees block since many NEXUS files have renamed taxa. */
 TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
     FILE *f;
-    char line[100000];
+    char line[4096];
+    char *tree_record = NULL;
     TreeNode **trees = NULL;    /* Array of tree pointers to fill */
+    size_t tree_record_len = 0;
+    size_t tree_record_capacity = 0;
     int capacity = 0;
     int count = 0;
+    int collecting_tree = 0;
 
     if (n_trees == NULL || filename == NULL)
         return NULL;
@@ -680,41 +715,78 @@ TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
 
     while (fgets(line, sizeof(line), f) != NULL) {
         char *trimmed;
-        char *newick;
-        TreeNode *tree;
 
         trimmed = gex_lstrip(line); /* Strip leading whitespace */
 
-        if (!gex_starts_with_tree_keyword(trimmed))
-            continue;   /* Skip lines that don't start with "TREE" */
+        if (!collecting_tree) {
+            if (!gex_starts_with_tree_keyword(trimmed))
+                continue;   /* Skip lines that don't start with "TREE" */
 
-        newick = gex_extract_newick_from_tree_line(trimmed);    /* Get Newick string */
-        if (newick == NULL)
+            tree_record_len = 0;
+            if (gex_append_text(&tree_record, &tree_record_len, &tree_record_capacity, trimmed) != 0) {
+                fprintf(stderr, "ERROR: failed to buffer TREE line from file: %s\n", filename);
+                gex_free_trees(trees, count);
+                fclose(f);
+                return NULL;
+            }
+            collecting_tree = 1;
+        }
+        else {
+            if (gex_append_text(&tree_record, &tree_record_len, &tree_record_capacity, trimmed) != 0) {
+                fprintf(stderr, "ERROR: failed to buffer wrapped TREE line from file: %s\n", filename);
+                free(tree_record);
+                gex_free_trees(trees, count);
+                fclose(f);
+                return NULL;
+            }
+        }
+
+        if (strchr(tree_record, ';') == NULL)
             continue;
 
-        tree = tr_new_from_string(newick);  /* Parse the Newick string into a tree structure */
-        free(newick);
+        {
+            char *newick = gex_extract_newick_from_tree_line(tree_record);    /* Get Newick string */
+            TreeNode *tree;
 
-        /* Check if tree parsing was successful */
-        if (tree == NULL) {
-            fprintf(stderr, "ERROR: failed to parse tree from file: %s\n", filename);
-            gex_free_trees(trees, count);
-            fclose(f);
-            return NULL;
+            collecting_tree = 0;
+
+            if (newick == NULL)
+                continue;
+
+            tree = tr_new_from_string(newick);  /* Parse the Newick string into a tree structure */
+            free(newick);
+
+            /* Check if tree parsing was successful */
+            if (tree == NULL) {
+                fprintf(stderr, "ERROR: failed to parse tree from file: %s\n", filename);
+                free(tree_record);
+                gex_free_trees(trees, count);
+                fclose(f);
+                return NULL;
+            }
+
+            /* Ensure capacity in the trees array */
+            if (count == capacity) {
+                int new_capacity = (capacity == 0 ? 8 : 2 * capacity);
+                TreeNode **tmp = srealloc(trees, new_capacity * sizeof(TreeNode *));
+                trees = tmp;
+                capacity = new_capacity;
+            }
+
+            trees[count++] = tree;
         }
-
-        /* Ensure capacity in the trees array */
-        if (count == capacity) {
-            int new_capacity = (capacity == 0 ? 8 : 2 * capacity);
-            TreeNode **tmp = srealloc(trees, new_capacity * sizeof(TreeNode *));
-            trees = tmp;
-            capacity = new_capacity;
-        }
-
-        trees[count++] = tree;
     }
 
     fclose(f);
+
+    if (collecting_tree) {
+        fprintf(stderr, "ERROR: unterminated TREE entry in NEXUS file: %s\n", filename);
+        free(tree_record);
+        gex_free_trees(trees, count);
+        return NULL;
+    }
+
+    free(tree_record);
 
     if (count == 0) {
         fprintf(stderr, "ERROR: no TREE lines found in NEXUS file: %s\n", filename);
@@ -2016,4 +2088,3 @@ int gex_simulate_from_latent_factors(Matrix *Z,
 
     return 0;
 }
-
