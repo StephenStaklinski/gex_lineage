@@ -11,9 +11,9 @@
 
 
 /* Compute Gaussian observation negative log-likelihood and gradients for
-X ~ N(ZL, sigma2_obs). Returns the contribution to the objective (excluding
-the constant term (np/2)(log(2pi))), fills residual matrix, and computes gradients w.r.t. Z and
-log(sigma2_obs). */
+X ~ N(ZL, sigma2_obs). Returns the full contribution to the objective,
+including the Gaussian normalization constant, fills residual matrix,
+and computes gradients w.r.t. Z and log(sigma2_obs). */
 static double gaussian_observation_term(
     const GexLatentBrownianModel *model,
     const GexLatentBrownianWorkspace *ws,
@@ -58,6 +58,11 @@ static double gaussian_observation_term(
                 *grad_log_sigma_obs += -0.5 * r * r / sigma2_obs;
         }
     }
+
+    /* Gaussian normalization constant: (np/2) log(2π). This is not
+    dependent on parameters so it does not matter for optimization but is
+    included here to obtain full likelihood values. */
+    obj += 0.5 * (double)(n * p) * log(2.0 * M_PI);
 
     /* Log-determinant term of Gaussian likelihood: (np/2) log(σ²) */
     obj += 0.5 * (double)(n * p) * log(sigma2_obs);
