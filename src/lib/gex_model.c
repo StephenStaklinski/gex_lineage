@@ -14,14 +14,12 @@
 X ~ N(ZL, sigma2_obs). Returns the full contribution to the objective,
 including the Gaussian normalization constant, fills residual matrix,
 and computes gradients w.r.t. Z and log(sigma2_obs). */
-static double gaussian_observation_term(
-    const GexLatentBrownianModel *model,
-    Matrix *Xc,
-    double sigma2_obs,
-    Matrix *resid,
-    Matrix *grad_Z,
-    double *grad_log_sigma_obs)
-{
+static double gaussian_observation_term(const GexLatentBrownianModel *model,
+                                        Matrix *Xc,
+                                        double sigma2_obs,
+                                        Matrix *resid,
+                                        Matrix *grad_Z,
+                                        double *grad_log_sigma_obs) {
     int i, j, d;
     int n = Xc->nrows;
     int p = Xc->ncols;
@@ -90,6 +88,41 @@ static double gaussian_observation_term(
     return obj;
 }
 
+/* Compute the full MVN log density for one vector z, including
+normalization constants. Optionally stores intermediate values for reuse.*/
+static double log_mvn_vec(const double *z,
+                            Matrix *Sigma_inv,
+                            double logdet_sigma,
+                            int n,
+                            double sigma2,
+                            double *sigma_inv_z,
+                            double *quad_out) {
+    int i, ii;
+    double quad = 0.0;
+
+    if (sigma2 <= 0.0)
+        return -HUGE_VAL;
+
+    for (i = 0; i < n; i++) {
+        double val = 0.0;
+        for (ii = 0; ii < n; ii++)
+            val += mat_get(Sigma_inv, i, ii) * z[ii];
+
+        if (sigma_inv_z != NULL)
+            sigma_inv_z[i] = val;
+
+        quad += z[i] * val;
+    }
+
+    if (quad_out != NULL)
+        *quad_out = quad;
+
+    return -0.5 * (double)n * log(2.0 * M_PI)
+           -0.5 * (double)n * log(sigma2)
+           -0.5 * logdet_sigma
+           -0.5 * quad / sigma2;
+}
+
 /* Compute log(sum_i exp(x[i])) in a numerically stable way using the
 log-sum-exp trick: max(x) + log(sum_i exp(x[i] - max(x))). */
 static double gex_model_logsumexp(double *x, int n) {
@@ -133,92 +166,95 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
     double obj = 0.0;
     double *prior_log_terms = NULL;
     double *prior_weights = NULL;
+    double *quad_terms = NULL;
+    double *z_d = NULL;
+    double **sigma_inv_z_cache = NULL;
 
     prior_log_terms = scalloc(n_sigmas, sizeof(double));
     prior_weights = scalloc(n_sigmas, sizeof(double));
-    if (prior_log_terms == NULL || prior_weights == NULL) {
-        if (prior_log_terms != NULL)
-            free(prior_log_terms);
-        if (prior_weights != NULL)
-            free(prior_weights);
+    quad_terms = scalloc(n_sigmas, sizeof(double));
+    z_d = scalloc(n, sizeof(double));
+    sigma_inv_z_cache = scalloc(n_sigmas, sizeof(double *));
+    if (prior_log_terms == NULL || prior_weights == NULL ||
+        quad_terms == NULL || z_d == NULL || sigma_inv_z_cache == NULL) {
+        free(prior_log_terms);
+        free(prior_weights);
+        free(quad_terms);
+        free(z_d);
+        free(sigma_inv_z_cache);
         return HUGE_VAL;
     }
 
-    /* Add the Brownian motion multivariate Gaussian prior on Z for each latent
-       dimension z_d as z_d ~ N(0, sigma2_latent[d] * Sigma), marginalized over
-       a set of trees (mixture of Gaussians prior). */
+    for (t = 0; t < n_sigmas; t++) {
+        sigma_inv_z_cache[t] = scalloc(n, sizeof(double));
+        if (sigma_inv_z_cache[t] == NULL) {
+            for (i = 0; i < t; i++)
+                free(sigma_inv_z_cache[i]);
+            free(prior_log_terms);
+            free(prior_weights);
+            free(quad_terms);
+            free(z_d);
+            free(sigma_inv_z_cache);
+            return HUGE_VAL;
+        }
+    }
+
+    /* Add the Brownian motion multivariate Gaussian mixture prior on Z for each
+    latent dimension z_d, marginalizing over a set of candidate trees. */
     for (d = 0; d < k; d++) {
         double sigma2_d = model->sigma2_latent[d];
-        double log_mix;  /* log-sum-exp of per-tree log prior terms */
-        double expected_quad_over_sigma2 = 0.0;  /* E_t[ z_d^T Σ_t^{-1} z_d / sigma2_d ] under posterior tree weights */
+        double log_mix;
+        double expected_quad_over_sigma2 = 0.0;
 
-        /* Compute per-tree log prior contributions (up to constants) */
+        for (i = 0; i < n; i++)
+            z_d[i] = mat_get(model->Z, i, d);
+
+        /* Compute full per-tree Brownian Gaussian log densities and cache
+           Sigma_t^{-1} z_d and z_d^T Sigma_t^{-1} z_d for reuse. */
         for (t = 0; t < n_sigmas; t++) {
-            double quad = 0.0;  /* Quadratic form z_d^T Σ_t^{-1} z_d */
-            Matrix *Sigma_inv = Sigma_invs[t];
-
-            for (i = 0; i < n; i++) {
-                double val = 0.0;
-                int ii;
-
-                /* Compute (Σ_t^{-1} z_d)_i */
-                for (ii = 0; ii < n; ii++)
-                    val += mat_get(Sigma_inv, i, ii) * mat_get(model->Z, ii, d);
-
-                /* Accumulate quadratic form */
-                quad += mat_get(model->Z, i, d) * val;
-            }
-
-            /* Store log prior (excluding (n/2) log sigma2_d, which is shared across trees):
-               log p(z_d | T_t) ∝ -1/(2σ²) z_d^T Σ_t^{-1} z_d - (1/2) log|Σ_t| */
-            prior_log_terms[t] = -0.5 * quad / sigma2_d
-                                   - 0.5 * logdet_sigmas[t];
+            prior_log_terms[t] = log_mvn_vec(z_d,
+                                             Sigma_invs[t],
+                                             logdet_sigmas[t],
+                                             n,
+                                             sigma2_d,
+                                             sigma_inv_z_cache[t],
+                                             &quad_terms[t]);
         }
 
-        /* Combine trees via log-sum-exp to marginalize over tree uncertainty */
+        /* Marginalize over tree uncertainty with log-sum-exp. */
         log_mix = gex_model_logsumexp(prior_log_terms, n_sigmas);
 
-        /* Add marginal prior contribution:
-           -log sum_t p(z_d | T_t) + (n/2) log sigma2_d */
-        obj += 0.5 * (double)n * log(sigma2_d) - log_mix;
+        /* Add the full negative log marginal prior for z_d under the mixture:
+           -log sum_t N(z_d | 0, sigma2_d * Sigma_t). */
+        obj += -log_mix;
 
-        /* Compute gradients via responsibility-weighted average over trees */
+        /* Compute responsibility-weighted gradients over trees. */
         for (t = 0; t < n_sigmas; t++) {
-            /* Posterior weight of tree t given current z_d:
-               w_t ∝ p(z_d | T_t) */
             double weight = exp(prior_log_terms[t] - log_mix);
-            Matrix *Sigma_inv = Sigma_invs[t];
-            double quad = 0.0;
-
             prior_weights[t] = weight;
 
             for (i = 0; i < n; i++) {
-                double val = 0.0;
-                int ii;
-
-                /* Compute (Σ_t^{-1} z_d)_i again for gradient */
-                for (ii = 0; ii < n; ii++)
-                    val += mat_get(Sigma_inv, i, ii) * mat_get(model->Z, ii, d);
-
-                /* Accumulate quadratic form (for sigma gradient) */
-                quad += mat_get(model->Z, i, d) * val;
-
-                /* Add weighted gradient contribution:
-                   ∇_z_d = E_t[ (1/σ²) Σ_t^{-1} z_d ] */
-                mat_set(grad_Z, i, d, mat_get(grad_Z, i, d) + weight * val / sigma2_d);
+                double old_grad = mat_get(grad_Z, i, d);
+                mat_set(grad_Z, i, d,
+                        old_grad + weight * sigma_inv_z_cache[t][i] / sigma2_d);
             }
 
-            /* Accumulate expected quadratic form under tree posterior */
-            expected_quad_over_sigma2 += weight * quad / sigma2_d;
+            expected_quad_over_sigma2 += weight * quad_terms[t] / sigma2_d;
         }
 
-        /* Gradient w.r.t. log(sigma2_d):
-           (n/2) - (1/2) E_t[ z_d^T Σ_t^{-1} z_d / σ² ] */
-        grad_log_sigma_latent[d] = 0.5 * (double)n - 0.5 * expected_quad_over_sigma2;
+        /* Gradient with respect to log(sigma2_d). */
+        grad_log_sigma_latent[d] =
+            0.5 * (double)n - 0.5 * expected_quad_over_sigma2;
     }
 
+    for (t = 0; t < n_sigmas; t++)
+        free(sigma_inv_z_cache[t]);
+    free(sigma_inv_z_cache);
     free(prior_log_terms);
     free(prior_weights);
+    free(quad_terms);
+    free(z_d);
+
     return obj;
 }
 
