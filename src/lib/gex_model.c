@@ -124,15 +124,25 @@ to log(sigma2_latent) for each latent factor. */
 static double latent_brownian_prior_term(GexLatentBrownianModel *model,
                                          Matrix **Sigma_invs,
                                          double *logdet_sigmas,
-                                         int n_tree_priors,
-                                         double *prior_log_terms,
-                                         double *prior_weights,
+                                         int n_sigmas,
                                          Matrix *grad_Z,
                                          double *grad_log_sigma_latent) {
     int i, d, t;
     int n = model->n_cells;
     int k = model->k;
     double obj = 0.0;
+    double *prior_log_terms = NULL;
+    double *prior_weights = NULL;
+
+    prior_log_terms = scalloc(n_sigmas, sizeof(double));
+    prior_weights = scalloc(n_sigmas, sizeof(double));
+    if (prior_log_terms == NULL || prior_weights == NULL) {
+        if (prior_log_terms != NULL)
+            free(prior_log_terms);
+        if (prior_weights != NULL)
+            free(prior_weights);
+        return HUGE_VAL;
+    }
 
     /* Add the Brownian motion multivariate Gaussian prior on Z for each latent
        dimension z_d as z_d ~ N(0, sigma2_latent[d] * Sigma), marginalized over
@@ -143,7 +153,7 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
         double expected_quad_over_sigma2 = 0.0;  /* E_t[ z_d^T Σ_t^{-1} z_d / sigma2_d ] under posterior tree weights */
 
         /* Compute per-tree log prior contributions (up to constants) */
-        for (t = 0; t < n_tree_priors; t++) {
+        for (t = 0; t < n_sigmas; t++) {
             double quad = 0.0;  /* Quadratic form z_d^T Σ_t^{-1} z_d */
             Matrix *Sigma_inv = Sigma_invs[t];
 
@@ -166,14 +176,14 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
         }
 
         /* Combine trees via log-sum-exp to marginalize over tree uncertainty */
-        log_mix = gex_model_logsumexp(prior_log_terms, n_tree_priors);
+        log_mix = gex_model_logsumexp(prior_log_terms, n_sigmas);
 
         /* Add marginal prior contribution:
            -log sum_t p(z_d | T_t) + (n/2) log sigma2_d */
         obj += 0.5 * (double)n * log(sigma2_d) - log_mix;
 
         /* Compute gradients via responsibility-weighted average over trees */
-        for (t = 0; t < n_tree_priors; t++) {
+        for (t = 0; t < n_sigmas; t++) {
             /* Posterior weight of tree t given current z_d:
                w_t ∝ p(z_d | T_t) */
             double weight = exp(prior_log_terms[t] - log_mix);
@@ -195,8 +205,7 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
 
                 /* Add weighted gradient contribution:
                    ∇_z_d = E_t[ (1/σ²) Σ_t^{-1} z_d ] */
-                mat_set(grad_Z, i, d,
-                        mat_get(grad_Z, i, d) + weight * val / sigma2_d);
+                mat_set(grad_Z, i, d, mat_get(grad_Z, i, d) + weight * val / sigma2_d);
             }
 
             /* Accumulate expected quadratic form under tree posterior */
@@ -208,6 +217,8 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
         grad_log_sigma_latent[d] = 0.5 * (double)n - 0.5 * expected_quad_over_sigma2;
     }
 
+    free(prior_log_terms);
+    free(prior_weights);
     return obj;
 }
 
@@ -281,9 +292,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *Xc,
                                            Matrix **Sigma_invs,
                                            double *logdet_sigmas,
-                                           int n_tree_priors,
-                                           double *prior_log_terms,
-                                           double *prior_weights,
+                                           int n_sigmas,
                                            Matrix *grad_Z,
                                            Matrix *grad_L,
                                            double *grad_log_sigma_latent,
@@ -319,8 +328,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the mixture-of-Brownian prior contribution on Z and accumulate the
     gradients w.r.t. Z and log(sigma2_latent). */
     model->brownian_prior_objective =
-        latent_brownian_prior_term(model, Sigma_invs, logdet_sigmas, n_tree_priors,
-                                    prior_log_terms, prior_weights,
+        latent_brownian_prior_term(model, Sigma_invs, logdet_sigmas, n_sigmas,
                                     grad_Z, grad_log_sigma_latent);
     obj += model->brownian_prior_objective;
     if (!isfinite(obj)) {
@@ -508,8 +516,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     Matrix *Xc = NULL;   /* Centered expression matrix */
     Matrix **Sigma_invs = NULL;   /* Inverses of regularized tree covariance matrices */
     double *logdet_sigmas = NULL; /* Log determinants of regularized tree covariances */
-    double *prior_log_terms = NULL;  /* Per-tree prior log terms scratch space */
-    double *prior_weights = NULL;    /* Per-tree posterior weight scratch space */
 
     /* Gradients */
     double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
@@ -554,8 +560,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     n = gex->X->nrows;
     Sigma_invs = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
-    prior_log_terms = scalloc(n_sigmas, sizeof(double));
-    prior_weights = scalloc(n_sigmas, sizeof(double));
 
     for (i = 0; i < n_sigmas; i++) {
         Matrix *Sigma_reg = NULL;
@@ -713,8 +717,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         /* Compute the objective function and gradients */
         model->objective = gex_model_objective_and_grad(model, Xc, Sigma_invs,
                                                         logdet_sigmas,
-                                                        n_sigmas, prior_log_terms,
-                                                        prior_weights, grad_Z, grad_L,
+                                                        n_sigmas, grad_Z, grad_L,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
         
@@ -849,8 +852,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Compute the final state objective and gradients. */
     model->objective = gex_model_objective_and_grad(model, Xc, Sigma_invs,
                                                     logdet_sigmas,
-                                                    n_sigmas, prior_log_terms,
-                                                    prior_weights, grad_Z, grad_L,
+                                                    n_sigmas, grad_Z, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
 
@@ -884,8 +886,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         free(Sigma_invs);
     }
     if (logdet_sigmas != NULL) free(logdet_sigmas);
-    if (prior_log_terms != NULL) free(prior_log_terms);
-    if (prior_weights != NULL) free(prior_weights);
 
     return model;
 }
