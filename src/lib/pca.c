@@ -7,12 +7,12 @@
 typedef struct {
     double val;
     int idx;
-} GexEigPair;
+} EigPair;
 
 /* Compare two eigenvalue-index pairs in descending order of eigenvalues */
-static int gex_cmp_eigpair_desc(const void *a, const void *b) {
-    const GexEigPair *ea = (const GexEigPair *)a;
-    const GexEigPair *eb = (const GexEigPair *)b;
+static int cmp_eigpair_desc(const void *a, const void *b) {
+    const EigPair *ea = (const EigPair *)a;
+    const EigPair *eb = (const EigPair *)b;
 
     if (ea->val < eb->val) return 1;
     if (ea->val > eb->val) return -1;
@@ -48,7 +48,7 @@ Matrix *center_matrix(Matrix *X) {
 }
 
 /* Compute the covariance matrix of a centered matrix. */
-static Matrix *gex_compute_covariance(Matrix *Xc) {
+static Matrix *compute_covariance(Matrix *Xc) {
     int i, j, k;
     int n = Xc->nrows;
     int p = Xc->ncols;
@@ -72,7 +72,7 @@ static Matrix *gex_compute_covariance(Matrix *Xc) {
 }
 
 /* Compute the number of PCA components needed to explain a certain proportion of the total variance. */
-static int gex_pca_components_for_variance_threshold_internal(double *var_explained,
+static int pca_components_for_variance_threshold_internal(double *var_explained,
                                                               int K,
                                                               double threshold) {
     int i;
@@ -98,7 +98,7 @@ static int gex_pca_components_for_variance_threshold_internal(double *var_explai
 
 /* Compute PCA for a gene expression matrix. 
 Return a pointer to the result or NULL on failure. */
-GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
+PCA *compute_pca(Matrix *X, double variance_threshold) {
     int i, j;   /* Loop indices */
     int p;  /* Number of genes */
     int keep_K; /* Number of components to keep based on variance threshold */
@@ -106,31 +106,31 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     Matrix *Cov = NULL; /* Covariance matrix of the centered data */
     Matrix *eigvecs = NULL; /* Matrix of eigenvectors (columns) from eigendecomposition of covariance matrix */
     Vector *eigvals = NULL; /* Vector of eigenvalues from eigendecomposition of covariance matrix */
-    GexEigPair *pairs = NULL;   /* Array of eigenvalue/index pairs for sorting eigenvalues in descending order */
-    GexPCA *out = NULL; /* Output PCA result */
+    EigPair *pairs = NULL;   /* Array of eigenvalue/index pairs for sorting eigenvalues in descending order */
+    PCA *out = NULL; /* Output PCA result */
     double total_var = 0.0; /* Total variance (sum of eigenvalues) for computing variance explained */
     Matrix *new_components = NULL; /* Reduced components matrix */
     double *new_var = NULL;    /* Reduced variance explained array */
 
-    if (gex == NULL || gex->X == NULL) {
-        fprintf(stderr, "ERROR: gex_compute_pca received NULL matrix\n");
+    if (X == NULL) {
+        fprintf(stderr, "ERROR: compute_pca received NULL matrix\n");
         return NULL;
     }
 
-    if (gex->X->nrows < 2) {
+    if (X->nrows < 2) {
         fprintf(stderr, "ERROR: need at least 2 rows to compute PCA\n");
         return NULL;
     }
 
-    p = gex->X->ncols;
+    p = X->ncols;
 
     /* Center the gene expression matrix by subtracting the mean of each column (gene) */
-    Xc = center_matrix(gex->X);
+    Xc = center_matrix(X);
     if (Xc == NULL)
         return NULL;
 
     /* Compute the covariance matrix of the centered data */
-    Cov = gex_compute_covariance(Xc);
+    Cov = compute_covariance(Xc);
     if (Cov == NULL) {
         mat_free(Xc);
         return NULL;
@@ -147,7 +147,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     }
 
     /* Create an array of eigenvalue/index pairs to sort the eigenvalues in descending order while keeping track of their original indices */
-    pairs = smalloc(p * sizeof(GexEigPair));
+    pairs = smalloc(p * sizeof(EigPair));
 
     /* Populate the eigenvalue/index pairs */
     for (i = 0; i < p; i++) {
@@ -159,14 +159,14 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
     }
 
     /* Sort the eigenvalue/index pairs in descending order */
-    qsort(pairs, p, sizeof(GexEigPair), gex_cmp_eigpair_desc);
+    qsort(pairs, p, sizeof(EigPair), cmp_eigpair_desc);
 
     /* Compute total variance as the sum of eigenvalues for computing variance explained */
     for (i = 0; i < p; i++)
         total_var += pairs[i].val;
 
     /* Allocate memory for the output PCA result */
-    out = scalloc(1, sizeof(GexPCA));
+    out = scalloc(1, sizeof(PCA));
     out->components = mat_new(p, p);
     out->var_explained = scalloc(p, sizeof(double));
     out->K = p;
@@ -195,11 +195,11 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
         }
     }
 
-    keep_K = gex_pca_components_for_variance_threshold_internal(out->var_explained,
+    keep_K = pca_components_for_variance_threshold_internal(out->var_explained,
                                                                 out->K,
                                                                 variance_threshold);
     if (keep_K <= 0 || keep_K > out->K) {
-        gex_free_pca(out);
+        free_pca(out);
         return NULL;
     }
 
@@ -237,7 +237,7 @@ GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold) {
 }
 
 /* Print a summary of the PCA results */
-void gex_print_pca_summary(GexPCA *pca) {
+void print_pca_summary(PCA *pca) {
     int i;
     double cumulative = 0.0;
 
@@ -261,7 +261,7 @@ void gex_print_pca_summary(GexPCA *pca) {
     printf("\n");
 }
 
-void gex_free_pca(GexPCA *pca) {
+void free_pca(PCA *pca) {
     if (pca == NULL) return;
 
     if (pca->components != NULL)

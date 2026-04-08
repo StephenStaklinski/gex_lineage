@@ -143,7 +143,7 @@ int main(int argc, char *argv[]) {
     Matrix **model_Sigmas = NULL; /* Selected covariance matrices for latent model fitting */
     GexMoransResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
-    GexPCA *pca = NULL; /* PCA results */
+    PCA *pca = NULL; /* PCA results */
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
@@ -510,7 +510,7 @@ int main(int argc, char *argv[]) {
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
-    pca = gex_compute_pca(gex_filtered, pca_var_threshold);
+    pca = compute_pca(gex_filtered->X, pca_var_threshold);
     if (pca == NULL) {
         fprintf(stderr, "ERROR: PCA failed.\n");
         return 1;
@@ -518,7 +518,7 @@ int main(int argc, char *argv[]) {
     printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n",
            pca->K, 100.0 * pca_var_threshold);
     if (verbose) {
-        gex_print_pca_summary(pca);
+        print_pca_summary(pca);
     }
 
     /* Downsample the input set of covariance matrices (trees) for fitting the latent model if requested */
@@ -561,7 +561,7 @@ int main(int argc, char *argv[]) {
     gex_free_matrix_data(gex_filtered);
     gex_free_morans_result(morans);
     gex_free_lrt_result(lrt);
-    gex_free_pca(pca);
+    free_pca(pca);
     gex_free_latent_brownian_model(model);
     if (Sigmas != NULL) {
         for (i = 0; i < n_trees; i++) {

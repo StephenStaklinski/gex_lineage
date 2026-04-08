@@ -12,13 +12,13 @@ typedef struct {
     Matrix *components;   // K x n_genes (principal components / loadings)
     double *var_explained; // length K
     int K;
-} GexPCA;
+} PCA;
 
-GexPCA *gex_compute_pca(GexMatrix *gex, double variance_threshold);
+PCA *compute_pca(Matrix *gex, double variance_threshold);
 
-void gex_free_pca(GexPCA *pca);
+void free_pca(PCA *pca);
 
-void gex_print_pca_summary(GexPCA *pca);
+void print_pca_summary(PCA *pca);
 
 Matrix *center_matrix(Matrix *X);
 
