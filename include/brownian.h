@@ -43,17 +43,18 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
                                                   unsigned int seed);
 
 int brownian_run_simulation_check(char **names,
-                                  int n,
-                                  int n_tree_genes,
-                                  int n_null_genes,
-                                  GexFilterMode mode,
-                                  GexLRTAltMode lrt_alt_mode,
-                                  int n_perm,
-                                  double max_q,
-                                  double min_i,
-                                  Matrix **Sigmas,
-                                  int n_sigmas,
-                                  unsigned int seed);
+                                    int n,
+                                    int n_tree_genes,
+                                    int n_null_genes,
+                                    GexFilterMode mode,
+                                    GexLRTAltMode lrt_alt_mode,
+                                    int n_perm,
+                                    double max_q,
+                                    double min_i,
+                                    Matrix **Sigmas,
+                                    int n_sigmas,
+                                    char *filter_sims_path,
+                                    unsigned int seed);
 
 void print_covariance_summary(Matrix *Sigma, char **names, int n);
 

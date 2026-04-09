@@ -104,6 +104,7 @@ static void usage(const char *progname) {
         "[--max-q Q] "
         "[--moran-min-i I] "
         "[--sim-filter-only] "
+        "[--write-filter-sims] "
         "[--filter-only] "
         "[--no-filter] "
         "[--verbose] "
@@ -130,6 +131,7 @@ int main(int argc, char *argv[]) {
     int sim_filter_only = 0; /* If nonzero, only run the simulation-based filter step. */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
+    int write_filter_sims = 0; /* If nonzero, write filter simulation results to a file. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
@@ -265,6 +267,9 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--sim-filter-only") == 0) {
             sim_filter_only = 1;
+        }
+        else if (strcmp(argv[i], "--write-filter-sims") == 0) {
+            write_filter_sims = 1;
         }
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
@@ -404,6 +409,15 @@ int main(int argc, char *argv[]) {
             printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
                    n_filter_trees);
         }
+
+        char filter_sims_buf[4096];
+        char *filter_sims_path = NULL;
+        if (write_filter_sims) {
+            snprintf(filter_sims_buf, sizeof(filter_sims_buf),
+                    "%s.phylo_filter_sims.expr.tsv", outprefix);
+            filter_sims_path = filter_sims_buf;
+        }
+
         if (!brownian_run_simulation_check(gex->cell_names,
                                            gex->X->nrows,
                                            n_sims,
@@ -415,6 +429,7 @@ int main(int argc, char *argv[]) {
                                            moran_min_i,
                                            filter_Sigmas,
                                            (n_filter_trees == -1 ? 1 : n_filter_trees),
+                                           filter_sims_path,
                                            seed)) {
             if (verbose) {
                 printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
