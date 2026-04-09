@@ -593,8 +593,6 @@ int main(int argc, char *argv[]) {
 
     printf("Wrote resulting model parameters to outprefix %s.\n", outprefix);
 
-    return 0; /* Success */
-
     /* Free memory */
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);

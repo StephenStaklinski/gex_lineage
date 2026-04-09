@@ -1666,25 +1666,34 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         if (alt_mode == GEX_LRT_ALT_FULL) {
             for (t = 0; t < n_sigmas; t++) {
                 ll_alts[t] = gex_loglik_centered_gaussian_chol(y,
-                                                              Ls[t],
-                                                              logdet_sigmas[t]);
+                                                            Ls[t],
+                                                            logdet_sigmas[t]);
             }
-            ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
+            if (n_sigmas > 1) {
+                ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
+            } else {
+                ll_alt = ll_alts[0];
+            }
         }
         else {
             double lambda_hat_sum = 0.0;
             for (t = 0; t < n_sigmas; t++) {
                 double lambda_hat = 0.0;
                 ll_alts[t] = gex_fit_pagels_lambda_loglik(y,
-                                                       Sigmas[t],
-                                                       jitters[t],
-                                                       Sigma_lambdas[t],
-                                                       Ls[t],
-                                                       &lambda_hat);
+                                                    Sigmas[t],
+                                                    jitters[t],
+                                                    Sigma_lambdas[t],
+                                                    Ls[t],
+                                                    &lambda_hat);
                 lambda_hat_sum += lambda_hat;
             }
-            ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
-            res->lambda_hat[j] = lambda_hat_sum / (double)n_sigmas;
+            if (n_sigmas > 1) {
+                ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
+                res->lambda_hat[j] = lambda_hat_sum / (double)n_sigmas;
+            } else {
+                ll_alt = ll_alts[0];
+                res->lambda_hat[j] = lambda_hat_sum;
+            }
         }
         res->ll_alt[j] = ll_alt;
 
