@@ -1,6 +1,7 @@
 #include "gex.h"
 #include "brownian.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -1934,8 +1935,11 @@ int gex_write_labeled_matrix_tsv(const char *filename,
         return -1;
 
     out = fopen(filename, "w");
-    if (out == NULL)
+    if (out == NULL) {
+        fprintf(stderr, "ERROR: failed to open %s for writing: %s\n",
+                filename, strerror(errno));
         return -1;
+    }
 
     fprintf(out, "%s", corner_label == NULL ? "id" : corner_label);
     for (j = 0; j < n_cols; j++)

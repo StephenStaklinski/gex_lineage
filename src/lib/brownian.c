@@ -77,6 +77,14 @@ static void fill_tip_map(TreeNode *node,
     fill_tip_map(node->rchild, names, n, tips);
 }
 
+/* Copy cell names to gex matrix. */
+void copy_cell_names(char **src, char **dst, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        dst[i] = strdup(src[i]);
+    }
+}
+
 /* Fill a preallocated array of gene names of length n_genes. 
 Returns 0 on success, -1 on failure. */
 int generate_gene_names(char **names, int n_genes) {
@@ -388,6 +396,8 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     }
 
     gex->X = mat_new(n, ngenes);
+    gex->cell_names = scalloc(n, sizeof(char *));
+    copy_cell_names(names, gex->cell_names, n);
     gex->gene_names = scalloc(ngenes, sizeof(char *));
     generate_gene_names(gex->gene_names, ngenes);
 
@@ -428,6 +438,8 @@ GexMatrix *simulate_standard_normal_expression(char **names,
 
     gex = scalloc(1, sizeof(GexMatrix));
     gex->X = mat_new(n, n_genes);
+    gex->cell_names= scalloc(n, sizeof(char *));
+    copy_cell_names(names, gex->cell_names, n);
     gex->gene_names = scalloc(n_genes, sizeof(char *));
     generate_gene_names(gex->gene_names, n_genes);
 
@@ -454,6 +466,8 @@ GexMatrix *combine_expression_matrices(GexMatrix *pos_gex,
 
     combined = scalloc(1, sizeof(GexMatrix));
     combined->X = mat_new(pos_gex->X->nrows, pos_gex->X->ncols + neg_gex->X->ncols);
+    combined->cell_names = scalloc(pos_gex->X->nrows, sizeof(char *));
+    copy_cell_names(pos_gex->cell_names, combined->cell_names, pos_gex->X->nrows);
     combined->gene_names = scalloc(combined->X->ncols, sizeof(char *));
 
     for (j = 0; j < pos_gex->X->ncols; j++) {
@@ -567,6 +581,7 @@ int brownian_run_simulation_check(char **names,
                                   double min_i,
                                   Matrix **Sigmas,
                                   int n_sigmas,
+                                  char *filter_sims_path,
                                   unsigned int seed) {
     int i, j;
     int tp = 0, fn = 0, fp = 0, tn = 0;
@@ -608,6 +623,14 @@ int brownian_run_simulation_check(char **names,
     if (sim == NULL || scale_matrix_in_place(sim->X, 1.0 / (double)n_sigmas) != 0) {
         fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
         return 1;
+    }
+
+    /* Optionally write the simulation expr matrix to a file. */
+    if (filter_sims_path != NULL) {
+        if (gex_write_labeled_matrix_tsv(filter_sims_path, sim->X,sim->cell_names, sim->X->nrows, sim->gene_names, sim->X->ncols, "cell") != 0) {
+            fprintf(stderr, "ERROR: failed to write filter simulation results to %s\n", filter_sims_path);
+            return 1;
+        }
     }
 
     /* Run the specified filter(s) on the simulated data. */
