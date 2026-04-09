@@ -1099,6 +1099,96 @@ void gex_free_matrix_data(GexMatrix *gex) {
     free(gex);
 }
 
+/* Normalize the entries in a row by the row sum in-place.
+Returns 0 on success, -1 on failure. */
+int normalize_by_row_sums(Matrix *X) {
+    int i, j;
+
+    if (X == NULL)
+        return -1;
+    
+    for (i = 0; i < X->nrows; i++) {
+        double row_sum = 0.0;
+        /* Accumulate row sum */
+        for (j = 0; j < X->ncols; j++) {
+            row_sum += mat_get(X, i, j);
+        } 
+        if (row_sum < 1e-12)
+            continue;   /* Skip normalization if the row sum is negligibly small */
+        /* Apply the normalization to elements of the row */
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            val /= row_sum;
+            mat_set(X, i, j, val);
+        }
+    }
+
+    return 0;
+}
+
+
+/* Apply a scaling factor to each element of a matrix element-wise
+in-place. Returns 0 on success, -1 on failure. */
+int apply_scaling_factor_elementwise(Matrix *X, double scaling_factor) {
+    int i, j;
+
+    if (X == NULL)
+        return -1;
+
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            val *= scaling_factor;
+            mat_set(X, i, j, val);
+        }
+    }
+
+    return 0;
+}
+
+/* Transform a matrix using the log1p function (log(1+x))) element-wise
+in-place. Returns 0 on success, -1 on failure. */
+int log1p_transform(Matrix *X) {
+    int i, j;
+
+    if (X == NULL)
+        return -1;
+
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            val = log1p(val);
+            mat_set(X, i, j, val);
+        }
+    }
+
+    return 0;
+}
+
+/* Center the columns of a matrix by subtracting the mean of each column
+to get the residuals in-place. Returns 0 on success, -1 on failure. */
+int center_matrix_inplace(Matrix *X) {
+    int i, j;
+
+    for (j = 0; j < X->ncols; j++) {
+
+        /* Get the mean of the column */
+        double mean = 0.0;
+        for (i = 0; i < X->nrows; i++)
+            mean += mat_get(X, i, j);
+        mean /= X->nrows;
+
+        /* Center the column */
+        for (i = 0; i < X->nrows; i++) {
+            double val = mat_get(X, i, j);
+            val -= mean;
+            mat_set(X, i, j, val);
+        }
+    }
+
+    return 0;
+}
+
 /* Print a summary of the tree set and expr matrix i/o results */
 void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
     int i;

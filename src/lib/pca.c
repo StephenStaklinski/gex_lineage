@@ -124,7 +124,7 @@ PCA *compute_pca(Matrix *X, double variance_threshold) {
 
     p = X->ncols;
 
-    /* Center the gene expression matrix by subtracting the mean of each column (gene) */
+    /* Center the gene expression matrix by subtracting the mean of each column */
     Xc = center_matrix(X);
     if (Xc == NULL)
         return NULL;

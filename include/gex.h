@@ -60,6 +60,14 @@ GexMatrix *read_gex_matrix(const char *filename);
 
 void gex_free_matrix_data(GexMatrix *gex);
 
+int normalize_by_row_sums(Matrix *X);
+
+int apply_scaling_factor_elementwise(Matrix *X, double scaling_factor);
+
+int log1p_transform(Matrix *X);
+
+int center_matrix_inplace(Matrix *X);
+
 void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex);
 
 int gex_reconcile_tree_and_expression(TreeNode **trees,

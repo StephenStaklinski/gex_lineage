@@ -365,6 +365,29 @@ int main(int argc, char *argv[]) {
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
 
+    /* Pre-process the gene expression data */
+    /* Library size normalization per-cell */
+    if (normalize_by_row_sums(gex->X) != 0) {
+        fprintf(stderr, "ERROR: failed to normalize expression matrix by row sums.\n");
+        return 1;
+    }
+    /* Scale by global factor to counts per 10k */
+    double global_scale_factor = 10000.0;
+    if (apply_scaling_factor_elementwise(gex->X, global_scale_factor) != 0) {
+        fprintf(stderr, "ERROR: failed to scale expression matrix by global factor.\n");
+        return 1;
+    }
+    /* Log-transform the data to stabilize variance and approximate Gaussian */
+    if (log1p_transform(gex->X) != 0) {
+        fprintf(stderr, "ERROR: failed to log-transform the expression matrix.\n");
+        return 1;
+    }
+    /* Get the residuals */
+    if (center_matrix_inplace(gex->X) != 0) {
+        fprintf(stderr, "ERROR: failed to get residuals from the expression matrix.\n");
+        return 1;
+    }
+
     /* Calculate the phylogenetic covariance matrix for each input tree. */
     Sigmas = scalloc(n_trees, sizeof(Matrix *));
     for (i = 0; i < n_trees; i++) {
