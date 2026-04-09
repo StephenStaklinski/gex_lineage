@@ -585,7 +585,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int n_cells = gex->X->nrows;
     int n_genes = gex->X->ncols;
     GexLatentBrownianModel *model = NULL;   /* Fitted model */
-    Matrix *Xc = NULL;   /* Centered expression matrix */
     Matrix **Sigma_invs = NULL;   /* Inverses of regularized tree covariance matrices */
     double *logdet_sigmas = NULL; /* Log determinants of regularized tree covariances */
 
@@ -620,11 +619,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     for (i = 0; i < pca->K; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_norm\tL_norm\n");
-
-    /* Center the expression matrix by subtracting the mean of each gene.
-    This ensures the latent factor model is fit to the residual structure
-    after removing per-gene offsets. */
-    Xc = center_matrix(gex->X);
 
     /* Build regularized versions of the phylogenetic covariance matrices and
     precompute the inverse and log-determinant for each tree. */
@@ -674,7 +668,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         for (d = 0; d < model->k; d++) {
             double score = 0.0;
             for (j = 0; j < model->n_genes; j++)
-                score += mat_get(Xc, i, j) * mat_get(model->L, d, j);
+                score += mat_get(gex->X, i, j) * mat_get(model->L, d, j);
             mat_set(model->Z, i, d, score);
         }
     }
@@ -688,7 +682,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             double pred = 0.0;
             for (d = 0; d < model->k; d++)
                 pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);
-            sse += pow(mat_get(Xc, i, j) - pred, 2.0);
+            sse += pow(mat_get(gex->X, i, j) - pred, 2.0);
         }
     }
     model->sigma2_obs = sse / ((double)model->n_cells * model->n_genes);
@@ -751,7 +745,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
 
         /* Compute the objective function and gradients */
-        model->objective = gex_model_objective_and_grad(model, Xc, Sigma_invs,
+        model->objective = gex_model_objective_and_grad(model, gex->X, Sigma_invs,
                                                         logdet_sigmas,
                                                         n_sigmas, grad_Z, grad_L,
                                                         grad_log_sigma_latent,
@@ -886,7 +880,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
 
     /* Compute the final state objective and gradients. */
-    model->objective = gex_model_objective_and_grad(model, Xc, Sigma_invs,
+    model->objective = gex_model_objective_and_grad(model, gex->X, Sigma_invs,
                                                     logdet_sigmas,
                                                     n_sigmas, grad_Z, grad_L,
                                                     grad_log_sigma_latent,
@@ -912,7 +906,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (sched_state != NULL) free(sched_state);
     if (sched != NULL) free(sched);
     if (logf != NULL) fclose(logf);
-    if (Xc != NULL) mat_free(Xc);
     if (Sigma_invs != NULL) {
         for (i = 0; i < n_sigmas; i++) {
             if (Sigma_invs[i] != NULL)
