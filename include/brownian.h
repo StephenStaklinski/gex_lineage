@@ -60,6 +60,6 @@ void print_covariance_summary(Matrix *Sigma, char **names, int n);
 
 void print_weight_matrix_summary(Matrix *W);
 
-int generate_gene_names(char **names, int n_genes);
+int generate_gene_names(char **names, int n_genes, char *gene_name_prefix);
 
 #endif

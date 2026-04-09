@@ -87,7 +87,7 @@ void copy_cell_names(char **src, char **dst, int n) {
 
 /* Fill a preallocated array of gene names of length n_genes. 
 Returns 0 on success, -1 on failure. */
-int generate_gene_names(char **names, int n_genes) {
+int generate_gene_names(char **names, int n_genes, char *gene_name_prefix) {
     int j;
 
     if (names == NULL || n_genes <= 0)
@@ -95,7 +95,9 @@ int generate_gene_names(char **names, int n_genes) {
 
     for (j = 0; j < n_genes; j++) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "sim_gene_%04d", j + 1);
+        if (gene_name_prefix == NULL)
+            gene_name_prefix = "gene";
+        snprintf(buf, sizeof(buf), "%s_%04d", gene_name_prefix, j + 1);
         names[j] = strdup(buf);
         if (names[j] == NULL) {
             free_string_array(names, j);
@@ -399,7 +401,7 @@ GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
     gex->cell_names = scalloc(n, sizeof(char *));
     copy_cell_names(names, gex->cell_names, n);
     gex->gene_names = scalloc(ngenes, sizeof(char *));
-    generate_gene_names(gex->gene_names, ngenes);
+    generate_gene_names(gex->gene_names, ngenes, NULL);
 
     std_normals = scalloc(n, sizeof(double));
 
@@ -441,7 +443,7 @@ GexMatrix *simulate_standard_normal_expression(char **names,
     gex->cell_names= scalloc(n, sizeof(char *));
     copy_cell_names(names, gex->cell_names, n);
     gex->gene_names = scalloc(n_genes, sizeof(char *));
-    generate_gene_names(gex->gene_names, n_genes);
+    generate_gene_names(gex->gene_names, n_genes, "neg");
 
     /* Draw expression values from standard normal distribution */
     for (j = 0; j < n_genes; j++) {
@@ -513,7 +515,7 @@ GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
     /* Set sigma2 value based on tree height */
     int n_sigma2 = 1;
     double sigma2[n_sigma2];
-    double desired_tip_variance = 1.0;
+    double desired_tip_variance = 5.0;
     sigma2[0] = desired_tip_variance / mat_get(Sigma, 0, 0);  /* Set sigma2 relative to an assumed ultrametric tree height T to achieve a desired tip variance */
 
     pos_gex = brownian_simulate_expression_from_covariance(Sigma, names, n,

@@ -2056,7 +2056,7 @@ int gex_simulate_from_latent_factors(Matrix *Z,
 
     /* Get simulated gene names */
     gene_names = scalloc(n_genes, sizeof(char *));
-    generate_gene_names(gene_names, n_genes);
+    generate_gene_names(gene_names, n_genes, NULL);
 
     if (L == NULL || gex == NULL || gene_names == NULL)
         return 1;
