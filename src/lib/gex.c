@@ -942,7 +942,7 @@ void gex_free_trees(TreeNode **trees, int n_trees) {
 
 /* Read in a labeled expression matrix from a tab-delimited file. 
 Returns a pointer to the allocated matrix or NULL on failure. */
-GexMatrix *gex_read_labeled_matrix(const char *filename) {
+GexMatrix *read_gex_matrix(const char *filename) {
     FILE *f;
     char line[100000];
     GexMatrix *gex = NULL;  /* Pointer to the allocated gex matrix struct */

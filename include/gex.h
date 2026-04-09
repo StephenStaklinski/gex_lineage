@@ -56,7 +56,7 @@ int gex_rescale_trees_total_height(TreeNode **trees, int n_trees, double target_
 
 void gex_free_trees(TreeNode **trees, int n_trees);
 
-GexMatrix *gex_read_labeled_matrix(const char *filename);
+GexMatrix *read_gex_matrix(const char *filename);
 
 void gex_free_matrix_data(GexMatrix *gex);
 

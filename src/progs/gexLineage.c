@@ -338,7 +338,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Load the input real expression matrix */
-    gex = gex_read_labeled_matrix(expr_file);
+    gex = read_gex_matrix(expr_file);
     if (gex == NULL) {
         fprintf(stderr, "ERROR: failed to load expression matrix.\n");
         return 1;

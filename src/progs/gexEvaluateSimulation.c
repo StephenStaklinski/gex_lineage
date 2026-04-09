@@ -967,10 +967,10 @@ int main(int argc, char *argv[]) {
     /* Read in the simulated and fit parameters */
     sim_summary = gexeval_read_summary(sim_summary_path);
     fit_summary = gexeval_read_summary(fit_summary_path);
-    sim_Z = gex_read_labeled_matrix(sim_z_path);
-    sim_L = gex_read_labeled_matrix(sim_l_path);
-    fit_Z = gex_read_labeled_matrix(fit_z_path);
-    fit_L = gex_read_labeled_matrix(fit_l_path);
+    sim_Z = read_gex_matrix(sim_z_path);
+    sim_L = read_gex_matrix(sim_l_path);
+    fit_Z = read_gex_matrix(fit_z_path);
+    fit_L = read_gex_matrix(fit_l_path);
     if (sim_summary == NULL || fit_summary == NULL || sim_Z == NULL || sim_L == NULL ||
         fit_Z == NULL || fit_L == NULL) {
         fprintf(stderr, "ERROR: failed to read required sim/model files.\n");
