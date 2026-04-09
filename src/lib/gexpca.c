@@ -1,5 +1,5 @@
 
-#include "pca.h"
+#include "gexpca.h"
 
 #include <phast/misc.h>
 #include <phast/eigen.h>

@@ -1,4 +1,4 @@
-#include "brownian.h"
+#include "gexbrownian.h"
 
 #include "gex.h"
 

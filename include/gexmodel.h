@@ -1,8 +1,8 @@
-#ifndef GEX_MODEL_H
-#define GEX_MODEL_H
+#ifndef GEXMODEL_H
+#define GEXMODEL_H
 
 #include "gex.h"
-#include "pca.h"
+#include "gexpca.h"
 
 #include <mvn.h>
 

@@ -1,5 +1,5 @@
 #include "gex.h"
-#include "brownian.h"
+#include "gexbrownian.h"
 
 #include <errno.h>
 #include <stdlib.h>

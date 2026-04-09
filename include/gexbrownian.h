@@ -1,5 +1,5 @@
-#ifndef BROWNIAN_H
-#define BROWNIAN_H
+#ifndef GEXBROWNIAN_H
+#define GEXBROWNIAN_H
 
 #include <phast/matrix.h>
 #include <phast/trees.h>

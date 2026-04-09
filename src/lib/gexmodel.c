@@ -1,6 +1,7 @@
-#include "gex_model.h"
+#include "gexmodel.h"
 
-#include "pca.h"
+#include "gexpca.h"
+
 #include <adam_scheduler.h>
 #include <variational.h>
 

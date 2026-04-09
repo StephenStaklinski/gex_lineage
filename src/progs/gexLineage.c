@@ -3,9 +3,9 @@
 #include <string.h>
 
 #include "gex.h"
-#include "gex_model.h"
-#include "pca.h"
-#include "brownian.h"
+#include "gexmodel.h"
+#include "gexpca.h"
+#include "gexbrownian.h"
 
 #include <phast/misc.h>
 
@@ -119,7 +119,7 @@ int main(int argc, char *argv[]) {
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
-    int n_sims = 1000;   /* Number of simulations used for a pre-check of the filter step performance */
+    int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */

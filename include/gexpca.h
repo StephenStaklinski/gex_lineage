@@ -1,5 +1,5 @@
-#ifndef PCA_H
-#define PCA_H
+#ifndef GEXPCA_H
+#define GEXPCA_H
 
 #include "gex.h"
 

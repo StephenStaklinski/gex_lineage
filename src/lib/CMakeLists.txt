@@ -5,12 +5,13 @@ add_library(vine_core STATIC
     adam_scheduler.c
     backprop.c
     bitset.c
-    brownian.c
     covariance.c
     crispr.c
     geometry.c
     gex.c
-    gex_model.c
+    gexbrownian.c
+    gexmodel.c
+    gexpca.c
     gradients.c
     heap.c
     hutchinson.c
@@ -22,7 +23,6 @@ add_library(vine_core STATIC
     mvn.c
     nj.c
     nuisance.c
-    pca.c
     planar_flow.c
     radial_flow.c
     rf.c

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "brownian.h"
+#include "gexbrownian.h"
 #include "gex.h"
 
 #include <phast/misc.h>
