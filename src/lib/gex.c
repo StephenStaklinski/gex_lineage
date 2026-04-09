@@ -248,85 +248,147 @@ static void calculate_mean_variance(double *y, int n, double *mean_out, double *
         *sigma2_out = 1e-12;
 }
 
-/* Compute the log-likelihood of a centered Gaussian with a general covariance matrix.
-Returns the log-likelihood value. */
-static double gex_loglik_centered_gaussian_cov(double *y,
-                                               Matrix *Sigma,
-                                               Matrix *Sigma_inv,
-                                               double logdet_sigma) {
-    int i, j, n;
-    double *Sinv1 = NULL;   /* Temporary vector Sinv1  = Sigma^{-1} * 1 */
-    double *Sinvy = NULL;   /* Temporary vector Sinvy = Sigma^{-1} * y */
-    double quad = 0.0;  /* Quadratic form (y - mu)^T Sigma^{-1} (y - mu) */
-    double ones_Sinv_ones = 0.0;  /* Scalar used to compute GLS estimate of the mean: 1^T Sigma^{-1} 1 */
-    double ones_Sinv_y = 0.0;     /* Scalars used to compute GLS estimate of the mean: 1^T Sigma^{-1} y */
-    double muhat;     /* Maximum likelihood estimate (MLE) of the mean under correlated Gaussian */
-    double sigma2;    /* MLE of variance scale parameter */
-    double ll;        /* Log-likelihood value */
+/* Solve L x = b for x, where L is lower triangular. */
+static int gex_forwardsolve(double *x, Matrix *L, double *b, int n) {
+    int i, j;
 
-    n = Sigma->nrows;   /* Number of rows (cells) in the covariance matrix */
-
-    /* Allocate temporary vectors */
-    Sinv1 = scalloc(n, sizeof(double));
-    Sinvy = scalloc(n, sizeof(double));
-
-    /* Compute:
-         Sinv1 = Sigma^{-1} * 1
-         Sinvy = Sigma^{-1} * y
-       and accumulate:
-         1^T Sigma^{-1} 1
-         1^T Sigma^{-1} y
-    */
     for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++) {
-            double Sinv_ij = mat_get(Sigma_inv, i, j);
-            Sinv1[i] += Sinv_ij;
-            Sinvy[i] += Sinv_ij * y[j];
-        }
+        double sum = b[i];
+        double lii = mat_get(L, i, i);
+
+        for (j = 0; j < i; j++)
+            sum -= mat_get(L, i, j) * x[j];
+
+        if (lii <= 0.0)
+            return -1;
+
+        x[i] = sum / lii;
+    }
+
+    return 0;
+}
+
+/* Solve L^T x = b for x, where L is lower triangular. */
+static int gex_backsolve_transpose(double *x, Matrix *L, double *b, int n) {
+    int i, j;
+
+    for (i = n - 1; i >= 0; i--) {
+        double sum = b[i];
+        double lii = mat_get(L, i, i);
+
+        for (j = i + 1; j < n; j++)
+            sum -= mat_get(L, j, i) * x[j];
+
+        if (lii <= 0.0)
+            return -1;
+
+        x[i] = sum / lii;
+    }
+
+    return 0;
+}
+
+/* Solve Sigma x = b using the Cholesky factor Sigma = L L^T. */
+static int gex_cholesky_solve(double *x, Matrix *L, double *b, int n) {
+    double *tmp = NULL;
+    int status = 0;
+
+    tmp = smalloc(n * sizeof(double));
+
+    if (gex_forwardsolve(tmp, L, b, n) != 0)
+        status = -1;
+    else if (gex_backsolve_transpose(x, L, tmp, n) != 0)
+        status = -1;
+
+    free(tmp);
+    return status;
+}
+
+/* Compute the log-likelihood of y under N(mu 1, sigma2 * Sigma),
+   profiling out mu and sigma2, using the Cholesky factor L of Sigma. */
+static double gex_loglik_centered_gaussian_chol(double *y,
+                                                Matrix *L,
+                                                double logdet_sigma) {
+    int i, n;
+    double *ones = NULL;
+    double *Sinv1 = NULL;
+    double *Sinvy = NULL;
+    double *resid = NULL;
+    double *Sinv_resid = NULL;
+    double ones_Sinv_ones = 0.0;
+    double ones_Sinv_y = 0.0;
+    double quad = 0.0;
+    double muhat;
+    double sigma2;
+    double ll;
+
+    n = L->nrows;
+
+    ones = smalloc(n * sizeof(double));
+    Sinv1 = smalloc(n * sizeof(double));
+    Sinvy = smalloc(n * sizeof(double));
+    resid = smalloc(n * sizeof(double));
+    Sinv_resid = smalloc(n * sizeof(double));
+
+    for (i = 0; i < n; i++)
+        ones[i] = 1.0;
+
+    /* Solve Sigma * Sinv1 = 1 and Sigma * Sinvy = y */
+    if (gex_cholesky_solve(Sinv1, L, ones, n) != 0)
+        goto fail;
+    if (gex_cholesky_solve(Sinvy, L, y, n) != 0)
+        goto fail;
+
+    for (i = 0; i < n; i++) {
         ones_Sinv_ones += Sinv1[i];
         ones_Sinv_y += Sinvy[i];
     }
 
-    /* Check that denominator is valid (Sigma should be positive definite) */
-    if (ones_Sinv_ones <= 0.0) {
-        free(Sinv1);
-        free(Sinvy);
-        return -HUGE_VAL;
-    }
+    if (ones_Sinv_ones <= 0.0)
+        goto fail;
 
-    /* GLS estimate of the mean mu_hat = (1^T Sigma^{-1} y) / (1^T Sigma^{-1} 1) */
+    /* GLS estimate of the mean */
     muhat = ones_Sinv_y / ones_Sinv_ones;
 
-    /* Compute quadratic form quad = (y - mu_hat)^T Sigma^{-1} (y - mu_hat) */
-    for (i = 0; i < n; i++) {
-        double yi = y[i] - muhat;
-        for (j = 0; j < n; j++) {
-            quad += yi * mat_get(Sigma_inv, i, j) * (y[j] - muhat);
-        }
-    }
+    for (i = 0; i < n; i++)
+        resid[i] = y[i] - muhat;
 
-    /* Analytical MLE of variance scale parameter sigma^2_hat = quad / n */
+    /* Solve Sigma * Sinv_resid = resid */
+    if (gex_cholesky_solve(Sinv_resid, L, resid, n) != 0)
+        goto fail;
+
+    /* quad = resid^T Sigma^{-1} resid */
+    for (i = 0; i < n; i++)
+        quad += resid[i] * Sinv_resid[i];
+
     sigma2 = quad / (double)n;
-
-    /* Numerical safeguard to avoid log(0) */
     if (sigma2 < 1e-12)
         sigma2 = 1e-12;
 
-    /* Log-likelihood at MLE is log L = -1/2 [ n log(2πσ^2) + log|Sigma| + n ] */
     ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
                  logdet_sigma +
                  (double)n);
 
+    free(ones);
     free(Sinv1);
     free(Sinvy);
+    free(resid);
+    free(Sinv_resid);
     return ll;
+
+fail:
+    free(ones);
+    free(Sinv1);
+    free(Sinvy);
+    free(resid);
+    free(Sinv_resid);
+    return -HUGE_VAL;
 }
 
 typedef struct {
     double *y;
     Matrix *Sigma;
     Matrix *Sigma_lambda;
-    Matrix *Sigma_inv;
     Matrix *L;
     double diag_mean;
     double jitter;
@@ -341,7 +403,6 @@ static double gex_loglik_pagels_lambda_cov(double *y,
                                            double jitter,
                                            double lambda,
                                            Matrix *Sigma_lambda,
-                                           Matrix *Sigma_inv,
                                            Matrix *L) {
     int i, j, n;    /* Loop indices */
     double logdet_sigma = 0.0;  /* Log determinant of the lambda-transformed covariance matrix */
@@ -364,8 +425,6 @@ static double gex_loglik_pagels_lambda_cov(double *y,
     }
 
     /* Compute the inverse and Cholesky decomposition of the lambda-transformed covariance matrix */
-    if (mat_invert(Sigma_inv, Sigma_lambda) != 0)
-        return -HUGE_VAL;
     if (mat_cholesky(L, Sigma_lambda) != 0)
         return -HUGE_VAL;
 
@@ -377,7 +436,7 @@ static double gex_loglik_pagels_lambda_cov(double *y,
         logdet_sigma += 2.0 * log(diag);
     }
 
-    return gex_loglik_centered_gaussian_cov(y, Sigma_lambda, Sigma_inv, logdet_sigma);
+    return gex_loglik_centered_gaussian_chol(y, L, logdet_sigma);
 }
 
 /* Objective function for fitting Pagel's lambda by one-dimensional numerical optimization. */
@@ -389,7 +448,6 @@ static double gex_pagels_lambda_negloglik(double lambda, void *data) {
                                              d->jitter,
                                              lambda,
                                              d->Sigma_lambda,
-                                             d->Sigma_inv,
                                              d->L);
 
     if (!isfinite(ll))
@@ -403,7 +461,6 @@ static double gex_fit_pagels_lambda_loglik(double *y,
                                            Matrix *Sigma,
                                            double jitter,
                                            Matrix *Sigma_lambda,
-                                           Matrix *Sigma_inv,
                                            Matrix *L,
                                            double *lambda_hat) {
     int i, status;  /* Loop index and optimization status */
@@ -425,7 +482,6 @@ static double gex_fit_pagels_lambda_loglik(double *y,
     data.y = y;
     data.Sigma = Sigma;
     data.Sigma_lambda = Sigma_lambda;
-    data.Sigma_inv = Sigma_inv;
     data.L = L;
     data.diag_mean = diag_mean;
     data.jitter = jitter;
@@ -1469,7 +1525,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     int i, j, t;   /* Loop indices */
     int n;  /* Number of cells */
     Matrix **Sigma_regs = NULL;   /* Regularized covariance matrices */
-    Matrix **Sigma_invs = NULL;   /* Inverses of regularized covariance matrices */
     Matrix **Ls = NULL;   /* Cholesky factors of regularized covariance matrices */
     Matrix **Sigma_lambdas = NULL;   /* Lambda-transformed covariance matrices */
     GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
@@ -1488,7 +1543,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
 
     n = gex->X->nrows;
     Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
-    Sigma_invs = scalloc(n_sigmas, sizeof(Matrix *));
     Ls = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
     jitters = scalloc(n_sigmas, sizeof(double));
@@ -1505,14 +1559,9 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         }
 
         Sigma_regs[t] = mat_new(n, n);
-        Sigma_invs[t] = mat_new(n, n);
         Ls[t] = mat_new(n, n);
         if (alt_mode == GEX_LRT_ALT_LAMBDA)
             Sigma_lambdas[t] = mat_new(n, n);
-        if (Sigma_regs[t] == NULL || Sigma_invs[t] == NULL || Ls[t] == NULL ||
-            (alt_mode == GEX_LRT_ALT_LAMBDA && Sigma_lambdas[t] == NULL)) {
-            return NULL;
-        }
 
         for (i = 0; i < n; i++) {
             double d = mat_get(Sigmas[t], i, i);
@@ -1527,21 +1576,20 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
             mat_set(Sigma_regs[t], i, i, mat_get(Sigma_regs[t], i, i) + jitters[t]);
         }
 
-        if (alt_mode == GEX_LRT_ALT_FULL) {
-            if (mat_invert(Sigma_invs[t], Sigma_regs[t]) != 0 ||
-                mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
-                fprintf(stderr, "ERROR: failed to initialize Brownian covariance matrices for LRT tree %d\n",
-                        t + 1);
+        /* Compute the inverse, Chloesky factor, and log determinant of the covariance matrix once
+        and store the results */
+        if (mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
+            fprintf(stderr, "ERROR: failed to initialize Brownian covariance matrices for LRT tree %d\n",
+                    t + 1);
+            return NULL;
+        }
+        for (i = 0; i < n; i++) {
+            double diag = mat_get(Ls[t], i, i);
+            if (diag <= 0.0) {
+                fprintf(stderr, "ERROR: invalid Cholesky factor for LRT tree %d\n", t + 1);
                 return NULL;
             }
-            for (i = 0; i < n; i++) {
-                double diag = mat_get(Ls[t], i, i);
-                if (diag <= 0.0) {
-                    fprintf(stderr, "ERROR: invalid Cholesky factor for LRT tree %d\n", t + 1);
-                    return NULL;
-                }
-                logdet_sigmas[t] += 2.0 * log(diag);
-            }
+            logdet_sigmas[t] += 2.0 * log(diag);
         }
     }
 
@@ -1584,9 +1632,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         if (alt_mode == GEX_LRT_ALT_FULL) {
             ll_alt = 0.0;
             for (t = 0; t < n_sigmas; t++) {
-                ll_alt += gex_loglik_centered_gaussian_cov(y,
-                                                           Sigma_regs[t],
-                                                           Sigma_invs[t],
+                ll_alt += gex_loglik_centered_gaussian_chol(y,
+                                                           Ls[t],
                                                            logdet_sigmas[t]);
             }
             ll_alt /= (double)n_sigmas;
@@ -1600,7 +1647,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                                        Sigmas[t],
                                                        jitters[t],
                                                        Sigma_lambdas[t],
-                                                       Sigma_invs[t],
                                                        Ls[t],
                                                        &lambda_hat);
                 lambda_hat_sum += lambda_hat;
@@ -1637,9 +1683,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                 /* Compute the expected log-likelihood under the alternative model */
                 ll1_sim = 0.0;
                 for (t = 0; t < n_sigmas; t++) {
-                    ll1_sim += gex_loglik_centered_gaussian_cov(y_sim,
-                                                                Sigma_regs[t],
-                                                                Sigma_invs[t],
+                    ll1_sim += gex_loglik_centered_gaussian_chol(y_sim,
+                                                                Ls[t],
                                                                 logdet_sigmas[t]);
                 }
                 ll1_sim /= (double)n_sigmas;
@@ -1670,13 +1715,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                 mat_free(Sigma_regs[t]);
         }
         free(Sigma_regs);
-    }
-    if (Sigma_invs != NULL) {
-        for (t = 0; t < n_sigmas; t++) {
-            if (Sigma_invs[t] != NULL)
-                mat_free(Sigma_invs[t]);
-        }
-        free(Sigma_invs);
     }
     if (Ls != NULL) {
         for (t = 0; t < n_sigmas; t++) {
