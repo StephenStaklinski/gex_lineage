@@ -367,26 +367,14 @@ int main(int argc, char *argv[]) {
 
     /* Pre-process the gene expression data */
     /* Library size normalization per-cell */
-    if (normalize_by_row_sums(gex->X) != 0) {
-        fprintf(stderr, "ERROR: failed to normalize expression matrix by row sums.\n");
-        return 1;
-    }
+    normalize_by_row_sums(gex->X);
     /* Scale by global factor to counts per 10k */
     double global_scale_factor = 10000.0;
-    if (apply_scaling_factor_elementwise(gex->X, global_scale_factor) != 0) {
-        fprintf(stderr, "ERROR: failed to scale expression matrix by global factor.\n");
-        return 1;
-    }
+    mat_scale(gex->X, global_scale_factor);
     /* Log-transform the data to stabilize variance and approximate Gaussian */
-    if (log1p_transform(gex->X) != 0) {
-        fprintf(stderr, "ERROR: failed to log-transform the expression matrix.\n");
-        return 1;
-    }
-    /* Get the residuals */
-    if (center_matrix_inplace(gex->X) != 0) {
-        fprintf(stderr, "ERROR: failed to get residuals from the expression matrix.\n");
-        return 1;
-    }
+    log1p_transform(gex->X);
+    /* Transform log-normalized counts into the residuals */
+    center_matrix_inplace(gex->X);
 
     /* Calculate the phylogenetic covariance matrix for each input tree. */
     Sigmas = scalloc(n_trees, sizeof(Matrix *));

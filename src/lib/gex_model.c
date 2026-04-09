@@ -123,33 +123,6 @@ static double log_mvn_vec(const double *z,
            -0.5 * quad / sigma2;
 }
 
-/* Compute log(sum_i exp(x[i])) in a numerically stable way using the
-log-sum-exp trick: max(x) + log(sum_i exp(x[i] - max(x))). */
-static double gex_model_logsumexp(double *x, int n) {
-    int i;
-    double max_x = -HUGE_VAL;
-    double sum = 0.0;
-
-    /* Find the maximum value in the array */
-    for (i = 0; i < n; i++) {
-        if (x[i] > max_x)
-            max_x = x[i];
-    }
-    if (!isfinite(max_x))
-        return max_x;
-
-    /* Sum the exponentials */
-    for (i = 0; i < n; i++)
-        sum += exp(x[i] - max_x);
-
-    /* Unlikely numerical stability check */
-    if (sum <= 0.0)
-        return -HUGE_VAL;
-
-    /* Return the log-sum-exp */
-    return max_x + log(sum);
-}
-
 /* Build a jitter-regularized copy of a symmetric matrix, then compute its
 inverse and log-determinant. Returns 0 on success and -1 on failure. */
 static int compute_matrix_inv_and_logdet(Matrix *Sigma,
@@ -285,7 +258,7 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
         }
 
         /* Marginalize over tree uncertainty with log-sum-exp. */
-        log_mix = gex_model_logsumexp(prior_log_terms, n_sigmas);
+        log_mix = logsumexp(prior_log_terms, n_sigmas);
 
         /* Add the full negative log marginal prior for z_d under the mixture:
            -log sum_t N(z_d | 0, sigma2_d * Sigma_t). */

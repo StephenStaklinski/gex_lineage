@@ -249,73 +249,19 @@ static void calculate_mean_variance(double *y, int n, double *mean_out, double *
         *sigma2_out = 1e-12;
 }
 
-/* Solve L x = b for x, where L is lower triangular. */
-static int gex_forwardsolve(double *x, Matrix *L, double *b, int n) {
-    int i, j;
-
-    for (i = 0; i < n; i++) {
-        double sum = b[i];
-        double lii = mat_get(L, i, i);
-
-        for (j = 0; j < i; j++)
-            sum -= mat_get(L, i, j) * x[j];
-
-        if (lii <= 0.0)
-            return -1;
-
-        x[i] = sum / lii;
-    }
-
-    return 0;
-}
-
-/* Solve L^T x = b for x, where L is lower triangular. */
-static int gex_backsolve_transpose(double *x, Matrix *L, double *b, int n) {
-    int i, j;
-
-    for (i = n - 1; i >= 0; i--) {
-        double sum = b[i];
-        double lii = mat_get(L, i, i);
-
-        for (j = i + 1; j < n; j++)
-            sum -= mat_get(L, j, i) * x[j];
-
-        if (lii <= 0.0)
-            return -1;
-
-        x[i] = sum / lii;
-    }
-
-    return 0;
-}
-
-/* Solve Sigma x = b using the Cholesky factor Sigma = L L^T. */
-static int gex_cholesky_solve(double *x, Matrix *L, double *b, int n) {
-    double *tmp = NULL;
-    int status = 0;
-
-    tmp = smalloc(n * sizeof(double));
-
-    if (gex_forwardsolve(tmp, L, b, n) != 0)
-        status = -1;
-    else if (gex_backsolve_transpose(x, L, tmp, n) != 0)
-        status = -1;
-
-    free(tmp);
-    return status;
-}
-
 /* Compute the log-likelihood of y under N(mu 1, sigma2 * Sigma),
    profiling out mu and sigma2, using the Cholesky factor L of Sigma. */
 static double gex_loglik_centered_gaussian_chol(double *y,
                                                 Matrix *L,
                                                 double logdet_sigma) {
     int i, n;
-    double *ones = NULL;
-    double *Sinv1 = NULL;
-    double *Sinvy = NULL;
-    double *resid = NULL;
-    double *Sinv_resid = NULL;
+    Vector *ones = NULL;
+    Vector *yvec = NULL;
+    Vector *tmp = NULL;
+    Vector *Sinv1 = NULL;
+    Vector *Sinvy = NULL;
+    Vector *resid = NULL;
+    Vector *Sinv_resid = NULL;
     double ones_Sinv_ones = 0.0;
     double ones_Sinv_y = 0.0;
     double quad = 0.0;
@@ -325,42 +271,51 @@ static double gex_loglik_centered_gaussian_chol(double *y,
 
     n = L->nrows;
 
-    ones = smalloc(n * sizeof(double));
-    Sinv1 = smalloc(n * sizeof(double));
-    Sinvy = smalloc(n * sizeof(double));
-    resid = smalloc(n * sizeof(double));
-    Sinv_resid = smalloc(n * sizeof(double));
+    if (n != L->ncols)
+        return NAN;
 
-    for (i = 0; i < n; i++)
-        ones[i] = 1.0;
-
-    /* Solve Sigma * Sinv1 = 1 and Sigma * Sinvy = y */
-    if (gex_cholesky_solve(Sinv1, L, ones, n) != 0)
-        goto fail;
-    if (gex_cholesky_solve(Sinvy, L, y, n) != 0)
-        goto fail;
+    ones = vec_new(n);
+    yvec = vec_new(n);
+    tmp = vec_new(n);
+    Sinv1 = vec_new(n);
+    Sinvy = vec_new(n);
+    resid = vec_new(n);
+    Sinv_resid = vec_new(n);
 
     for (i = 0; i < n; i++) {
-        ones_Sinv_ones += Sinv1[i];
-        ones_Sinv_y += Sinvy[i];
+        vec_set(ones, i, 1.0);
+        vec_set(yvec, i, y[i]);
+    }
+
+    /* Solve Sigma * Sinv1 = 1 via L tmp = 1, then L^T Sinv1 = tmp */
+    mat_forward_subst(L, ones, tmp);
+    mat_backward_subst(L, tmp, Sinv1);
+
+    /* Solve Sigma * Sinvy = y via L tmp = y, then L^T Sinvy = tmp */
+    mat_forward_subst(L, yvec, tmp);
+    mat_backward_subst(L, tmp, Sinvy);
+
+    for (i = 0; i < n; i++) {
+        ones_Sinv_ones += vec_get(Sinv1, i);
+        ones_Sinv_y += vec_get(Sinvy, i);
     }
 
     if (ones_Sinv_ones <= 0.0)
-        goto fail;
+        return NAN;
 
     /* GLS estimate of the mean */
     muhat = ones_Sinv_y / ones_Sinv_ones;
 
     for (i = 0; i < n; i++)
-        resid[i] = y[i] - muhat;
+        vec_set(resid, i, y[i] - muhat);
 
-    /* Solve Sigma * Sinv_resid = resid */
-    if (gex_cholesky_solve(Sinv_resid, L, resid, n) != 0)
-        goto fail;
+    /* Solve Sigma * Sinv_resid = resid via L tmp = resid, then L^T Sinv_resid = tmp */
+    mat_forward_subst(L, resid, tmp);
+    mat_backward_subst(L, tmp, Sinv_resid);
 
     /* quad = resid^T Sigma^{-1} resid */
     for (i = 0; i < n; i++)
-        quad += resid[i] * Sinv_resid[i];
+        quad += vec_get(resid, i) * vec_get(Sinv_resid, i);
 
     sigma2 = quad / (double)n;
     if (sigma2 < 1e-12)
@@ -370,20 +325,14 @@ static double gex_loglik_centered_gaussian_chol(double *y,
                  logdet_sigma +
                  (double)n);
 
-    free(ones);
-    free(Sinv1);
-    free(Sinvy);
-    free(resid);
-    free(Sinv_resid);
+    vec_free(ones);
+    vec_free(yvec);
+    vec_free(tmp);
+    vec_free(Sinv1);
+    vec_free(Sinvy);
+    vec_free(resid);
+    vec_free(Sinv_resid);
     return ll;
-
-fail:
-    free(ones);
-    free(Sinv1);
-    free(Sinvy);
-    free(resid);
-    free(Sinv_resid);
-    return -HUGE_VAL;
 }
 
 typedef struct {
@@ -529,6 +478,29 @@ static double gex_fit_pagels_lambda_loglik(double *y,
 
     *lambda_hat = best_lambda;
     return -best_fx;
+}
+
+/* Compute log(sum_i exp(x[i])) in a numerically stable way using the
+log-sum-exp trick: max(x) + log(sum_i exp(x[i] - max(x))). */
+double logsumexp(double *x, int n) {
+    int i;
+    double max_x = -HUGE_VAL;
+    double sum = 0.0;
+
+    /* Find the maximum value in the array */
+    for (i = 0; i < n; i++) {
+        if (x[i] > max_x)
+            max_x = x[i];
+    }
+    if (!isfinite(max_x))
+        return max_x;
+
+    /* Sum the exponentials */
+    for (i = 0; i < n; i++)
+        sum += exp(x[i] - max_x);
+
+    /* Return the log-sum-exp */
+    return max_x + log(sum);
 }
 
 /* Standardize the columns of a gene expression matrix by
@@ -1101,11 +1073,8 @@ void gex_free_matrix_data(GexMatrix *gex) {
 
 /* Normalize the entries in a row by the row sum in-place.
 Returns 0 on success, -1 on failure. */
-int normalize_by_row_sums(Matrix *X) {
+void normalize_by_row_sums(Matrix *X) {
     int i, j;
-
-    if (X == NULL)
-        return -1;
     
     for (i = 0; i < X->nrows; i++) {
         double row_sum = 0.0;
@@ -1122,37 +1091,12 @@ int normalize_by_row_sums(Matrix *X) {
             mat_set(X, i, j, val);
         }
     }
-
-    return 0;
-}
-
-
-/* Apply a scaling factor to each element of a matrix element-wise
-in-place. Returns 0 on success, -1 on failure. */
-int apply_scaling_factor_elementwise(Matrix *X, double scaling_factor) {
-    int i, j;
-
-    if (X == NULL)
-        return -1;
-
-    for (i = 0; i < X->nrows; i++) {
-        for (j = 0; j < X->ncols; j++) {
-            double val = mat_get(X, i, j);
-            val *= scaling_factor;
-            mat_set(X, i, j, val);
-        }
-    }
-
-    return 0;
 }
 
 /* Transform a matrix using the log1p function (log(1+x))) element-wise
-in-place. Returns 0 on success, -1 on failure. */
-int log1p_transform(Matrix *X) {
+in-place. */
+void log1p_transform(Matrix *X) {
     int i, j;
-
-    if (X == NULL)
-        return -1;
 
     for (i = 0; i < X->nrows; i++) {
         for (j = 0; j < X->ncols; j++) {
@@ -1161,13 +1105,11 @@ int log1p_transform(Matrix *X) {
             mat_set(X, i, j, val);
         }
     }
-
-    return 0;
 }
 
 /* Center the columns of a matrix by subtracting the mean of each column
-to get the residuals in-place. Returns 0 on success, -1 on failure. */
-int center_matrix_inplace(Matrix *X) {
+to get the residuals in-place. */
+void center_matrix_inplace(Matrix *X) {
     int i, j;
 
     for (j = 0; j < X->ncols; j++) {
@@ -1185,8 +1127,6 @@ int center_matrix_inplace(Matrix *X) {
             mat_set(X, i, j, val);
         }
     }
-
-    return 0;
 }
 
 /* Print a summary of the tree set and expr matrix i/o results */
@@ -1704,6 +1644,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     for (j = 0; j < gex->X->ncols; j++) {
         double ll_null; /* Log-likelihood under the null model */
         double ll_alt;  /* Log-likelihood under the alternative model */
+        double *ll_alts; /* Log-likelihoods under the alternative model for each tree */
         double mu0; /* Mean under the null model (estimated from the data) */
         double sigma20; /* Variance under the null model (estimated from the data) */
 
@@ -1720,21 +1661,21 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         res->ll_null[j] = ll_null;
 
         /* Compute the log-likelihood under the alternative model */
+        ll_alts = smalloc(n_sigmas * sizeof(double));
+        ll_alt = 0.0;
         if (alt_mode == GEX_LRT_ALT_FULL) {
-            ll_alt = 0.0;
             for (t = 0; t < n_sigmas; t++) {
-                ll_alt += gex_loglik_centered_gaussian_chol(y,
-                                                           Ls[t],
-                                                           logdet_sigmas[t]);
+                ll_alts[t] = gex_loglik_centered_gaussian_chol(y,
+                                                              Ls[t],
+                                                              logdet_sigmas[t]);
             }
-            ll_alt /= (double)n_sigmas;
+            ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
         }
         else {
             double lambda_hat_sum = 0.0;
-            ll_alt = 0.0;
             for (t = 0; t < n_sigmas; t++) {
                 double lambda_hat = 0.0;
-                ll_alt += gex_fit_pagels_lambda_loglik(y,
+                ll_alts[t] = gex_fit_pagels_lambda_loglik(y,
                                                        Sigmas[t],
                                                        jitters[t],
                                                        Sigma_lambdas[t],
@@ -1742,7 +1683,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                                        &lambda_hat);
                 lambda_hat_sum += lambda_hat;
             }
-            ll_alt /= (double)n_sigmas;
+            ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
             res->lambda_hat[j] = lambda_hat_sum / (double)n_sigmas;
         }
         res->ll_alt[j] = ll_alt;
