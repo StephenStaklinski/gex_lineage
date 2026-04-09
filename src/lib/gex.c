@@ -424,7 +424,7 @@ static double gex_loglik_pagels_lambda_cov(double *y,
         }
     }
 
-    /* Compute the inverse and Cholesky decomposition of the lambda-transformed covariance matrix */
+    /* Compute the Cholesky decomposition of the lambda-transformed covariance matrix */
     if (mat_cholesky(L, Sigma_lambda) != 0)
         return -HUGE_VAL;
 
@@ -1576,7 +1576,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
             mat_set(Sigma_regs[t], i, i, mat_get(Sigma_regs[t], i, i) + jitters[t]);
         }
 
-        /* Compute the inverse, Chloesky factor, and log determinant of the covariance matrix once
+        /* Compute the Chloesky factor and log determinant of the covariance matrix once
         and store the results */
         if (mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
             fprintf(stderr, "ERROR: failed to initialize Brownian covariance matrices for LRT tree %d\n",
