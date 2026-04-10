@@ -1,12 +1,16 @@
 #include "gexbrownian.h"
 
-#include "gex.h"
+#include "gexmisc.h"
+
+#include <phast/trees.h>
+#include <phast/matrix.h>
+#include <phast/misc.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <phast/misc.h>
+
 
 /* Find the most recent common ancestor (MRCA) of two nodes in a tree.
 Returns a pointer to the MRCA node or NULL if no common ancestor is found. */
@@ -53,9 +57,9 @@ static int fill_node_depths(TreeNode *node, double *depth_by_id, int nnodes, dou
 }
 
 static void fill_tip_map(TreeNode *node,
-                                  char **names,
-                                  int n,
-                                  TreeNode **tips) {
+                            char **names,
+                            int n,
+                            TreeNode **tips) {
     int i;
 
     if (node == NULL)

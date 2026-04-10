@@ -1,12 +1,15 @@
 #include "gexmodel.h"
 
 #include "gexpca.h"
+#include "gexmisc.h"
 
 #include <adam_scheduler.h>
 #include <variational.h>
 
-#include <math.h>
+#include <phast/matrix.h>
 #include <phast/misc.h>
+
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 

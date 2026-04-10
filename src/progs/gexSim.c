@@ -1,11 +1,16 @@
+
+#include "gexbrownian.h"
+#include "gexmatrix.h"
+#include "gexmodel.h"
+
+#include <phast/trees.h>
+#include <phast/lists.h>
+#include <phast/stringsplus.h>
+#include <phast/matrix.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "gexbrownian.h"
-#include "gex.h"
-
-#include <phast/misc.h>
 
 /* Parse a comma-separated list of double values into an array 
 and count the number of values */

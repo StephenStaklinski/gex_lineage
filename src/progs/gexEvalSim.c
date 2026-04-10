@@ -1,12 +1,15 @@
+
+#include "gexmatrix.h"
+
+#include <phast/eigen.h>
+#include <phast/matrix.h>
+#include <phast/misc.h>
+#include <phast/vector.h>
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <phast/misc.h>
-#include <phast/eigen.h>
-
-#include "gex.h"
 
 typedef struct {
     int n_cells;

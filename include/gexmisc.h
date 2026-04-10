@@ -7,4 +7,6 @@ double uniform_open(unsigned int *state);
 
 double rand_normal(unsigned int *state);
 
+double logsumexp(double *x, int n);
+
 #endif

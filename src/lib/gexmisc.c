@@ -19,3 +19,26 @@ double rand_normal(unsigned int *state) {
     double u2 = uniform_open(state);
     return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2); 
 }
+
+/* Compute log(sum_i exp(x[i])) in a numerically stable way using the
+log-sum-exp trick: max(x) + log(sum_i exp(x[i] - max(x))). */
+double logsumexp(double *x, int n) {
+    int i;
+    double max_x = -HUGE_VAL;
+    double sum = 0.0;
+
+    /* Find the maximum value in the array */
+    for (i = 0; i < n; i++) {
+        if (x[i] > max_x)
+            max_x = x[i];
+    }
+    if (!isfinite(max_x))
+        return max_x;
+
+    /* Sum the exponentials */
+    for (i = 0; i < n; i++)
+        sum += exp(x[i] - max_x);
+
+    /* Return the log-sum-exp */
+    return max_x + log(sum);
+}

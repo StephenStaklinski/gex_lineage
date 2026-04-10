@@ -87,6 +87,4 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                                        double max_q,
                                        double min_i);
 
-double logsumexp(double *x, int n);
-
 #endif

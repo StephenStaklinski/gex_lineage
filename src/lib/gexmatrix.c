@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-#include <phast/misc.h>
+#include <phast/matrix.h>
 
 
 /* Normalize the entries in a row by the row sum in-place.

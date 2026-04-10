@@ -1,5 +1,8 @@
 #include "gexphylofilter.h"
 
+#include "gexmisc.h"
+
+#include <phast/trees.h>
 #include <phast/matrix.h>
 #include <phast/vector.h>
 #include <phast/misc.h>
@@ -415,29 +418,6 @@ static double gex_fit_pagels_lambda_loglik(double *y,
 
     *lambda_hat = best_lambda;
     return -best_fx;
-}
-
-/* Compute log(sum_i exp(x[i])) in a numerically stable way using the
-log-sum-exp trick: max(x) + log(sum_i exp(x[i] - max(x))). */
-double logsumexp(double *x, int n) {
-    int i;
-    double max_x = -HUGE_VAL;
-    double sum = 0.0;
-
-    /* Find the maximum value in the array */
-    for (i = 0; i < n; i++) {
-        if (x[i] > max_x)
-            max_x = x[i];
-    }
-    if (!isfinite(max_x))
-        return max_x;
-
-    /* Sum the exponentials */
-    for (i = 0; i < n; i++)
-        sum += exp(x[i] - max_x);
-
-    /* Return the log-sum-exp */
-    return max_x + log(sum);
 }
 
 

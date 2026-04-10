@@ -1,8 +1,13 @@
-
 #include "gexpca.h"
 
+#include <phast/matrix.h>
 #include <phast/misc.h>
 #include <phast/eigen.h>
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
 
 typedef struct {
     double val;

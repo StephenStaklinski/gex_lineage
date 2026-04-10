@@ -1,13 +1,20 @@
+
+#include "gexbrownian.h"
+#include "gexmatrix.h"
+#include "gexmisc.h"
+#include "gexmodel.h"
+#include "gexparser.h"
+#include "gexpca.h"
+#include "gexphylofilter.h"
+
+#include <phast/trees.h>
+#include <phast/matrix.h>
+#include <phast/misc.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "gex.h"
-#include "gexmodel.h"
-#include "gexpca.h"
-#include "gexbrownian.h"
-
-#include <phast/misc.h>
+#include <math.h>
 
 /* Select a subset of covariance matrices (trees) for latent model fitting
 by sampling without replacement. */
