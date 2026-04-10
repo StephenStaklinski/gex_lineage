@@ -1,6 +1,8 @@
 #include "gexmisc.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
 
 /* Generate next 32-bit unsigned integer from RNG state */
 unsigned int rand_u32(unsigned int *state) {
@@ -69,11 +71,10 @@ void calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_
 /* Fill a preallocated array of names of specified length
 incrementally with a specified prefix. prefix_1, prefix_2, etc. */
 void generate_names(char **names, int n_names, char *prefix) {
-    int i, j;
-
+    int j;
     for (j = 0; j < n_names; j++) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "%s_%04d", prefix, j + 1);
+        snprintf(buf, sizeof(buf), "%s_%d", prefix, j + 1);
         names[j] = strdup(buf);
     }
 }

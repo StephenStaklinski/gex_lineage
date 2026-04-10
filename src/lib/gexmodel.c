@@ -1047,14 +1047,15 @@ void simulate_factorization_and_reconstruction(Matrix *Z,
                                      Matrix *L_out,
                                      GexMatrix *gex_out) {
     int i, j, d;    /* Loop indices */
-    unsigned int rng_state = (unsigned int)(time(NULL) ^ getpid()); /* Set seed for reproducibility */
+    unsigned int rng_state = (unsigned int)(time(NULL) ^ getpid()); /* Initialize RNG state */
 
     /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
     sqrt(n_genes / k), ensuring each latent dimension contributes
     equal expected magnitude to the noiseless gene expression data. */
+    double row_ss;
+    double target_norm = sqrt((double)n_genes / (double)k); /* Set target norm for each row for stability */
     for (d = 0; d < k; d++) {
-        double row_ss = 0.0;
-        double target_norm = sqrt((double)n_genes / (double)k);
+        row_ss = 0.0;    /* Sum of squares for the current row */
         for (j = 0; j < n_genes; j++) {
             double val = rand_normal(&rng_state);
             mat_set(L_out, d, j, val);
@@ -1072,7 +1073,7 @@ void simulate_factorization_and_reconstruction(Matrix *Z,
     mat_mult(gex_out->X, Z, L_out);
 
     /* Add noise to the noiseless expression matrix based on 
-    the sigma2_obs parameter input. */
+    the sigma2_obs parameter input as new_val ~N(curr_val, sigma2_obs). */
     for (i = 0; i < n_cells; i++) {
         for (j = 0; j < n_genes; j++) {
             double val = mat_get(gex_out->X, i, j);

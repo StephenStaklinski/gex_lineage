@@ -57,6 +57,7 @@ int main(int argc, char *argv[]) {
     Matrix **use_Sigmas = NULL; /* Covariance matrices used for filtering */
     int n_trees = 0;    /* Number of input trees */
     GexMatrix *gex = scalloc(1, sizeof(GexMatrix));  /* Simulated expression matrix */
+    char **gene_names = NULL; /* Gene names for the simulated expression matrix */
     int i;
     int n_cells;
     
@@ -103,6 +104,20 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             use_n_trees = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--dim") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            k = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--sigma2-obs") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            sigma2_obs = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--include-factorization") == 0) {
             expr_only = 0;
@@ -177,7 +192,9 @@ int main(int argc, char *argv[]) {
 
     /* Set the gene names in the gene expression matrix */
     gex->gene_names = scalloc(n_genes, sizeof(char *));
+    gene_names = scalloc(n_genes, sizeof(char *));
     generate_names(gex->gene_names, n_genes, "gene");
+    generate_names(gene_names, n_genes, "gene");   /* Keep an extra copy external to gex matrix */
 
     /* Decide which covariance matrix to use for simulations */
     if (!identity_cov) {
@@ -241,19 +258,21 @@ int main(int argc, char *argv[]) {
     gex->X = brownian_simulate(use_Sigmas, 
                                 (use_n_trees == -1 ? 1 : use_n_trees), 
                                 mu, 
-                                n_genes,
+                                (expr_only == 1 ? n_genes : k),
                                 desired_tip_var);
 
     /* Write out the Brownian motion result */
-    char filter_sims_buf[4096];
+    char expr_buf[4096];
     if (expr_only) {
-        snprintf(filter_sims_buf, sizeof(filter_sims_buf), "%s.expr.tsv", outprefix);
+        snprintf(expr_buf, sizeof(expr_buf), "%s.expr.tsv", outprefix);
         
     } else {
-        snprintf(filter_sims_buf, sizeof(filter_sims_buf), "%s.Z.tsv", outprefix);
+        snprintf(expr_buf, sizeof(expr_buf), "%s.Z.tsv", outprefix);
+
+        /* Rename gene names to latent factors */
+        generate_names(gex->gene_names, n_genes, "factor");
     }
-    char *filter_sims_path = filter_sims_buf;
-    write_labeled_matrix_tsv(filter_sims_path, gex->X, gex->cell_names, gex->X->nrows,
+    write_labeled_matrix_tsv(expr_buf, gex->X, gex->cell_names, gex->X->nrows,
                                         gex->gene_names, gex->X->ncols, "cell");
 
 
@@ -270,7 +289,7 @@ int main(int argc, char *argv[]) {
         }
         gex_obs->gene_names = scalloc(n_genes, sizeof(char *));
         for (i = 0; i < n_genes; i++) {
-            gex_obs->gene_names[i] = strdup(gex->gene_names[i]);
+            gex_obs->gene_names[i] = strdup(gene_names[i]); /* Use extra copy in case gene names were replaced by factor names */
         }
 
         simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, sigma2_obs, L, gex_obs);
@@ -278,12 +297,12 @@ int main(int argc, char *argv[]) {
         /* Write out L */
         char l_buf[4096];
         snprintf(l_buf, sizeof(l_buf), "%s.L.tsv", outprefix);
-        write_labeled_matrix_tsv(l_buf, L, gex->cell_names, n_cells, gex->gene_names, n_genes, "cell");
+        write_labeled_matrix_tsv(l_buf, L, gex->gene_names, k, gene_names, n_genes, "cell");
 
         /* Write out X */
         char x_buf[4096];
         snprintf(x_buf, sizeof(x_buf), "%s.X.tsv", outprefix);
-        write_labeled_matrix_tsv(x_buf, gex_obs->X, gex->cell_names, n_cells, gex->gene_names, n_genes, "cell");
+        write_labeled_matrix_tsv(x_buf, gex_obs->X, gex_obs->cell_names, n_cells, gex_obs->gene_names, n_genes, "cell");
 
         /* Free memory */
         if (L != NULL)
@@ -291,6 +310,8 @@ int main(int argc, char *argv[]) {
         if (gex_obs != NULL)
             gex_free_matrix_data(gex_obs);
     }
+
+    printf("Wrote output to %s\n", outprefix);
 
     /* Free memory */
     vec_free(mu);
@@ -308,6 +329,14 @@ int main(int argc, char *argv[]) {
     }
     if (avg_Sigma != NULL) {
         mat_free(avg_Sigma);
+    }
+    if (gene_names != NULL) {
+        for (i = 0; i < n_genes; i++) {
+            if (gene_names[i] != NULL) {
+                free(gene_names[i]);
+            }
+        }
+        free(gene_names);
     }
 
     return 0; /* Success */
