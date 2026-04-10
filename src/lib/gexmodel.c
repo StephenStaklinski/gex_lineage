@@ -1013,15 +1013,12 @@ int gex_write_model(const char *outprefix,
     summary_out = NULL;
 
     /* Write out the simulated matrices */
-    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->X->nrows,
-                                     gene_names, gex->X->ncols, "cell") != 0)
-        return 1;
-    if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->X->nrows,
-                                     factor_names, k, "cell") != 0)
-        return 1;
-    if (gex_write_labeled_matrix_tsv(l_path, L, factor_names, k,
-                                     gene_names, gex->X->ncols, "factor") != 0)
-        return 1;
+    write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->X->nrows,
+                                     gene_names, gex->X->ncols, "cell");
+    write_labeled_matrix_tsv(z_path, Z, cell_names, gex->X->nrows,
+                                     factor_names, k, "cell");
+    write_labeled_matrix_tsv(l_path, L, factor_names, k,
+                                     gene_names, gex->X->ncols, "factor");
 
     /* Free memory */
     if (summary_out != NULL)

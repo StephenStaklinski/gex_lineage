@@ -139,7 +139,7 @@ array of tree pointers or NULL on failure.
 
 TODO: Make the function map names from the nexus file header
 the trees block since many NEXUS files have renamed taxa. */
-TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
+TreeNode **read_nexus(const char *filename, int *n_trees) {
     FILE *f;
     char line[4096];
     char *tree_record = NULL;

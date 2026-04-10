@@ -3,14 +3,19 @@
 #include "gexmatrix.h"
 #include "gexmisc.h"
 
+#include "mvn.h"
+
 #include <phast/trees.h>
 #include <phast/matrix.h>
 #include <phast/misc.h>
+#include <phast/vector.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+
 
 
 /* Find the most recent common ancestor (MRCA) of two nodes in a tree.
@@ -82,39 +87,6 @@ static void fill_tip_map(TreeNode *node,
     fill_tip_map(node->rchild, names, n, tips);
 }
 
-/* Copy cell names to gex matrix. */
-void copy_cell_names(char **src, char **dst, int n) {
-    int i;
-    for (i = 0; i < n; i++) {
-        dst[i] = strdup(src[i]);
-    }
-}
-
-/* Fill a preallocated array of gene names of length n_genes. 
-Returns 0 on success, -1 on failure. */
-int generate_gene_names(char **names, int n_genes, char *gene_name_prefix) {
-    int i, j;
-
-    if (names == NULL || n_genes <= 0)
-        return -1;
-
-    for (j = 0; j < n_genes; j++) {
-        char buf[64];
-        if (gene_name_prefix == NULL)
-            gene_name_prefix = "gene";
-        snprintf(buf, sizeof(buf), "%s_%04d", gene_name_prefix, j + 1);
-        names[j] = strdup(buf);
-        if (names[j] == NULL) {
-            /* Free string array */
-            for (i = 0; i < j; i++)
-                free(names[i]);
-            free(names);
-            return -1;
-        }
-    }
-
-    return 0;
-}
 
 /* Calculate the phylogenetic covariance matrix for an input tree.
 Covariance is the distance from root to MRCA for each pair of tips. 
@@ -258,372 +230,6 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
     return avg;
 }
 
-/* Simulate Brownian motion expression draws directly from a covariance matrix. */
-GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
-                                                        char **names,
-                                                        int n,
-                                                        int n_genes,
-                                                        double *sigma2,
-                                                        int n_sigma2,
-                                                        unsigned int seed) {
-    int i, j;
-    int ngenes;
-    GexMatrix *gex = NULL;
-    Matrix *Sigma_reg = NULL;
-    Matrix *chol = NULL;
-    double *std_normals = NULL;
-    unsigned int rng_state = (seed == 0u ? 1u : seed);
-    double max_diag = 0.0;
-    double jitter;
-
-    if (Sigma == NULL || names == NULL || n <= 0 ||
-        Sigma->nrows != n || Sigma->ncols != n ||
-        n_genes < 0 || sigma2 == NULL) {
-        fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid input\n");
-        return NULL;
-    }
-
-    ngenes = n_genes;
-    if (ngenes <= 0) {
-        fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance needs at least one gene\n");
-        return NULL;
-    }
-
-    /* Check that either 1 or all sigma2 values are provided */
-    if (n_sigma2 != 1 && n_sigma2 != n_genes) {
-        fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid number of sigma2 values\n");
-        return NULL;
-    }
-
-    /* Check the input sigma2 values are valid */
-    for (j = 0; j < n_sigma2; j++) {
-        if (sigma2[j] <= 0.0) {
-            fprintf(stderr, "ERROR: brownian_simulate_expression_from_covariance got invalid sigma2\n");
-            return NULL;
-        }
-    }
-
-    gex = scalloc(1, sizeof(GexMatrix));
-    Sigma_reg = mat_create_copy(Sigma);
-    chol = mat_new(n, n);
-
-    for (i = 0; i < n; i++) {
-        double diag = mat_get(Sigma, i, i);
-        if (diag > max_diag)
-            max_diag = diag;
-    }
-    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
-    for (i = 0; i < n; i++)
-        mat_set(Sigma_reg, i, i, mat_get(Sigma_reg, i, i) + jitter);
-    if (mat_cholesky(chol, Sigma_reg) != 0) {
-        fprintf(stderr, "ERROR: covariance-based simulation failed because the covariance was not positive definite enough\n");
-        gex_free_matrix_data(gex);
-        mat_free(Sigma_reg);
-        mat_free(chol);
-        return NULL;
-    }
-
-    gex->X = mat_new(n, ngenes);
-    gex->cell_names = scalloc(n, sizeof(char *));
-    copy_cell_names(names, gex->cell_names, n);
-    gex->gene_names = scalloc(ngenes, sizeof(char *));
-    generate_gene_names(gex->gene_names, ngenes, NULL);
-
-    std_normals = scalloc(n, sizeof(double));
-
-    for (j = 0; j < ngenes; j++) {
-        double sigma2_j = (n_sigma2 == 1 ? sigma2[0] : sigma2[j]);
-        double sigma_scale = sqrt(sigma2_j);
-        for (i = 0; i < n; i++)
-            std_normals[i] = rand_normal(&rng_state);
-        for (i = 0; i < n; i++) {
-            double sum = 0.0;
-            int m;
-            for (m = 0; m <= i; m++)
-                sum += mat_get(chol, i, m) * std_normals[m];
-            mat_set(gex->X, i, j, sigma_scale * sum);
-        }
-    }
-
-    free(std_normals);
-    mat_free(Sigma_reg);
-    mat_free(chol);
-    return gex;
-}
-
-GexMatrix *simulate_standard_normal_expression(char **names,
-                                             int n,
-                                             int n_genes,
-                                             unsigned int seed) {
-    int i, j;
-    GexMatrix *gex = NULL;
-    unsigned int rng_state = (seed == 0u ? 1u : seed);
-
-    if (names == NULL || n <= 0 || n_genes <= 0) {
-        fprintf(stderr, "ERROR: simulate_standard_normal_expression got invalid input\n");
-        return NULL;
-    }
-
-    gex = scalloc(1, sizeof(GexMatrix));
-    gex->X = mat_new(n, n_genes);
-    gex->cell_names= scalloc(n, sizeof(char *));
-    copy_cell_names(names, gex->cell_names, n);
-    gex->gene_names = scalloc(n_genes, sizeof(char *));
-    generate_gene_names(gex->gene_names, n_genes, "neg");
-
-    /* Draw expression values from standard normal distribution */
-    for (j = 0; j < n_genes; j++) {
-        for (i = 0; i < n; i++)
-            mat_set(gex->X, i, j, rand_normal(&rng_state));
-    }
-
-    return gex;
-}
-
-/* Append columns from two expression matrices */
-GexMatrix *combine_expression_matrices(GexMatrix *pos_gex,
-                                                GexMatrix *neg_gex) {
-    int i, j;
-    GexMatrix *combined = NULL;
-
-    if (pos_gex == NULL || neg_gex == NULL ||
-        pos_gex->X == NULL || neg_gex->X == NULL ||
-        pos_gex->X->nrows != neg_gex->X->nrows ||
-        pos_gex->X->ncols <= 0 || neg_gex->X->ncols <= 0)
-        return NULL;
-
-    combined = scalloc(1, sizeof(GexMatrix));
-    combined->X = mat_new(pos_gex->X->nrows, pos_gex->X->ncols + neg_gex->X->ncols);
-    combined->cell_names = scalloc(pos_gex->X->nrows, sizeof(char *));
-    copy_cell_names(pos_gex->cell_names, combined->cell_names, pos_gex->X->nrows);
-    combined->gene_names = scalloc(combined->X->ncols, sizeof(char *));
-
-    for (j = 0; j < pos_gex->X->ncols; j++) {
-        combined->gene_names[j] = strdup(pos_gex->gene_names[j]);
-        if (combined->gene_names[j] == NULL) {
-            gex_free_matrix_data(combined);
-            return NULL;
-        }
-    }
-    for (j = 0; j < neg_gex->X->ncols; j++) {
-        int col = pos_gex->X->ncols + j;
-        combined->gene_names[col] = strdup(neg_gex->gene_names[j]);
-        if (combined->gene_names[col] == NULL) {
-            gex_free_matrix_data(combined);
-            return NULL;
-        }
-    }
-
-    for (i = 0; i < combined->X->nrows; i++) {
-        for (j = 0; j < pos_gex->X->ncols; j++)
-            mat_set(combined->X, i, j, mat_get(pos_gex->X, i, j));
-        for (j = 0; j < neg_gex->X->ncols; j++)
-            mat_set(combined->X, i, pos_gex->X->ncols + j, mat_get(neg_gex->X, i, j));
-    }
-
-    return combined;
-}
-
-GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
-                                                   char **names,
-                                                   int n,
-                                                   int n_tree_genes,
-                                                   int n_null_genes,
-                                                   unsigned int seed) {
-    GexMatrix *pos_gex = NULL;
-    GexMatrix *neg_gex = NULL;
-    GexMatrix *combined = NULL;
-
-    if (Sigma == NULL || names == NULL || n <= 0 ||
-        n_tree_genes <= 0 || n_null_genes <= 0)
-        return NULL;
-
-    /* Set sigma2 value based on tree height */
-    int n_sigma2 = 1;
-    double sigma2[n_sigma2];
-    double desired_tip_variance = 5.0;
-    sigma2[0] = desired_tip_variance / mat_get(Sigma, 0, 0);  /* Set sigma2 relative to an assumed ultrametric tree height T to achieve a desired tip variance */
-
-    pos_gex = brownian_simulate_expression_from_covariance(Sigma, names, n,
-                                                           n_tree_genes, sigma2, 
-                                                           n_sigma2, seed);
-
-    neg_gex = simulate_standard_normal_expression(names, n, n_null_genes,
-                                                   seed + 7919u);
-
-    combined = combine_expression_matrices(pos_gex, neg_gex);
-
-    /* Free memory */
-    gex_free_matrix_data(pos_gex);
-    gex_free_matrix_data(neg_gex);
-
-    return combined;
-}
-
-/* Add one matrix to another in place element-wise. */
-int add_matrix_in_place(Matrix *dest, Matrix *src) {
-    int i, j;
-
-    if (dest == NULL || src == NULL ||
-        dest->nrows != src->nrows || dest->ncols != src->ncols)
-        return -1;
-
-    for (i = 0; i < dest->nrows; i++) {
-        for (j = 0; j < dest->ncols; j++) {
-            mat_set(dest, i, j, mat_get(dest, i, j) + mat_get(src, i, j));
-        }
-    }
-
-    return 0;
-}
-
-/* Scale a matrix in place element-wise. */
-int scale_matrix_in_place(Matrix *matrix, double factor) {
-    int i, j;
-
-    if (matrix == NULL)
-        return -1;
-
-    for (i = 0; i < matrix->nrows; i++) {
-        for (j = 0; j < matrix->ncols; j++) {
-            mat_set(matrix, i, j, factor * mat_get(matrix, i, j));
-        }
-    }
-
-    return 0;
-}
-
-/* Run a simulation check to evaluate the performance of the phylogenetic signal filter(s). 
-Sets up a simulation with the specified number of tree and null genes, runs the specified 
-filter(s), and evaluates how many tree genes are correctly identified as true positives and how 
-many null genes are incorrectly identified as false positives. Prints a summary of the results.
-Returns 1 if successful, 0 if failed. */
-int brownian_run_simulation_check(char **names,
-                                  int n,
-                                  int n_tree_genes,
-                                  int n_null_genes,
-                                  GexFilterMode mode,
-                                  GexLRTAltMode lrt_alt_mode,
-                                  int n_perm,
-                                  double max_q,
-                                  double min_i,
-                                  Matrix **Sigmas,
-                                  int n_sigmas,
-                                  char *filter_sims_path,
-                                  unsigned int seed) {
-    int i, j;
-    int tp = 0, fn = 0, fp = 0, tn = 0;
-    GexMatrix *sim = NULL;  /* Simulated gene expression matrix */
-    GexMatrix *tree_sim = NULL; /* Per-covariance simulated matrix */
-    GexMoransResult *morans = NULL; /* Results from Moran's I calculation on simulated data */
-    GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation on simulated data */
-
-    if (Sigmas == NULL || n_sigmas <= 0) {
-        fprintf(stderr, "ERROR: brownian_run_simulation_check got invalid covariance set\n");
-        return 0;
-    }
-
-    for (i = 0; i < n_sigmas; i++) {
-        if (Sigmas[i] == NULL) {
-            fprintf(stderr, "ERROR: brownian_run_simulation_check got NULL covariance at index %d\n", i);
-            return 1;
-        }
-
-        tree_sim = brownian_simulate_expression_with_nulls(Sigmas[i], names, n,
-                                                           n_tree_genes, n_null_genes,
-                                                           seed + (unsigned int)(104729u * i));
-        if (tree_sim == NULL)
-            return 1;
-
-        if (sim == NULL) {
-            sim = tree_sim;
-            tree_sim = NULL;
-        } else {
-            if (add_matrix_in_place(sim->X, tree_sim->X) != 0) {
-                fprintf(stderr, "ERROR: failed to accumulate simulated expression matrices\n");
-                return 1;
-            }
-            gex_free_matrix_data(tree_sim);
-            tree_sim = NULL;
-        }
-    }
-
-    if (sim == NULL || scale_matrix_in_place(sim->X, 1.0 / (double)n_sigmas) != 0) {
-        fprintf(stderr, "ERROR: failed to build expected simulated expression matrix\n");
-        return 1;
-    }
-
-    /* Optionally write the simulation expr matrix to a file. */
-    if (filter_sims_path != NULL) {
-        if (gex_write_labeled_matrix_tsv(filter_sims_path, sim->X,sim->cell_names, sim->X->nrows, sim->gene_names, sim->X->ncols, "cell") != 0) {
-            fprintf(stderr, "ERROR: failed to write filter simulation results to %s\n", filter_sims_path);
-            return 1;
-        }
-    }
-
-    /* Run the specified filter(s) on the simulated data. */
-    if (mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH)
-        morans = (Sigmas == NULL ? NULL : gex_compute_morans_i(sim, Sigmas, n_sigmas, n_perm, seed + 17u));
-    
-    if (mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH)
-        lrt = (Sigmas == NULL ? NULL : gex_compute_brownian_lrt(sim, Sigmas,
-                                                               n_sigmas,
-                                                               n_perm,
-                                                               seed + 31u,
-                                                               lrt_alt_mode));
-
-    if (Sigmas == NULL || n_sigmas <= 0 ||
-        ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) && morans == NULL) ||
-        ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) && lrt == NULL)) {
-        return 1;
-    }
-
-    /* Evaluate the performance of the filter(s) */
-    for (j = 0; j < n_tree_genes; j++) {
-        int keep = 0;
-        if (mode == GEX_FILTER_MORAN) {
-            keep = (morans->qvals[j] <= max_q && morans->morans_i[j] > min_i);
-        } else if (mode == GEX_FILTER_LRT) {
-            keep = (lrt->qvals[j] <= max_q && lrt->lrt_stat[j] > 0.0);
-        } else if (mode == GEX_FILTER_BOTH) {
-            keep = (morans->qvals[j] <= max_q && morans->morans_i[j] > min_i) &&
-                (lrt->qvals[j] <= max_q && lrt->lrt_stat[j] > 0.0);
-        }
-        if (keep) tp++;
-        else fn++;
-    }
-
-    for (j = 0; j < n_null_genes; j++) {
-        int idx = n_tree_genes + j;
-        int keep = 0;
-        if (mode == GEX_FILTER_MORAN) {
-            keep = (morans->qvals[idx] <= max_q && morans->morans_i[idx] > min_i);
-        } else if (mode == GEX_FILTER_LRT) {
-            keep = (lrt->qvals[idx] <= max_q && lrt->lrt_stat[idx] > 0.0);
-        } else if (mode == GEX_FILTER_BOTH) {
-            keep = (morans->qvals[idx] <= max_q && morans->morans_i[idx] > min_i) &&
-                (lrt->qvals[idx] <= max_q && lrt->lrt_stat[idx] > 0.0);
-        }
-        if (keep) fp++;
-        else tn++;
-    }
-
-    /* Print a summary of the simulation check results. */
-    printf("Phylogenetic signal filter(s) simulation check:\n");
-    printf("  positives simulated: %d, detected: %d, missed: %d\n",
-           n_tree_genes, tp, fn);
-    printf("  negatives simulated: %d, rejected: %d, false positives: %d\n",
-           n_null_genes, tn, fp);
-
-    /* Free memory */
-    gex_free_matrix_data(tree_sim);
-    gex_free_matrix_data(sim);
-    gex_free_morans_result(morans);
-    gex_free_lrt_result(lrt);
-
-    return (fn == 0 && fp == 0); /* Return 1 if performance is perfect (no false negatives or false positives), 0 otherwise */
-}
-
 /* Print a summary of the covariance matrix. */
 void print_covariance_summary(Matrix *Sigma, char **names, int n) {
     int i, j;
@@ -647,6 +253,63 @@ void print_covariance_summary(Matrix *Sigma, char **names, int n) {
     }
     printf("\n");
 }
+
+Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
+                          double desired_tip_var) {
+
+    if (Sigmas == NULL || n_sigmas <= 0 || n_cols <= 0 || 
+        desired_tip_var < 0.0 || mu == NULL || mu->size != Sigmas[0]->nrows)
+        return NULL;
+
+    int i, j;
+    int n_rows = Sigmas[0]->nrows; /* Assume all Sigmas have the same number of rows */
+    Matrix *res = mat_new(n_rows, n_cols);
+    mat_zero(res);
+    Matrix *cur_sim = mat_new(n_rows, n_cols);
+    Vector *sim_vec = vec_new(n_rows);
+
+    /* Solve for the sigma2 that gives the desired tip variance Var(Xtip) = sigma2 * tree_height,
+    assuming an ultrametric tree height here from the input Sigma phylogenetic covariance matrix. */
+    double tree_height = mat_get(Sigmas[0], 0, 0);
+    if (tree_height <= 0.0)
+        return NULL;
+    double sigma2 = desired_tip_var / tree_height;
+
+    for (i = 0; i < n_sigmas; i++) {
+
+        /* Scale the input Sigma by the Brownian variance parameter sigma2 to get the covariance for this simulation */
+        Matrix *scaled_Sigma = mat_create_copy(Sigmas[i]);  /* Copy to scale and since it will be freed automatically by mat_free */
+        mat_scale(scaled_Sigma, sigma2);
+
+        /* Create MVN object from the scaled covariance matrix */
+        Vector *mu_copy = vec_create_copy(mu);  /* Copy since mat_free will free the supplied mu directly */
+        MVN *mvn_obj = mvn_new(n_rows, mu_copy, scaled_Sigma);
+
+        /* Draw the simulation results per desired col from the MVN */
+        mat_zero(cur_sim);
+        for (j = 0; j < n_cols; j++) {
+            mvn_sample(mvn_obj, sim_vec);
+            mat_set_col(cur_sim, j, sim_vec);
+        }
+
+        /* Accumulate results over each Sigma */
+        mat_add_mat(res, cur_sim);
+
+        /* Free memory */
+        mvn_free(mvn_obj);
+    }
+
+    /* Finish the expectation over n_sigmas */
+    double scale_factor = 1.0 / (double)n_sigmas;
+    mat_scale(res, scale_factor);
+
+    /* Free memory */
+    vec_free(sim_vec);
+    mat_free(cur_sim);
+
+    return res;
+}
+
 
 /* Use the provides latent factors . */
 int gex_simulate_from_latent_factors(Matrix *Z,
@@ -680,7 +343,7 @@ int gex_simulate_from_latent_factors(Matrix *Z,
 
     /* Get simulated gene names */
     gene_names = scalloc(n_genes, sizeof(char *));
-    generate_gene_names(gene_names, n_genes, NULL);
+    generate_names(gene_names, n_genes, NULL);
 
     if (L == NULL || gex == NULL || gene_names == NULL)
         return 1;

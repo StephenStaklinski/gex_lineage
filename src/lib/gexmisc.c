@@ -65,3 +65,15 @@ void calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_
     if (*sigma2_out < 1e-12)
         *sigma2_out = 1e-12;
 }
+
+/* Fill a preallocated array of names of specified length
+incrementally with a specified prefix. prefix_1, prefix_2, etc. */
+void generate_names(char **names, int n_names, char *prefix) {
+    int i, j;
+
+    for (j = 0; j < n_names; j++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s_%04d", prefix, j + 1);
+        names[j] = strdup(buf);
+    }
+}

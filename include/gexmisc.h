@@ -11,4 +11,6 @@ double logsumexp(double *x, int n);
 
 void calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_out);
 
+void generate_names(char **names, int n_names, char *prefix);
+
 #endif

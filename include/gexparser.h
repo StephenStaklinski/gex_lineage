@@ -6,7 +6,7 @@
 #include <phast/matrix.h>
 #include <phast/trees.h>
 
-TreeNode **gex_read_nexus(const char *filename, int *n_trees);
+TreeNode **read_nexus(const char *filename, int *n_trees);
 
 int check_trees_ultrametric(TreeNode **trees, int n_trees);
 

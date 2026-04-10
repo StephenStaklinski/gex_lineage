@@ -24,10 +24,11 @@ static void usage(const char *progname) {
         "--trees <trees.nex> "
         "--outprefix <prefix> "
         "[--tree-total-time T] "
+        "[--n-genes N] "
+        "[--desired-tip-var V] "
         "[--use-n-trees N] "
         "[--identity-cov] "
-        "[--verbose] "
-        "[--seed S]\n",
+        "[--verbose]\n",
         progname);
 }
 
@@ -37,10 +38,11 @@ int main(int argc, char *argv[]) {
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *outprefix = NULL;   /* Prefix for all output files */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
+    int n_genes = 100; /* Number of genes to simulate */
+    double desired_tip_var = 5.0; /* Desired variance for tip nodes */
     int use_n_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int identity_cov = 0; /* If nonzero, use identity covariance (null model) instead of tree-based covariance for simulations. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
-    unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -48,8 +50,9 @@ int main(int argc, char *argv[]) {
     Matrix *avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
     Matrix **use_Sigmas = NULL; /* Covariance matrices used for filtering */
     int n_trees = 0;    /* Number of input trees */
-    GexMatrix *gex = NULL;  /* Simulated expression matrix */
+    GexMatrix *gex = smalloc(sizeof(GexMatrix));  /* Simulated expression matrix */
     int i;
+    int n_cells;
     
 
     for (i = 1; i < argc; i++) {
@@ -74,6 +77,20 @@ int main(int argc, char *argv[]) {
             }
             tree_total_time = atof(argv[++i]);
         }
+        else if (strcmp(argv[i], "--n-genes") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            n_genes = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--desired-tip-var") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            desired_tip_var = atof(argv[++i]);
+        }
         else if (strcmp(argv[i], "--use-n-trees") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -81,12 +98,8 @@ int main(int argc, char *argv[]) {
             }
             use_n_trees = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "--seed") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            seed = (unsigned int)strtoul(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--identity-cov") == 0) {
+            identity_cov = 1;
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
@@ -109,7 +122,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Load the input trees */
-    trees = gex_read_nexus(trees_file, &n_trees);
+    trees = read_nexus(trees_file, &n_trees);
     if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
         fprintf(stderr, "ERROR: failed to load tree(s).\n");
         return 1;
@@ -142,6 +155,20 @@ int main(int argc, char *argv[]) {
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
 
+    /* Set the cell names in the gene expression matrix */
+    List *leaf_names = tr_leaf_names(trees[0]);
+    gex->cell_names = scalloc(lst_size(leaf_names), sizeof(char *));
+    for (i = 0; i < lst_size(leaf_names); i++) {
+        gex->cell_names[i] = strdup((char *)lst_get_ptr(leaf_names, i));
+    }
+    n_cells = lst_size(leaf_names);
+    lst_free(leaf_names);
+
+    /* Set the gene names in the gene expression matrix */
+    gex->gene_names = scalloc(n_genes, sizeof(char *));
+    generate_names(gex->gene_names, n_genes, "gene");
+
+    /* Decide which covariance matrix to use for simulations */
     if (!identity_cov) {
         /* Calculate the phylogenetic covariance matrix for each input tree. */
         Sigmas = scalloc(n_trees, sizeof(Matrix *));
@@ -188,32 +215,33 @@ int main(int argc, char *argv[]) {
     } else {
         /* Use identity covariance for simulations instead of tree-based covariance if requested */
         use_Sigmas = scalloc(1, sizeof(Matrix *));
-        use_Sigmas[0] = mat_identity(gex->X->nrows);
+        use_Sigmas[0] = mat_new(n_cells, n_cells);
+        mat_set_identity(use_Sigmas[0]);
         if (use_Sigmas[0] == NULL) {
             fprintf(stderr, "ERROR: failed to create identity covariance matrix for simulations.\n");
             return 1;
         }
     }
 
-    char filter_sims_buf[4096];
-    snprintf(filter_sims_buf, sizeof(filter_sims_buf), "%s.phylo_filter_sims.expr.tsv", outprefix);
-    char *filter_sims_path = filter_sims_buf;
+    /* Run simulation */
+    Vector *mu = vec_new(n_cells);   /* For now, assume zero mean */
+    vec_zero(mu);
+    gex->X = brownian_simulate(use_Sigmas, 
+                                (use_n_trees == -1 ? 1 : use_n_trees), 
+                                mu, 
+                                n_genes,
+                                desired_tip_var);
 
-    brownian_run_simulation_check(gex->cell_names,
-                                        gex->X->nrows,
-                                        n_sims,
-                                        n_sims,
-                                        filter_mode,
-                                        lrt_alt_mode,
-                                        n_perms,
-                                        max_q,
-                                        moran_min_i,
-                                        filter_Sigmas,
-                                        (use_n_trees == -1 ? 1 : use_n_trees),
-                                        filter_sims_path,
-                                        seed))
+    /* Write out simulated gene expression matrix*/
+    char filter_sims_buf[4096];
+    snprintf(filter_sims_buf, sizeof(filter_sims_buf), "%s.expr.tsv", outprefix);
+    char *filter_sims_path = filter_sims_buf;
+    write_labeled_matrix_tsv(filter_sims_path, gex->X, gex->cell_names, gex->X->nrows,
+                                     gex->gene_names, gex->X->ncols, "cell");
+    printf("Wrote simulated gene expression matrix to %s\n", filter_sims_path);
 
     /* Free memory */
+    vec_free(mu);
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
     if (Sigmas != NULL) {

@@ -289,7 +289,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Load the input trees */
-    trees = gex_read_nexus(trees_file, &n_trees);
+    trees = read_nexus(trees_file, &n_trees);
     if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
         fprintf(stderr, "ERROR: failed to load tree(s).\n");
         return 1;

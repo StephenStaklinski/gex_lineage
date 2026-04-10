@@ -2,11 +2,13 @@
 #include "gexbrownian.h"
 #include "gexmatrix.h"
 #include "gexmodel.h"
+#include "gexparser.h"
 
 #include <phast/trees.h>
 #include <phast/lists.h>
 #include <phast/stringsplus.h>
 #include <phast/matrix.h>
+#include <phast/misc.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -166,12 +168,12 @@ int main(int argc, char *argv[]) {
     }
 
     /* Read in trees to use for the simulation */
-    trees = gex_read_nexus(trees_file, &n_trees);
+    trees = read_nexus(trees_file, &n_trees);
     if (trees == NULL || n_trees <= 0) {
         fprintf(stderr, "ERROR: failed to load trees from %s\n", trees_file);
         return 1;
     }
-    if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
+    if (check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
         fprintf(stderr, "ERROR: simulator requires ultrametric trees.\n");
         return 1;
     }

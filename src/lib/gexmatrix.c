@@ -7,6 +7,27 @@
 #include <stdlib.h>
 
 
+/* Set the i-th column of matrix res to the values in vector sim_vec 
+in-place. */
+void mat_set_col(Matrix *res, int i, Vector *sim_vec) {
+    int j;
+    for (j = 0; j < res->nrows; j++) {
+        mat_set(res, j, i, vec_get(sim_vec, j));
+    }
+}
+
+/* Add one matrix to another in place element-wise. */
+void mat_add_mat(Matrix *dest, Matrix *src) {
+    int i, j;
+    double sum;
+    for (i = 0; i < dest->nrows; i++) {
+        for (j = 0; j < dest->ncols; j++) {
+            sum = mat_get(dest, i, j) + mat_get(src, i, j);
+            mat_set(dest, i, j, sum);
+        }
+    }
+}
+
 /* Normalize the entries in a row by the row sum in-place.
 Returns 0 on success, -1 on failure. */
 void mat_normalize_rows(Matrix *X) {
@@ -65,7 +86,7 @@ void mat_center_cols(Matrix *X) {
     }
 }
 
-int gex_write_labeled_matrix_tsv(const char *filename,
+void write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,
                                  char **row_names,
                                  int n_rows,
@@ -77,13 +98,13 @@ int gex_write_labeled_matrix_tsv(const char *filename,
 
     if (filename == NULL || X == NULL || row_names == NULL || col_names == NULL ||
         n_rows <= 0 || n_cols <= 0 || X->nrows != n_rows || X->ncols != n_cols)
-        return -1;
+        return;
 
     out = fopen(filename, "w");
     if (out == NULL) {
         fprintf(stderr, "ERROR: failed to open %s for writing: %s\n",
                 filename, strerror(errno));
-        return -1;
+        return;
     }
 
     fprintf(out, "%s", corner_label == NULL ? "id" : corner_label);
@@ -99,7 +120,6 @@ int gex_write_labeled_matrix_tsv(const char *filename,
     }
 
     fclose(out);
-    return 0;
 }
 
 void gex_free_matrix_data(GexMatrix *gex) {

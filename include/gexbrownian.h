@@ -14,50 +14,10 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
                                     char **names,
                                     int n_names);
 
-int add_matrix_in_place(Matrix *dest, Matrix *src);
-
-int scale_matrix_in_place(Matrix *matrix, double factor);
-
-GexMatrix *brownian_simulate_expression_from_covariance(Matrix *Sigma,
-                                                        char **names,
-                                                        int n,
-                                                        int n_genes,
-                                                        double *sigma2,
-                                                        int n_sigma2,
-                                                        unsigned int seed);
-
-GexMatrix *simulate_standard_normal_expression(char **names,
-                                             int n,
-                                             int n_genes,
-                                             unsigned int seed);
-
-GexMatrix *brownian_combine_expression_matrices(GexMatrix *pos_gex,
-                                                GexMatrix *neg_gex);
-
-GexMatrix *brownian_simulate_expression_with_nulls(Matrix *Sigma,
-                                                  char **names,
-                                                  int n,
-                                                  int n_tree_genes,
-                                                  int n_null_genes,
-                                                  unsigned int seed);
-
-int brownian_run_simulation_check(char **names,
-                                    int n,
-                                    int n_tree_genes,
-                                    int n_null_genes,
-                                    GexFilterMode mode,
-                                    GexLRTAltMode lrt_alt_mode,
-                                    int n_perm,
-                                    double max_q,
-                                    double min_i,
-                                    Matrix **Sigmas,
-                                    int n_sigmas,
-                                    char *filter_sims_path,
-                                    unsigned int seed);
+Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
+                          double desired_tip_var);
 
 void print_covariance_summary(Matrix *Sigma, char **names, int n);
-
-int generate_gene_names(char **names, int n_genes, char *gene_name_prefix);
 
 int gex_simulate_from_latent_factors(Matrix *Z,
                                      char **cell_names,
