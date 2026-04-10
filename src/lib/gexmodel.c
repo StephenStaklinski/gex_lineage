@@ -934,3 +934,130 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
 
     free(model);
 }
+
+
+int gex_write_labeled_matrix_tsv(const char *filename,
+                                 Matrix *X,
+                                 char **row_names,
+                                 int n_rows,
+                                 char **col_names,
+                                 int n_cols,
+                                 const char *corner_label) {
+    int i, j;
+    FILE *out = NULL;
+
+    if (filename == NULL || X == NULL || row_names == NULL || col_names == NULL ||
+        n_rows <= 0 || n_cols <= 0 || X->nrows != n_rows || X->ncols != n_cols)
+        return -1;
+
+    out = fopen(filename, "w");
+    if (out == NULL) {
+        fprintf(stderr, "ERROR: failed to open %s for writing: %s\n",
+                filename, strerror(errno));
+        return -1;
+    }
+
+    fprintf(out, "%s", corner_label == NULL ? "id" : corner_label);
+    for (j = 0; j < n_cols; j++)
+        fprintf(out, "\t%s", col_names[j]);
+    fprintf(out, "\n");
+
+    for (i = 0; i < n_rows; i++) {
+        fprintf(out, "%s", row_names[i]);
+        for (j = 0; j < n_cols; j++)
+            fprintf(out, "\t%.17g", mat_get(X, i, j));
+        fprintf(out, "\n");
+    }
+
+    fclose(out);
+    return 0;
+}
+
+/* Helper to generate latent factor names incrementally */
+static char **generate_factor_names(int k) {
+    int i;
+    char **names = NULL;
+
+    if (k <= 0)
+        return NULL;
+    names = scalloc(k, sizeof(char *));
+
+    for (i = 0; i < k; i++) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "LF%d", i + 1);
+        names[i] = strdup(buf);
+        if (names[i] == NULL) {
+            free_string_array(names, i);
+            return NULL;
+        }
+    }
+
+    return names;
+}
+
+int gex_write_model(const char *outprefix,
+                                GexMatrix *gex,
+                                Matrix *L,
+                                Matrix *Z,
+                                char **cell_names,
+                                char **gene_names,
+                                int k,
+                                double sigma2_obs,
+                                double *sigma2_latent) {
+    char summary_path[4096];
+    char z_path[4096];
+    char l_path[4096];
+    char expr_path[4096];
+    char **factor_names = NULL;
+    FILE *summary_out = NULL;
+    int j;
+
+    if (outprefix == NULL || gex == NULL || L == NULL || Z == NULL ||
+        L == NULL || Z == NULL || cell_names == NULL || gene_names == NULL ||
+        k <= 0 || sigma2_latent == NULL)
+        return 1;
+
+    /* Draw latent factor names incrementally */
+    factor_names = generate_factor_names(k);
+    if (factor_names == NULL)
+        return 1;
+
+    snprintf(summary_path, sizeof(summary_path), "%s.summary.tsv", outprefix);
+    snprintf(z_path, sizeof(z_path), "%s.Z.tsv", outprefix);
+    snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
+    snprintf(expr_path, sizeof(expr_path), "%s.expr.tsv", outprefix);
+
+    /* Write out the summary parameters file to match the format used
+    by model fitting output */
+    summary_out = fopen(summary_path, "w");
+    if (summary_out == NULL)
+        return 1;
+    fprintf(summary_out, "parameter\tvalue\n");
+    fprintf(summary_out, "n_cells\t%d\n", gex->X->nrows);
+    fprintf(summary_out, "n_genes\t%d\n", gex->X->ncols);
+    fprintf(summary_out, "k\t%d\n", k);
+    fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
+    for (j = 0; j < k; j++)
+        fprintf(summary_out, "sigma2_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
+    fclose(summary_out);
+    summary_out = NULL;
+
+    /* Write out the simulated matrices */
+    if (gex_write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->X->nrows,
+                                     gene_names, gex->X->ncols, "cell") != 0)
+        return 1;
+    if (gex_write_labeled_matrix_tsv(z_path, Z, cell_names, gex->X->nrows,
+                                     factor_names, k, "cell") != 0)
+        return 1;
+    if (gex_write_labeled_matrix_tsv(l_path, L, factor_names, k,
+                                     gene_names, gex->X->ncols, "factor") != 0)
+        return 1;
+
+    /* Free memory */
+    if (summary_out != NULL)
+        fclose(summary_out);
+    if (factor_names != NULL)
+        free_string_array(factor_names, k);
+
+    return 0;
+}

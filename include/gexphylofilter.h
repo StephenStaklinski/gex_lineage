@@ -1,15 +1,10 @@
-#ifndef GEX_H
-#define GEX_H
+#ifndef GEXPHYLOFILTER_H
+#define GEXPHYLOFILTER_H
 
-#include <stdio.h>
+#include "gexmatrix.h"
+
 #include <phast/matrix.h>
-#include <phast/trees.h>
 
-typedef struct {
-    Matrix *X;  /* cells (nrows) x genes (ncols) */
-    char **cell_names;
-    char **gene_names;
-} GexMatrix;
 
 typedef enum {
     GEX_LRT_NULL_MONTECARLO = 0,
@@ -47,32 +42,6 @@ typedef enum {
     GEX_FILTER_LRT = 1,
     GEX_FILTER_BOTH = 2
 } GexFilterMode;
-
-TreeNode **gex_read_nexus(const char *filename, int *n_trees);
-
-int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol);
-
-int gex_rescale_trees_total_height(TreeNode **trees, int n_trees, double target_height);
-
-void gex_free_trees(TreeNode **trees, int n_trees);
-
-GexMatrix *read_gex_matrix(const char *filename);
-
-void gex_free_matrix_data(GexMatrix *gex);
-
-void normalize_by_row_sums(Matrix *X);
-
-void log1p_transform(Matrix *X);
-
-void center_matrix_inplace(Matrix *X);
-
-double logsumexp(double *x, int n);
-
-void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex);
-
-int gex_reconcile_tree_and_expression(TreeNode **trees,
-                                      int n_trees,
-                                      GexMatrix **gex_ptr);
 
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
                                       Matrix **Sigmas,
@@ -118,41 +87,6 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                                        double max_q,
                                        double min_i);
 
-int gex_write_labeled_matrix_tsv(const char *filename,
-                                 Matrix *X,
-                                 char **row_names,
-                                 int n_rows,
-                                 char **col_names,
-                                 int n_cols,
-                                 const char *corner_label);
-
-int gex_write_model(const char *outprefix,
-                               GexMatrix *gex,
-                               Matrix *L,
-                               Matrix *Z,
-                               char **cell_names,
-                               char **gene_names,
-                               int k,
-                               double sigma2_obs,
-                               double *sigma2_latent);
-
-int gex_simulate_from_latent_factors(Matrix *Z,
-                                     char **cell_names,
-                                     int n_cells,
-                                     int k,
-                                     int n_genes,
-                                     double sigma2_obs,
-                                     unsigned int seed,
-                                     Matrix **L_out,
-                                     GexMatrix **gex_out);
-
-/* Helpers */
-void free_string_array(char **arr, int n);
-
-unsigned int rand_u32(unsigned int *state);
-
-double uniform_open(unsigned int *state);
-
-double rand_normal(unsigned int *state);
+double logsumexp(double *x, int n);
 
 #endif

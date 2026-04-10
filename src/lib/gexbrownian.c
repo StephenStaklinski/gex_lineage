@@ -100,7 +100,10 @@ int generate_gene_names(char **names, int n_genes, char *gene_name_prefix) {
         snprintf(buf, sizeof(buf), "%s_%04d", gene_name_prefix, j + 1);
         names[j] = strdup(buf);
         if (names[j] == NULL) {
-            free_string_array(names, j);
+            /* Free string array */
+            for (i = 0; i < j; i++)
+                free(names[i]);
+            free(names);
             return -1;
         }
     }
@@ -739,4 +742,118 @@ void print_weight_matrix_summary(Matrix *W) {
         printf("\n");
     }
     printf("\n");
+}
+
+/* Use the provides latent factors . */
+int gex_simulate_from_latent_factors(Matrix *Z,
+                                     char **cell_names,
+                                     int n_cells,
+                                     int k,
+                                     int n_genes,
+                                     double sigma2_obs,
+                                     unsigned int seed,
+                                     Matrix **L_out,
+                                     GexMatrix **gex_out) {
+    int i, j, d;    /* Loop indices */
+    GexMatrix *gex = NULL;  /* Simulation output gene expression object */
+    Matrix *L = NULL;    /* Simulation output gene loadings object */
+    char **gene_names = NULL;   /* Gene names */
+    unsigned int rng_state = (seed == 0u ? 1u : seed);  /* Random number generator state */
+
+    if (Z == NULL || L_out == NULL || gex_out == NULL || cell_names == NULL || n_cells <= 0 ||
+        k <= 0 || n_genes <= 0 || sigma2_obs < 0.0)
+        return 1;
+    if (Z->nrows != n_cells || Z->ncols != k)
+        return 1;
+
+    /* Make sure the simulation output is initialized as empty */
+    *gex_out = NULL;
+    *L_out = NULL;
+
+    /* Allocate objects in memory */
+    gex = scalloc(1, sizeof(GexMatrix));
+    L = mat_new(k, n_genes);
+
+    /* Get simulated gene names */
+    gene_names = scalloc(n_genes, sizeof(char *));
+    generate_gene_names(gene_names, n_genes, NULL);
+
+    if (L == NULL || gex == NULL || gene_names == NULL)
+        return 1;
+
+    /* Setup dimensions of L */
+    L->nrows = k;
+    L->ncols = n_genes;
+
+    /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
+    sqrt(n_genes / k), ensuring each latent dimension contributes
+    equal expected magnitude to the noiseless gene expression data. */
+    for (d = 0; d < k; d++) {
+        double row_ss = 0.0;
+        double target_norm = sqrt((double)n_genes / (double)k);
+        for (j = 0; j < n_genes; j++) {
+            double val = rand_normal(&rng_state);
+            mat_set(L, d, j, val);
+            row_ss += val * val;
+        }
+        if (row_ss > 0.0) {
+            double row_scale = target_norm / sqrt(row_ss);
+            for (j = 0; j < n_genes; j++)
+                mat_set(L, d, j, row_scale * mat_get(L, d, j));
+        }
+    }
+
+    /* Initialize the gene expression matrix */
+    gex->X = mat_new(n_cells, n_genes);
+    if (gex->X == NULL)
+        return 1;
+
+    /* Compute the noiseless expression matrix from the 
+    simulated Z and L matrix factorization. */
+    mat_mult(gex->X, Z, L);
+
+    /* Initialize the cell and gene names */
+    gex->cell_names = scalloc(n_cells, sizeof(char *));
+    gex->gene_names = scalloc(n_genes, sizeof(char *));
+    for (i = 0; i < n_cells; i++) {
+        gex->cell_names[i] = strdup(cell_names[i]);
+        if (gex->cell_names[i] == NULL)
+            return 1;
+    }
+    for (j = 0; j < n_genes; j++) {
+        gex->gene_names[j] = gene_names[j];
+        gene_names[j] = NULL;
+    }
+
+    /* Add noise to the noiseless expression matrix based on 
+    the sigma2_obs parameter input. */
+    for (i = 0; i < n_cells; i++) {
+        for (j = 0; j < n_genes; j++) {
+            double val = mat_get(gex->X, i, j);
+            if (sigma2_obs > 0.0)
+                val += sqrt(sigma2_obs) * rand_normal(&rng_state);
+            mat_set(gex->X, i, j, val);
+        }
+    }
+
+    *L_out = L;
+    L = NULL;
+    *gex_out = gex;
+    gex = NULL;
+
+    /* Free memory */
+    if (gene_names != NULL) {
+        for (j = 0; j < n_genes; j++) {
+            if (gene_names[j] != NULL) {
+                free(gene_names[j]);
+            }
+        free(gene_names);
+        }
+    }
+    if (L != NULL)
+        mat_free(L);
+    if (gex != NULL)
+        gex_free_matrix_data(gex);
+
+    return 0;
 }

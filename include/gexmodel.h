@@ -1,10 +1,13 @@
 #ifndef GEXMODEL_H
 #define GEXMODEL_H
 
-#include "gex.h"
+#include "gexmatrix.h"
 #include "gexpca.h"
+#include "gexmodel.h"
 
-#include <mvn.h>
+#include "mvn.h"
+
+#include <phast/matrix.h>
 
 typedef struct {
     int n_cells;
@@ -31,5 +34,23 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       const char *outprefix);
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
+
+int gex_write_labeled_matrix_tsv(const char *filename,
+                                 Matrix *X,
+                                 char **row_names,
+                                 int n_rows,
+                                 char **col_names,
+                                 int n_cols,
+                                 const char *corner_label);
+
+int gex_write_model(const char *outprefix,
+                               GexMatrix *gex,
+                               Matrix *L,
+                               Matrix *Z,
+                               char **cell_names,
+                               char **gene_names,
+                               int k,
+                               double sigma2_obs,
+                               double *sigma2_latent);
 
 #endif

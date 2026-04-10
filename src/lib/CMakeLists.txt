@@ -8,10 +8,13 @@ add_library(vine_core STATIC
     covariance.c
     crispr.c
     geometry.c
-    gex.c
     gexbrownian.c
+    gexmatrix.c
+    gexmisc.c
     gexmodel.c
+    gexparser.c
     gexpca.c
+    gexphylofilter.c
     gradients.c
     heap.c
     hutchinson.c

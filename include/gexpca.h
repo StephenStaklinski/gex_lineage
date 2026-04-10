@@ -1,11 +1,7 @@
 #ifndef GEXPCA_H
 #define GEXPCA_H
 
-#include "gex.h"
-
-#include <stdio.h>
 #include <phast/matrix.h>
-#include <phast/trees.h>
 
 
 typedef struct {
