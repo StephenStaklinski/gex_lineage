@@ -15,7 +15,7 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
                                     int n_names);
 
 Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
-                          double desired_tip_var);
+                          Vector *sigma2s);
 
 void print_covariance_summary(Matrix *Sigma, char **names, int n);
 

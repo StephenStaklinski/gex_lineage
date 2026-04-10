@@ -1,8 +1,32 @@
 #include "gexmisc.h"
 
+#include <phast/vector.h>
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+#include <stdlib.h>
+
+
+/* Expand a vector to a specified size, filling with the first element if necessary. */
+Vector *expand_input_csv(Vector *input, int expected_size) {
+    int i;
+    Vector *out = vec_new(expected_size);
+
+    if (input->size == expected_size) {
+        /* Copy as is for all positions */
+        vec_copy(out, input);
+    } else {
+
+    /* Copy the first entry to all positions */
+    for (i = 0; i < expected_size; i++)
+        vec_set(out, i, vec_get(input, 0));
+    }
+
+    return out;
+}
+
 
 /* Generate next 32-bit unsigned integer from RNG state */
 unsigned int rand_u32(unsigned int *state) {

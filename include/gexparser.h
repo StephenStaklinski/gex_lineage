@@ -5,6 +5,7 @@
 
 #include <phast/matrix.h>
 #include <phast/trees.h>
+#include <phast/vector.h>
 
 TreeNode **read_nexus(const char *filename, int *n_trees);
 
@@ -21,5 +22,7 @@ void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex);
 int gex_reconcile_tree_and_expression(TreeNode **trees,
                                       int n_trees,
                                       GexMatrix **gex_ptr);
+
+Vector *parse_csv_to_vec(const char *csv);
 
 #endif

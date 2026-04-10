@@ -25,7 +25,8 @@ static void usage(const char *progname) {
         "--outprefix <prefix> "
         "[--tree-total-time T] "
         "[--n-genes N] "
-        "[--desired-tip-var V] "
+        "[--desired-tip-var <csv> ] "
+        "[--sigma2 <csv>] "
         "[--use-n-trees N] "
         "[--dim K] "
         "[--sigma2-obs S] "
@@ -34,6 +35,7 @@ static void usage(const char *progname) {
         "[--verbose]\n",
         progname);
 }
+
 
 /* Main program entry point for gexLineage. */
 int main(int argc, char *argv[]) {
@@ -56,10 +58,15 @@ int main(int argc, char *argv[]) {
     Matrix *avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
     Matrix **use_Sigmas = NULL; /* Covariance matrices used for filtering */
     int n_trees = 0;    /* Number of input trees */
+    Vector *mu;   /* Mean vector for simulations */
+    Vector *sigma2s = NULL;   /* Vector of Brownian variance parameters for simulations */
+    Vector *input_tip_vars = NULL; /* Raw desired tip variance input from CLI */
+    Vector *input_sigma2s = NULL; /* Raw sigma2 input from CLI */
     GexMatrix *gex = scalloc(1, sizeof(GexMatrix));  /* Simulated expression matrix */
     char **gene_names = NULL; /* Gene names for the simulated expression matrix */
     int i;
     int n_cells;
+    int sim_dim;
     
 
     for (i = 1; i < argc; i++) {
@@ -96,7 +103,14 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
                 return 1;
             }
-            desired_tip_var = atof(argv[++i]);
+            input_tip_vars = parse_csv_to_vec(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--sigma2") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            input_sigma2s = parse_csv_to_vec(argv[++i]);
         }
         else if (strcmp(argv[i], "--use-n-trees") == 0) {
             if (i + 1 >= argc) {
@@ -142,6 +156,10 @@ int main(int argc, char *argv[]) {
     /* Check that all required inputs are specified */
     if (trees_file == NULL || outprefix == NULL) {
         usage(argv[0]);
+        return 1;
+    }
+    if (input_tip_vars != NULL && input_sigma2s != NULL) {
+        fprintf(stderr, "ERROR: specify either --desired-tip-var or --sigma2, not both\n");
         return 1;
     }
 
@@ -252,14 +270,48 @@ int main(int argc, char *argv[]) {
         printf("Using identity covariance instead of phylogenetic covariance from trees.\n");
     }
 
-    /* Run simulation */
-    Vector *mu = vec_new(n_cells);   /* For now, assume zero mean */
+    /* For now, assume zero mean vector */
+    mu = vec_new(n_cells);   
     vec_zero(mu);
+
+    /* Determine the dimension of the simulation based on whether the Brownian simulation
+    is for genes or latent factors */
+    sim_dim = (expr_only ? n_genes : k);
+
+    /* Default to a single desired tip variance if neither option was provided. */
+    if (input_tip_vars == NULL && input_sigma2s == NULL) {
+        input_tip_vars = vec_new(1);
+        vec_set(input_tip_vars, 0, desired_tip_var);
+    }
+
+    /* Otherwise read in what what provided for the Brownian sigma2s
+    either directly from input or calculated from input desired tip variances */
+    if (input_tip_vars != NULL) {
+        Vector *tip_vars = expand_input_csv(input_tip_vars, sim_dim);
+
+        /* Do the calculations to get the desired tip variance(s) */
+        double tree_height = mat_get(use_Sigmas[0], 0, 0);
+        sigma2s = vec_new(sim_dim);
+        for (i = 0; i < sim_dim; i++)
+            vec_set(sigma2s, i, vec_get(tip_vars, i) / tree_height);
+
+        /* Free memory */
+        vec_free(input_tip_vars);
+        vec_free(tip_vars);
+    }
+    else {
+        sigma2s = expand_input_csv(input_sigma2s, sim_dim);
+
+        /* Free memory */
+        vec_free(input_sigma2s);
+    }
+
+    /* Run simulation */
     gex->X = brownian_simulate(use_Sigmas, 
                                 (use_n_trees == -1 ? 1 : use_n_trees), 
                                 mu, 
-                                (expr_only == 1 ? n_genes : k),
-                                desired_tip_var);
+                                sim_dim,
+                                sigma2s);
 
     /* Write out the Brownian motion result */
     char expr_buf[4096];
@@ -315,6 +367,7 @@ int main(int argc, char *argv[]) {
 
     /* Free memory */
     vec_free(mu);
+    vec_free(sigma2s);
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
     if (Sigmas != NULL) {

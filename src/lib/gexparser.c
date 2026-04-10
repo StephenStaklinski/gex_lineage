@@ -7,6 +7,7 @@
 #include <phast/lists.h>
 #include <phast/stringsplus.h>
 #include <phast/misc.h>
+#include <phast/vector.h>
 
 #include <string.h>
 #include <ctype.h>
@@ -726,4 +727,48 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     gex_free_string_ptr_list(keep_names);
 
     return 0;
+}
+
+Vector *parse_csv_to_vec(const char *csv_string) {
+    Vector *v = NULL;
+    int count = 0;
+    int idx = 0;
+    char *copy = NULL;
+    char *token = NULL;
+
+    if (!csv_string || *csv_string == '\0') {
+        v = vec_new(1);
+        return v;
+    }
+
+    /* First pass to count components */
+    copy = strdup(csv_string);
+    if (!copy)
+        return NULL;
+    
+    token = strtok(copy, ",");
+    while (token) {
+        count++;
+        token = strtok(NULL, ",");
+    }
+    free(copy);
+
+    /* Initialize vector with exact capacity */
+    v = vec_new(count);
+
+    /* Second pass to fill vector */
+    copy = strdup(csv_string);
+    if (!copy) {
+        vec_free(v);
+        return NULL;
+    }
+
+    token = strtok(copy, ",");
+    while (token) {
+        vec_set(v, idx++, strtod(token, NULL));
+        token = strtok(NULL, ",");
+    }
+    free(copy);
+
+    return v;
 }

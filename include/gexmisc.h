@@ -1,6 +1,11 @@
 #ifndef GECXMISC_H
 #define GECXMISC_H
 
+#include <phast/vector.h>
+
+
+Vector *expand_input_csv(Vector *input, int expected_size);
+
 unsigned int rand_u32(unsigned int *state);
 
 double uniform_open(unsigned int *state);

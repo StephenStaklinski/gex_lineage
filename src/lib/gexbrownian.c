@@ -255,10 +255,10 @@ void print_covariance_summary(Matrix *Sigma, char **names, int n) {
 }
 
 Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
-                          double desired_tip_var) {
+                          Vector *sigma2s) {
 
-    if (Sigmas == NULL || n_sigmas <= 0 || n_cols <= 0 || 
-        desired_tip_var < 0.0 || mu == NULL || mu->size != Sigmas[0]->nrows)
+    if (Sigmas == NULL || n_sigmas <= 0 || n_cols <= 0 || sigma2s == NULL || 
+        sigma2s->size != n_cols || mu == NULL || mu->size != Sigmas[0]->nrows)
         return NULL;
 
     int i, j;
@@ -268,18 +268,11 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
     Matrix *cur_sim = mat_new(n_rows, n_cols);
     Vector *sim_vec = vec_new(n_rows);
 
-    /* Solve for the sigma2 that gives the desired tip variance Var(Xtip) = sigma2 * tree_height,
-    assuming an ultrametric tree height here from the input Sigma phylogenetic covariance matrix. */
-    double tree_height = mat_get(Sigmas[0], 0, 0);
-    if (tree_height <= 0.0)
-        return NULL;
-    double sigma2 = desired_tip_var / tree_height;
-
     for (i = 0; i < n_sigmas; i++) {
 
         /* Scale the input Sigma by the Brownian variance parameter sigma2 to get the covariance for this simulation */
         Matrix *scaled_Sigma = mat_create_copy(Sigmas[i]);  /* Copy to scale and since it will be freed automatically by mat_free */
-        mat_scale(scaled_Sigma, sigma2);
+        mat_scale(scaled_Sigma, vec_get(sigma2s, i));
 
         /* Create MVN object from the scaled covariance matrix */
         Vector *mu_copy = vec_create_copy(mu);  /* Copy since mat_free will free the supplied mu directly */
