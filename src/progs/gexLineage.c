@@ -106,12 +106,9 @@ static void usage(const char *progname) {
         "[--lrt-alt lambda|full] "
         "[--l2-strength S] "
         "[--pca-var-threshold V] "
-        "[--n-sims N] "
         "[--n-perms N] "
         "[--max-q Q] "
         "[--moran-min-i I] "
-        "[--sim-filter-only] "
-        "[--write-filter-sims] "
         "[--filter-only] "
         "[--no-filter] "
         "[--verbose] "
@@ -126,7 +123,6 @@ int main(int argc, char *argv[]) {
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
-    int n_sims = 100;   /* Number of simulations used for a pre-check of the filter step performance */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
@@ -135,13 +131,10 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double l2_strength = 1e-3;  /* L2 regularization strength for loadings; 0 disables the penalty. */
-    int sim_filter_only = 0; /* If nonzero, only run the simulation-based filter step. */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
-    int write_filter_sims = 0; /* If nonzero, write filter simulation results to a file. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
-    const double ultrametric_tol = 1e-3;   /* Tolerance for ultrametric tree checking */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
 
     /* Data structures for calculations later */
@@ -237,13 +230,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
         }
-        else if (strcmp(argv[i], "--n-sims") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            n_sims = atoi(argv[++i]);
-        }
         else if (strcmp(argv[i], "--n-perms") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -272,12 +258,6 @@ int main(int argc, char *argv[]) {
             }
             seed = (unsigned int)strtoul(argv[++i], NULL, 10);
         }
-        else if (strcmp(argv[i], "--sim-filter-only") == 0) {
-            sim_filter_only = 1;
-        }
-        else if (strcmp(argv[i], "--write-filter-sims") == 0) {
-            write_filter_sims = 1;
-        }
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
         }
@@ -303,8 +283,8 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
         return 1;
     }
-    if ((filter_only && no_filter )|| (sim_filter_only && no_filter)) {
-        fprintf(stderr, "ERROR: --no-filter cannot be used together with --filter-only or --sim-filter-only.\n");
+    if (filter_only && no_filter) {
+        fprintf(stderr, "ERROR: --no-filter cannot be used together with --filter-only.\n");
         return 1;
     }
 
@@ -340,7 +320,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Check that the input trees are ultrametric (required for cell lineage) */
-    if (gex_check_trees_ultrametric(trees, n_trees, ultrametric_tol) != 0) {
+    if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
     }
 
@@ -366,22 +346,20 @@ int main(int argc, char *argv[]) {
 
     /* Rescale the trees to a specified total height if requested */
     if (tree_total_time > 0.0) {
-        if (gex_rescale_trees_total_height(trees, n_trees, tree_total_time) != 0) {
-            return 1;
-        }
+        uniform_rescale_trees(trees, n_trees, tree_total_time);
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
 
     /* Pre-process the gene expression data */
     /* Library size normalization per-cell */
-    normalize_by_row_sums(gex->X);
+    mat_normalize_rows(gex->X);
     /* Scale by global factor to counts per 10k */
-    double global_scale_factor = 10000.0;
-    mat_scale(gex->X, global_scale_factor);
+    double scale_factor = 10000.0;
+    mat_scale(gex->X, scale_factor);
     /* Log-transform the data to stabilize variance and approximate Gaussian */
-    log1p_transform(gex->X);
+    mat_log1p(gex->X);
     /* Transform log-normalized counts into the residuals */
-    center_matrix_inplace(gex->X);
+    mat_center_cols(gex->X);
 
     /* Calculate the phylogenetic covariance matrix for each input tree. */
     Sigmas = scalloc(n_trees, sizeof(Matrix *));
@@ -412,56 +390,6 @@ int main(int argc, char *argv[]) {
         filter_Sigmas = Sigmas;
         if (n_filter_trees == 0)
             n_filter_trees = n_trees;
-    }
-
-    if (!no_filter) {
-        /* Test the phylogenetic signal filter(s) with simulated data to understand
-        the performance on the tree subset used for filtering. */
-        if (n_filter_trees == -1) {
-            printf("Running a simulation check of the phylogenetic signal gene filter(s) using the average covariance across all %d tree(s)...\n",
-                   n_trees);
-        } else if (n_filter_trees == n_trees) {
-            printf("Running a simulation check of the phylogenetic signal gene filter(s) using all %d tree(s)...\n",
-                   n_filter_trees);
-        } else {
-            printf("Running a simulation check of the phylogenetic signal gene filter(s) using the first %d tree(s)...\n",
-                   n_filter_trees);
-        }
-
-        char filter_sims_buf[4096];
-        char *filter_sims_path = NULL;
-        if (write_filter_sims) {
-            snprintf(filter_sims_buf, sizeof(filter_sims_buf),
-                    "%s.phylo_filter_sims.expr.tsv", outprefix);
-            filter_sims_path = filter_sims_buf;
-        }
-
-        if (!brownian_run_simulation_check(gex->cell_names,
-                                           gex->X->nrows,
-                                           n_sims,
-                                           n_sims,
-                                           filter_mode,
-                                           lrt_alt_mode,
-                                           n_perms,
-                                           max_q,
-                                           moran_min_i,
-                                           filter_Sigmas,
-                                           (n_filter_trees == -1 ? 1 : n_filter_trees),
-                                           filter_sims_path,
-                                           seed)) {
-            if (verbose) {
-                printf("WARNING: Simulation check of signal filter did NOT perfectly recover all positive/negative genes for the provided tree.\n");
-            }
-        } else {
-            if (verbose) {
-                printf("Simulation check of signal filter successfully recovered all positive/negative genes for the provided tree.\n");
-            }
-        }
-
-        /* Stop early if only the simulation test of phylogenetic signal filtering is requested */
-        if (sim_filter_only) {
-            return 0;
-        }
     }
 
     if (!no_filter) {

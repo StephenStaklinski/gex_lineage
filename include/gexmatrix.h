@@ -11,11 +11,11 @@ typedef struct {
 
 void gex_free_matrix_data(GexMatrix *gex);
 
-void normalize_by_row_sums(Matrix *X);
+void mat_normalize_rows(Matrix *X);
 
-void log1p_transform(Matrix *X);
+void mat_log1p(Matrix *X);
 
-void center_matrix_inplace(Matrix *X);
+void mat_center_cols(Matrix *X);
 
 int gex_write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,

@@ -8,9 +8,9 @@
 
 TreeNode **gex_read_nexus(const char *filename, int *n_trees);
 
-int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol);
+int check_trees_ultrametric(TreeNode **trees, int n_trees);
 
-int gex_rescale_trees_total_height(TreeNode **trees, int n_trees, double target_height);
+void uniform_rescale_trees(TreeNode **trees, int n_trees, double target_height);
 
 void gex_free_trees(TreeNode **trees, int n_trees);
 

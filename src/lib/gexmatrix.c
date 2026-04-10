@@ -9,7 +9,7 @@
 
 /* Normalize the entries in a row by the row sum in-place.
 Returns 0 on success, -1 on failure. */
-void normalize_by_row_sums(Matrix *X) {
+void mat_normalize_rows(Matrix *X) {
     int i, j;
     
     for (i = 0; i < X->nrows; i++) {
@@ -31,7 +31,7 @@ void normalize_by_row_sums(Matrix *X) {
 
 /* Transform a matrix using the log1p function (log(1+x))) element-wise
 in-place. */
-void log1p_transform(Matrix *X) {
+void mat_log1p(Matrix *X) {
     int i, j;
 
     for (i = 0; i < X->nrows; i++) {
@@ -45,7 +45,7 @@ void log1p_transform(Matrix *X) {
 
 /* Center the columns of a matrix by subtracting the mean of each column
 to get the residuals in-place. */
-void center_matrix_inplace(Matrix *X) {
+void mat_center_cols(Matrix *X) {
     int i, j;
 
     for (j = 0; j < X->ncols; j++) {

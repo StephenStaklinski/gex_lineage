@@ -284,11 +284,12 @@ static void gex_collect_tip_depth_range(TreeNode *node,
 
 /* Check if all trees in an array are ultrametric.
 Returns 0 if all trees are ultrametric, -1 otherwise. */
-int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol) {
+int check_trees_ultrametric(TreeNode **trees, int n_trees) {
     int i;
+    double tol = 1e-3;   /* Tolerance for total height comparisons */
 
     if (trees == NULL || n_trees < 0 || tol < 0.0) {
-        fprintf(stderr, "ERROR: gex_check_trees_ultrametric received invalid input\n");
+        fprintf(stderr, "ERROR: check_trees_ultrametric received invalid input\n");
         return -1;
     }
 
@@ -329,12 +330,12 @@ static void gex_scale_tree_recursive(TreeNode *node, double scale) {
     gex_scale_tree_recursive(node->rchild, scale);
 }
 
-int gex_rescale_trees_total_height(TreeNode **trees, int n_trees, double target_height) {
+void uniform_rescale_trees(TreeNode **trees, int n_trees, double target_height) {
     int i;
 
     if (trees == NULL || n_trees < 0 || target_height <= 0.0) {
-        fprintf(stderr, "ERROR: gex_rescale_trees_total_height received invalid input\n");
-        return -1;
+        fprintf(stderr, "ERROR: uniform_rescale_trees received invalid input\n");
+        return;
     }
 
     for (i = 0; i < n_trees; i++) {
@@ -349,19 +350,17 @@ int gex_rescale_trees_total_height(TreeNode **trees, int n_trees, double target_
         gex_collect_tip_depth_range(trees[i], 0.0, &min_depth, &max_depth, &n_tips);
         if (n_tips == 0) {
             fprintf(stderr, "ERROR: tree %d has no tips\n", i + 1);
-            return -1;
+            return;
         }
         if (max_depth <= 0.0) {
             fprintf(stderr, "ERROR: tree %d has non-positive total height and cannot be rescaled\n",
                     i + 1);
-            return -1;
+            return;
         }
 
         scale = target_height / max_depth;
         gex_scale_tree_recursive(trees[i], scale);
     }
-
-    return 0;
 }
 
 void gex_free_trees(TreeNode **trees, int n_trees) {
