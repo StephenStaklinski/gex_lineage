@@ -14,8 +14,6 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
                                     char **names,
                                     int n_names);
 
-Matrix *weight_matrix_from_covariance(Matrix *Sigma);
-
 int add_matrix_in_place(Matrix *dest, Matrix *src);
 
 int scale_matrix_in_place(Matrix *matrix, double factor);
@@ -58,8 +56,6 @@ int brownian_run_simulation_check(char **names,
                                     unsigned int seed);
 
 void print_covariance_summary(Matrix *Sigma, char **names, int n);
-
-void print_weight_matrix_summary(Matrix *W);
 
 int generate_gene_names(char **names, int n_genes, char *gene_name_prefix);
 

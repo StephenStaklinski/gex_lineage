@@ -1,5 +1,6 @@
 #include "gexbrownian.h"
 
+#include "gexmatrix.h"
 #include "gexmisc.h"
 
 #include <phast/trees.h>
@@ -92,7 +93,7 @@ void copy_cell_names(char **src, char **dst, int n) {
 /* Fill a preallocated array of gene names of length n_genes. 
 Returns 0 on success, -1 on failure. */
 int generate_gene_names(char **names, int n_genes, char *gene_name_prefix) {
-    int j;
+    int i, j;
 
     if (names == NULL || n_genes <= 0)
         return -1;
@@ -255,88 +256,6 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
 
     mat_scale(avg, 1.0 / (double)n_trees);
     return avg;
-}
-
-/* Calculate the weight matrix from a phylogenetic covariance matrix.
-This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
-Nature Genetics (PMID: 39317739) and is calculated as the element-wise inverse pairwise distance matrix.
-The weight W_ij = 1/(d_ij + eps) where d_ij is the pairwise distance between tips i and j which can be
-calculated from the covariance matrix as d_ij = Sigma_ii + Sigma_jj - 2*Sigma_ij and eps is a small 
-constant to avoid division by zero. The weight matrix is then normalized to sum to 1.
-Returns a pointer to the allocated weight matrix or NULL on failure. */
-Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
-    int i, j;
-    int n;
-    double max_dist = 0.0;
-    double eps;
-    double total = 0.0;
-    Matrix *W = NULL;
-
-    if (Sigma == NULL || Sigma->nrows != Sigma->ncols || Sigma->nrows <= 0) {
-        fprintf(stderr, "ERROR: weight_matrix_from_covariance got invalid input\n");
-        return NULL;
-    }
-
-    /* Allocate the weight matrix with the same dimensions as the covariance matrix*/
-    n = Sigma->nrows;  
-    W = mat_new(n, n);
-
-    /* Calculate the maximum pairwise distance from the covariance matrix to use for setting eps
-    and simultaneously fill the weight matrix with initial pairwise distance values */
-    for (i = 0; i < n; i++) {
-        mat_set(W, i, i, 0.0);  /* Set diagonal elements (comparing each tip to itself) to zero pairwise distance */
-        for (j = i + 1; j < n; j++) {
-            double dij = mat_get(Sigma, i, i) + mat_get(Sigma, j, j) -
-                         (2.0 * mat_get(Sigma, i, j));
-
-            if (dij < 0.0) {
-                fprintf(stderr, "ERROR: covariance implied negative distance\n");
-                mat_free(W);
-                return NULL;
-            }
-
-            /* Handle numerical precision issues */
-            if (dij < 0.0 && fabs(dij) < 1e-12)
-                dij = 0.0;
-            
-            /* Update the maximum distance for setting relative eps */
-            if (dij > max_dist)
-                max_dist = dij;
-
-            /* Store the pairwise distance in the weight matrix temporarily for now, will convert to weights after setting eps */
-            mat_set(W, i, j, dij);
-            mat_set(W, j, i, dij);
-        }
-    }
-
-    /* Set the epsilon value as a relative tolerance based on the maximum distance */
-    eps = (max_dist > 0.0 ? 1e-8 * max_dist : 1e-8);
-
-    /* Fill the weight matrix */
-    for (i = 0; i < n; i++) {
-        mat_set(W, i, i, 0.0);
-        for (j = i + 1; j < n; j++) {
-            double dij = mat_get(W, i, j);
-            double wij = 1.0 / (dij + eps);
-            mat_set(W, i, j, wij);
-            mat_set(W, j, i, wij);
-            total += 2.0 * wij;
-        }
-    }
-
-    if (total <= 0.0) {
-        fprintf(stderr, "ERROR: weight matrix normalization failed\n");
-        mat_free(W);
-        return NULL;
-    }
-
-    /* Normalize the weight matrix to sum to 1 */
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            mat_set(W, i, j, mat_get(W, i, j) / total);
-    }
-
-    return W;
 }
 
 /* Simulate Brownian motion expression draws directly from a covariance matrix. */
@@ -724,25 +643,6 @@ void print_covariance_summary(Matrix *Sigma, char **names, int n) {
         printf("%s", names[i]);
         for (j = 0; j < n && j < 10; j++)
             printf("\t%g", mat_get(Sigma, i, j));
-        printf("\n");
-    }
-    printf("\n");
-}
-
-/* Print a summary of the covariance-based weight matrix. */
-void print_weight_matrix_summary(Matrix *W) {
-    int i, j;
-
-    if (W == NULL) {
-        fprintf(stderr, "ERROR: cannot summarize NULL weight matrix\n");
-        return;
-    }
-
-    printf("\n");
-    printf("First few entries of covariance-based weight matrix:\n");
-    for (i = 0; i < W->nrows && i < 10; i++) {
-        for (j = 0; j < W->ncols && j < 10; j++)
-            printf(" %g", mat_get(W, i, j));
         printf("\n");
     }
     printf("\n");

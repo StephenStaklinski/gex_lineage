@@ -938,44 +938,6 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
     free(model);
 }
 
-
-int gex_write_labeled_matrix_tsv(const char *filename,
-                                 Matrix *X,
-                                 char **row_names,
-                                 int n_rows,
-                                 char **col_names,
-                                 int n_cols,
-                                 const char *corner_label) {
-    int i, j;
-    FILE *out = NULL;
-
-    if (filename == NULL || X == NULL || row_names == NULL || col_names == NULL ||
-        n_rows <= 0 || n_cols <= 0 || X->nrows != n_rows || X->ncols != n_cols)
-        return -1;
-
-    out = fopen(filename, "w");
-    if (out == NULL) {
-        fprintf(stderr, "ERROR: failed to open %s for writing: %s\n",
-                filename, strerror(errno));
-        return -1;
-    }
-
-    fprintf(out, "%s", corner_label == NULL ? "id" : corner_label);
-    for (j = 0; j < n_cols; j++)
-        fprintf(out, "\t%s", col_names[j]);
-    fprintf(out, "\n");
-
-    for (i = 0; i < n_rows; i++) {
-        fprintf(out, "%s", row_names[i]);
-        for (j = 0; j < n_cols; j++)
-            fprintf(out, "\t%.17g", mat_get(X, i, j));
-        fprintf(out, "\n");
-    }
-
-    fclose(out);
-    return 0;
-}
-
 /* Helper to generate latent factor names incrementally */
 static char **generate_factor_names(int k) {
     int i;
@@ -990,7 +952,12 @@ static char **generate_factor_names(int k) {
         snprintf(buf, sizeof(buf), "LF%d", i + 1);
         names[i] = strdup(buf);
         if (names[i] == NULL) {
-            free_string_array(names, i);
+            for (int j = 0; j < i; j++) {
+                if (names[j] != NULL) {
+                    free(names[j]);
+                }
+            }
+            free(names);
             return NULL;
         }
     }
@@ -1059,8 +1026,14 @@ int gex_write_model(const char *outprefix,
     /* Free memory */
     if (summary_out != NULL)
         fclose(summary_out);
-    if (factor_names != NULL)
-        free_string_array(factor_names, k);
+    if (factor_names != NULL) {
+        for (j = 0; j < k; j++) {
+            if (factor_names[j] != NULL) {
+                free(factor_names[j]);
+            }
+        }
+        free(factor_names);
+    }
 
     return 0;
 }

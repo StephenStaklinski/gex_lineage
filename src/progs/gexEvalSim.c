@@ -1,6 +1,8 @@
 
 #include "gexmatrix.h"
 
+#include "gexparser.h"
+
 #include <phast/eigen.h>
 #include <phast/matrix.h>
 #include <phast/misc.h>

@@ -166,29 +166,6 @@ static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
     return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
 }
 
-/* Get the mean and (population) variance of vector y. */
-static void calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_out) {
-    int i;
-    double mean = 0.0;
-    double sse = 0.0;
-
-    /* Compute the mean of the data */
-    for (i = 0; i < n; i++)
-        mean += y[i];
-    mean /= (double)n;
-
-    /* Compute the sum of squared errors around the mean */
-    for (i = 0; i < n; i++) {
-        double d = y[i] - mean;
-        sse += d * d;
-    }
-
-    *mean_out = mean;
-    *sigma2_out = sse / (double)n;  /* Variance */
-    if (*sigma2_out < 1e-12)
-        *sigma2_out = 1e-12;
-}
-
 /* Compute the log-likelihood of y under N(mu 1, sigma2 * Sigma),
    profiling out mu and sigma2, using the Cholesky factor L of Sigma. */
 static double gex_loglik_centered_gaussian_chol(double *y,
@@ -418,6 +395,107 @@ static double gex_fit_pagels_lambda_loglik(double *y,
 
     *lambda_hat = best_lambda;
     return -best_fx;
+}
+
+/* Calculate the weight matrix from a phylogenetic covariance matrix.
+This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
+Nature Genetics (PMID: 39317739) and is calculated as the element-wise inverse pairwise distance matrix.
+The weight W_ij = 1/(d_ij + eps) where d_ij is the pairwise distance between tips i and j which can be
+calculated from the covariance matrix as d_ij = Sigma_ii + Sigma_jj - 2*Sigma_ij and eps is a small 
+constant to avoid division by zero. The weight matrix is then normalized to sum to 1.
+Returns a pointer to the allocated weight matrix or NULL on failure. */
+Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
+    int i, j;
+    int n;
+    double max_dist = 0.0;
+    double eps;
+    double total = 0.0;
+    Matrix *W = NULL;
+
+    if (Sigma == NULL || Sigma->nrows != Sigma->ncols || Sigma->nrows <= 0) {
+        fprintf(stderr, "ERROR: weight_matrix_from_covariance got invalid input\n");
+        return NULL;
+    }
+
+    /* Allocate the weight matrix with the same dimensions as the covariance matrix*/
+    n = Sigma->nrows;  
+    W = mat_new(n, n);
+
+    /* Calculate the maximum pairwise distance from the covariance matrix to use for setting eps
+    and simultaneously fill the weight matrix with initial pairwise distance values */
+    for (i = 0; i < n; i++) {
+        mat_set(W, i, i, 0.0);  /* Set diagonal elements (comparing each tip to itself) to zero pairwise distance */
+        for (j = i + 1; j < n; j++) {
+            double dij = mat_get(Sigma, i, i) + mat_get(Sigma, j, j) -
+                         (2.0 * mat_get(Sigma, i, j));
+
+            if (dij < 0.0) {
+                fprintf(stderr, "ERROR: covariance implied negative distance\n");
+                mat_free(W);
+                return NULL;
+            }
+
+            /* Handle numerical precision issues */
+            if (dij < 0.0 && fabs(dij) < 1e-12)
+                dij = 0.0;
+            
+            /* Update the maximum distance for setting relative eps */
+            if (dij > max_dist)
+                max_dist = dij;
+
+            /* Store the pairwise distance in the weight matrix temporarily for now, will convert to weights after setting eps */
+            mat_set(W, i, j, dij);
+            mat_set(W, j, i, dij);
+        }
+    }
+
+    /* Set the epsilon value as a relative tolerance based on the maximum distance */
+    eps = (max_dist > 0.0 ? 1e-8 * max_dist : 1e-8);
+
+    /* Fill the weight matrix */
+    for (i = 0; i < n; i++) {
+        mat_set(W, i, i, 0.0);
+        for (j = i + 1; j < n; j++) {
+            double dij = mat_get(W, i, j);
+            double wij = 1.0 / (dij + eps);
+            mat_set(W, i, j, wij);
+            mat_set(W, j, i, wij);
+            total += 2.0 * wij;
+        }
+    }
+
+    if (total <= 0.0) {
+        fprintf(stderr, "ERROR: weight matrix normalization failed\n");
+        mat_free(W);
+        return NULL;
+    }
+
+    /* Normalize the weight matrix to sum to 1 */
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < n; j++)
+            mat_set(W, i, j, mat_get(W, i, j) / total);
+    }
+
+    return W;
+}
+
+/* Print a summary of the covariance-based weight matrix. */
+void print_weight_matrix_summary(Matrix *W) {
+    int i, j;
+
+    if (W == NULL) {
+        fprintf(stderr, "ERROR: cannot summarize NULL weight matrix\n");
+        return;
+    }
+
+    printf("\n");
+    printf("First few entries of covariance-based weight matrix:\n");
+    for (i = 0; i < W->nrows && i < 10; i++) {
+        for (j = 0; j < W->ncols && j < 10; j++)
+            printf(" %g", mat_get(W, i, j));
+        printf("\n");
+    }
+    printf("\n");
 }
 
 
@@ -998,6 +1076,34 @@ void gex_free_lrt_result(GexLRTResult *res) {
     free(res);
 }
 
+/* Determine if a gene should be kept based on the specified 
+filter mode and thresholds. */
+static int gex_keep_gene(GexMoransResult *morans,
+                         GexLRTResult *lrt,
+                         int gene_idx,
+                         GexFilterMode mode,
+                         double max_q,
+                         double min_i) {
+    int keep_moran = 0; /* Flag indicating if the gene passes the Moran's I filter */
+    int keep_lrt = 0;   /* Flag indicating if the gene passes the LRT filter */
+
+    /* Apply the filters based on if the provided objects are not NULL */
+    if (morans != NULL)
+        keep_moran = (morans->qvals[gene_idx] <= max_q &&
+                      morans->morans_i[gene_idx] > min_i);
+    if (lrt != NULL)
+        keep_lrt = (lrt->qvals[gene_idx] <= max_q &&
+                    lrt->lrt_stat[gene_idx] > 0.0);
+
+    /* Return the appropriate filter result based on the filter mode */
+    if (mode == GEX_FILTER_MORAN)
+        return keep_moran;
+    if (mode == GEX_FILTER_LRT)
+        return keep_lrt;
+    /* Return the intersection if both tests are run */
+    return (keep_moran && keep_lrt);
+}
+
 /* Filter genes based on LRT and Moran's I results 
 to keep only those passing the filter(s) with the 
 given significance and signal strength thresholds.
@@ -1065,32 +1171,4 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
     }
 
     return out;
-}
-
-/* Determine if a gene should be kept based on the specified 
-filter mode and thresholds. */
-static int gex_keep_gene(GexMoransResult *morans,
-                         GexLRTResult *lrt,
-                         int gene_idx,
-                         GexFilterMode mode,
-                         double max_q,
-                         double min_i) {
-    int keep_moran = 0; /* Flag indicating if the gene passes the Moran's I filter */
-    int keep_lrt = 0;   /* Flag indicating if the gene passes the LRT filter */
-
-    /* Apply the filters based on if the provided objects are not NULL */
-    if (morans != NULL)
-        keep_moran = (morans->qvals[gene_idx] <= max_q &&
-                      morans->morans_i[gene_idx] > min_i);
-    if (lrt != NULL)
-        keep_lrt = (lrt->qvals[gene_idx] <= max_q &&
-                    lrt->lrt_stat[gene_idx] > 0.0);
-
-    /* Return the appropriate filter result based on the filter mode */
-    if (mode == GEX_FILTER_MORAN)
-        return keep_moran;
-    if (mode == GEX_FILTER_LRT)
-        return keep_lrt;
-    /* Return the intersection if both tests are run */
-    return (keep_moran && keep_lrt);
 }

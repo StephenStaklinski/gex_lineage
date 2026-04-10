@@ -35,14 +35,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
 
-int gex_write_labeled_matrix_tsv(const char *filename,
-                                 Matrix *X,
-                                 char **row_names,
-                                 int n_rows,
-                                 char **col_names,
-                                 int n_cols,
-                                 const char *corner_label);
-
 int gex_write_model(const char *outprefix,
                                GexMatrix *gex,
                                Matrix *L,

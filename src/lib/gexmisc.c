@@ -42,3 +42,26 @@ double logsumexp(double *x, int n) {
     /* Return the log-sum-exp */
     return max_x + log(sum);
 }
+
+/* Get the mean and (population) variance of vector y. */
+void calculate_mean_variance(double *y, int n, double *mean_out, double *sigma2_out) {
+    int i;
+    double mean = 0.0;
+    double sse = 0.0;
+
+    /* Compute the mean of the data */
+    for (i = 0; i < n; i++)
+        mean += y[i];
+    mean /= (double)n;
+
+    /* Compute the sum of squared errors around the mean */
+    for (i = 0; i < n; i++) {
+        double d = y[i] - mean;
+        sse += d * d;
+    }
+
+    *mean_out = mean;
+    *sigma2_out = sse / (double)n;  /* Variance */
+    if (*sigma2_out < 1e-12)
+        *sigma2_out = 1e-12;
+}

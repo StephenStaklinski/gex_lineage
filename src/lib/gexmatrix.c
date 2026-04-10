@@ -1,9 +1,10 @@
 #include "gexmatrix.h"
 
-#include <stdlib.h>
-#include <math.h>
-
 #include <phast/matrix.h>
+
+#include <errno.h>
+#include <math.h>
+#include <stdlib.h>
 
 
 /* Normalize the entries in a row by the row sum in-place.
@@ -63,3 +64,64 @@ void center_matrix_inplace(Matrix *X) {
         }
     }
 }
+
+int gex_write_labeled_matrix_tsv(const char *filename,
+                                 Matrix *X,
+                                 char **row_names,
+                                 int n_rows,
+                                 char **col_names,
+                                 int n_cols,
+                                 const char *corner_label) {
+    int i, j;
+    FILE *out = NULL;
+
+    if (filename == NULL || X == NULL || row_names == NULL || col_names == NULL ||
+        n_rows <= 0 || n_cols <= 0 || X->nrows != n_rows || X->ncols != n_cols)
+        return -1;
+
+    out = fopen(filename, "w");
+    if (out == NULL) {
+        fprintf(stderr, "ERROR: failed to open %s for writing: %s\n",
+                filename, strerror(errno));
+        return -1;
+    }
+
+    fprintf(out, "%s", corner_label == NULL ? "id" : corner_label);
+    for (j = 0; j < n_cols; j++)
+        fprintf(out, "\t%s", col_names[j]);
+    fprintf(out, "\n");
+
+    for (i = 0; i < n_rows; i++) {
+        fprintf(out, "%s", row_names[i]);
+        for (j = 0; j < n_cols; j++)
+            fprintf(out, "\t%.17g", mat_get(X, i, j));
+        fprintf(out, "\n");
+    }
+
+    fclose(out);
+    return 0;
+}
+
+void gex_free_matrix_data(GexMatrix *gex) {
+    int i;
+
+    if (gex == NULL) return;
+
+    if (gex->cell_names != NULL) {
+        for (i = 0; i < gex->X->nrows; i++)
+            free(gex->cell_names[i]);
+        free(gex->cell_names);
+    }
+
+    if (gex->gene_names != NULL) {
+        for (i = 0; i < gex->X->ncols; i++)
+            free(gex->gene_names[i]);
+        free(gex->gene_names);
+    }
+
+    if (gex->X != NULL)
+        mat_free(gex->X);
+
+    free(gex);
+}
+

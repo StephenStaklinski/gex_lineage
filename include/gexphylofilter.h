@@ -43,6 +43,10 @@ typedef enum {
     GEX_FILTER_BOTH = 2
 } GexFilterMode;
 
+Matrix *weight_matrix_from_covariance(Matrix *Sigma);
+
+void print_weight_matrix_summary(Matrix *W);
+
 GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
                                       Matrix **Sigmas,
                                       int n_sigmas,

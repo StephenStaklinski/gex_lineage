@@ -248,6 +248,40 @@ TreeNode **gex_read_nexus(const char *filename, int *n_trees) {
     return trees;
 }
 
+static int is_leaf(TreeNode *node) {
+    return (node != NULL && node->lchild == NULL && node->rchild == NULL);
+}
+
+/* Collect the depth range of all tips in a tree.
+Updates the min_depth, max_depth, and n_tips pointers. Returns nothing. */
+static void gex_collect_tip_depth_range(TreeNode *node,
+                                        double depth,
+                                        double *min_depth,
+                                        double *max_depth,
+                                        int *n_tips) {
+    double next_depth = depth;
+
+    if (node == NULL)
+        return;
+
+    if (node->parent != NULL)
+        next_depth += node->dparent;    /* Add the parent distance to the depth */
+
+    /* For leaf, increment n_tips and optionally update depth ranges */
+    if (is_leaf(node)) {
+        if (*n_tips == 0 || next_depth < *min_depth)
+            *min_depth = next_depth;
+        if (*n_tips == 0 || next_depth > *max_depth)
+            *max_depth = next_depth;
+        (*n_tips)++;
+        return;
+    }
+
+    /* Recursive depth-first traversal to collect depth ranges for left and right children */
+    gex_collect_tip_depth_range(node->lchild, next_depth, min_depth, max_depth, n_tips);
+    gex_collect_tip_depth_range(node->rchild, next_depth, min_depth, max_depth, n_tips);
+}
+
 /* Check if all trees in an array are ultrametric.
 Returns 0 if all trees are ultrametric, -1 otherwise. */
 int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol) {
@@ -281,40 +315,6 @@ int gex_check_trees_ultrametric(TreeNode **trees, int n_trees, double tol) {
     }
 
     return 0;
-}
-
-static int is_leaf(TreeNode *node) {
-    return (node != NULL && node->lchild == NULL && node->rchild == NULL);
-}
-
-/* Collect the depth range of all tips in a tree.
-Updates the min_depth, max_depth, and n_tips pointers. Returns nothing. */
-static void gex_collect_tip_depth_range(TreeNode *node,
-                                        double depth,
-                                        double *min_depth,
-                                        double *max_depth,
-                                        int *n_tips) {
-    double next_depth = depth;
-
-    if (node == NULL)
-        return;
-
-    if (node->parent != NULL)
-        next_depth += node->dparent;    /* Add the parent distance to the depth */
-
-    /* For leaf, increment n_tips and optionally update depth ranges */
-    if (is_leaf(node)) {
-        if (*n_tips == 0 || next_depth < *min_depth)
-            *min_depth = next_depth;
-        if (*n_tips == 0 || next_depth > *max_depth)
-            *max_depth = next_depth;
-        (*n_tips)++;
-        return;
-    }
-
-    /* Recursive depth-first traversal to collect depth ranges for left and right children */
-    gex_collect_tip_depth_range(node->lchild, next_depth, min_depth, max_depth, n_tips);
-    gex_collect_tip_depth_range(node->rchild, next_depth, min_depth, max_depth, n_tips);
 }
 
 /* Scale the distances in a tree uniformly by a given factor. */
@@ -511,29 +511,6 @@ GexMatrix *read_gex_matrix(const char *filename) {
     fclose(f);
 
     return gex;
-}
-
-void gex_free_matrix_data(GexMatrix *gex) {
-    int i;
-
-    if (gex == NULL) return;
-
-    if (gex->cell_names != NULL) {
-        for (i = 0; i < gex->X->nrows; i++)
-            free(gex->cell_names[i]);
-        free(gex->cell_names);
-    }
-
-    if (gex->gene_names != NULL) {
-        for (i = 0; i < gex->X->ncols; i++)
-            free(gex->gene_names[i]);
-        free(gex->gene_names);
-    }
-
-    if (gex->X != NULL)
-        mat_free(gex->X);
-
-    free(gex);
 }
 
 /* Print a summary of the tree set and expr matrix i/o results */

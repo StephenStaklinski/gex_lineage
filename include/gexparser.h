@@ -16,8 +16,6 @@ void gex_free_trees(TreeNode **trees, int n_trees);
 
 GexMatrix *read_gex_matrix(const char *filename);
 
-void gex_free_matrix_data(GexMatrix *gex);
-
 void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex);
 
 int gex_reconcile_tree_and_expression(TreeNode **trees,
