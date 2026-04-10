@@ -12,6 +12,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <time.h>
 
 
 /* Compute Gaussian observation negative log-likelihood and gradients for
@@ -1033,4 +1035,50 @@ int gex_write_model(const char *outprefix,
     }
 
     return 0;
+}
+
+/* Simulate L and X from the input Z and sigma_obs */
+void simulate_factorization_and_reconstruction(Matrix *Z,
+                                     char **cell_names,
+                                     int n_cells,
+                                     int k,
+                                     int n_genes,
+                                     double sigma2_obs,
+                                     Matrix *L_out,
+                                     GexMatrix *gex_out) {
+    int i, j, d;    /* Loop indices */
+    unsigned int rng_state = (unsigned int)(time(NULL) ^ getpid()); /* Set seed for reproducibility */
+
+    /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
+    sqrt(n_genes / k), ensuring each latent dimension contributes
+    equal expected magnitude to the noiseless gene expression data. */
+    for (d = 0; d < k; d++) {
+        double row_ss = 0.0;
+        double target_norm = sqrt((double)n_genes / (double)k);
+        for (j = 0; j < n_genes; j++) {
+            double val = rand_normal(&rng_state);
+            mat_set(L_out, d, j, val);
+            row_ss += val * val;
+        }
+        if (row_ss > 0.0) {
+            double row_scale = target_norm / sqrt(row_ss);
+            for (j = 0; j < n_genes; j++)
+                mat_set(L_out, d, j, row_scale * mat_get(L_out, d, j));
+        }
+    }
+
+    /* Compute the noiseless expression matrix from the 
+    simulated Z and L matrix factorization. */
+    mat_mult(gex_out->X, Z, L_out);
+
+    /* Add noise to the noiseless expression matrix based on 
+    the sigma2_obs parameter input. */
+    for (i = 0; i < n_cells; i++) {
+        for (j = 0; j < n_genes; j++) {
+            double val = mat_get(gex_out->X, i, j);
+            if (sigma2_obs > 0.0)
+                val += sqrt(sigma2_obs) * rand_normal(&rng_state);
+            mat_set(gex_out->X, i, j, val);
+        }
+    }
 }

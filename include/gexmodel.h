@@ -45,4 +45,13 @@ int gex_write_model(const char *outprefix,
                                double sigma2_obs,
                                double *sigma2_latent);
 
+void simulate_factorization_and_reconstruction(Matrix *Z,
+                                                char **cell_names,
+                                                int n_cells,
+                                                int k,
+                                                int n_genes,
+                                                double sigma2_obs,
+                                                Matrix *L_out,
+                                                GexMatrix *gex_out);
+
 #endif
