@@ -356,6 +356,11 @@ int main(int argc, char *argv[]) {
         snprintf(x_buf, sizeof(x_buf), "%s.X.tsv", outprefix);
         write_labeled_matrix_tsv(x_buf, gex_obs->X, gex_obs->cell_names, n_cells, gex_obs->gene_names, n_genes, "cell");
 
+        /* Write out summary */
+        char summary_buf[4096];
+        snprintf(summary_buf, sizeof(summary_buf), "%s.summary.tsv", outprefix);
+        write_summary_tsv(summary_buf, n_cells, n_genes, sigma2_obs, sigma2s->data, k, gex->gene_names);
+
         /* Free memory */
         if (L != NULL)
             mat_free(L);

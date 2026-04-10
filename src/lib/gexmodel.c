@@ -967,6 +967,34 @@ static char **generate_factor_names(int k) {
     return names;
 }
 
+void write_summary_tsv(const char *path,
+                        int n_cells,
+                        int n_genes,
+                        double sigma2_obs,
+                        double *sigma2_latent,
+                        int k,
+                        char **factor_names) {
+    int j;
+    FILE *summary_out = NULL;
+
+    summary_out = fopen(path, "w");
+
+    fprintf(summary_out, "parameter\tvalue\n");
+    fprintf(summary_out, "n_cells\t%d\n", n_cells);
+    fprintf(summary_out, "n_genes\t%d\n", n_genes);
+    fprintf(summary_out, "k\t%d\n", k);
+    fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
+    for (j = 0; j < k; j++)
+        fprintf(summary_out, "sigma2_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
+
+    fclose(summary_out);
+    summary_out = NULL;
+
+        /* Free memory */
+    if (summary_out != NULL)
+        fclose(summary_out);
+}
+
 int gex_write_model(const char *outprefix,
                                 GexMatrix *gex,
                                 Matrix *L,
@@ -981,7 +1009,6 @@ int gex_write_model(const char *outprefix,
     char l_path[4096];
     char expr_path[4096];
     char **factor_names = NULL;
-    FILE *summary_out = NULL;
     int j;
 
     if (outprefix == NULL || gex == NULL || L == NULL || Z == NULL ||
@@ -999,20 +1026,7 @@ int gex_write_model(const char *outprefix,
     snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
     snprintf(expr_path, sizeof(expr_path), "%s.expr.tsv", outprefix);
 
-    /* Write out the summary parameters file to match the format used
-    by model fitting output */
-    summary_out = fopen(summary_path, "w");
-    if (summary_out == NULL)
-        return 1;
-    fprintf(summary_out, "parameter\tvalue\n");
-    fprintf(summary_out, "n_cells\t%d\n", gex->X->nrows);
-    fprintf(summary_out, "n_genes\t%d\n", gex->X->ncols);
-    fprintf(summary_out, "k\t%d\n", k);
-    fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
-    for (j = 0; j < k; j++)
-        fprintf(summary_out, "sigma2_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
-    fclose(summary_out);
-    summary_out = NULL;
+    write_summary_tsv(summary_path, gex->X->nrows, gex->X->ncols, sigma2_obs, sigma2_latent, k, factor_names);
 
     /* Write out the simulated matrices */
     write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->X->nrows,
@@ -1023,8 +1037,6 @@ int gex_write_model(const char *outprefix,
                                      gene_names, gex->X->ncols, "factor");
 
     /* Free memory */
-    if (summary_out != NULL)
-        fclose(summary_out);
     if (factor_names != NULL) {
         for (j = 0; j < k; j++) {
             if (factor_names[j] != NULL) {
