@@ -136,6 +136,7 @@ int main(int argc, char *argv[]) {
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
     GexMatrix *gex = NULL;  /* Original expression matrix */
+    Matrix * originalGex = NULL; /* Original expression matrix before preprocessing */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
     Matrix *filter_avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
@@ -326,6 +327,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: failed to load expression matrix.\n");
         return 1;
     }
+    originalGex = mat_new(gex->X->nrows, gex->X->ncols);
+    mat_copy(originalGex,gex->X);
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
     if (verbose) {
@@ -404,7 +407,7 @@ int main(int argc, char *argv[]) {
 
         /* Run the phylogenetic autocorrelation filter tests if requested */
         if (filter_mode == GEX_FILTER_MORAN) {
-            morans = gex_compute_morans_i(gex, filter_Sigmas,
+            morans = gex_compute_morans_i(originalGex, filter_Sigmas,
                                           (n_filter_trees == -1 ? 1 : n_filter_trees),
                                           n_perms);
 

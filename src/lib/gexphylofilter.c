@@ -432,49 +432,45 @@ calculated here as the expectation over trees of Z^T * W_t * Z,
 where z is the column-wise standardized gene expression matrix and
 W_t is derived internally from the Brownian covariance matrix Sigma_t.
 Returns a pointer to the result structure. */
-MoranResult *gex_compute_morans_i(GexMatrix *gex,
+MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
                                       int n_sigmas,
                                       int n_perm) {
     int j, k, t;
-    int n_cells = gex->X->nrows;
-    int n_genes = gex->X->ncols;
-    Matrix *per_W = NULL; /* Weight matrix temp for each covariance matrix */
-    Matrix *W = NULL;   /* Expected weight matrix across trees */
-    Matrix *B = NULL;   /* Intermediate matrix for E[W] * Z */
-    Matrix *Z = NULL;   /* Standardized gene expression matrix */
-    Matrix *corr = NULL;    /* Moran's I correlation matrix */
-    MoranResult *res = NULL;    /* Result structure for Moran's I computation */
-    Matrix *permZ = NULL;    /* Temp matrix to hold permuted columns */
-    Vector *gene_perm_counts = NULL; /* Array to count permutations for each gene */
+    int n_cells = X->nrows;
+    int n_genes = X->ncols;
+    Matrix *per_W = NULL;   /* Weight matrix temp for each covariance matrix */
+    Matrix *W = mat_new(n_cells, n_cells);   /* Expected weight matrix across trees */
+    Matrix *B = mat_new(n_cells, n_genes);   /* Intermediate matrix for E[W] * Z */
+    Matrix *Z = mat_new(n_cells, n_genes);   /* Standardized gene expression matrix */
+    Matrix *Zt = mat_new(n_genes, n_cells);  /* Transpose of Z for computing Z^T * B */
+    Matrix *corr = mat_new(n_genes, n_genes);    /* Moran's I correlation matrix */
+    MoranResult *res = scalloc(1, sizeof(MoranResult));    /* Result structure for Moran's I computation */
+    Matrix *permZ = mat_new(n_cells, n_genes);   /* Temp matrix to hold permuted columns */
+    Vector *gene_perm_counts = vec_new(n_genes); /* Array to count permutations for each gene */
 
     /* Get the E[W] (expected weight matrix) from the covariance matrices */
-    W = mat_new(n_cells, n_cells);
-    per_W = mat_new(n_cells, n_cells);
     mat_zero(W);
-    mat_zero(per_W);
     for (t = 0; t < n_sigmas; t++) {
         per_W = weight_matrix_from_covariance(Sigmas[t]);
         mat_add_mat(W, per_W);
+        mat_free(per_W);
+        per_W = NULL;
     }
     mat_scale(W, 1.0 / (double)n_sigmas);
 
     /* Normalize the gene expression matrix */
-    Z = mat_new(n_cells, n_genes);
-    mat_copy(Z, gex->X);
+    mat_copy(Z, X);
     mat_standardize_cols(Z);
 
     /* Compute B = E[W * Z] as B = E[W] * Z */
-    B = mat_new(n_cells, n_genes);
     mat_mult(B, W, Z);
 
     /* Compute the Moran's I correlation matrix from Z^T x B */
-    corr = mat_new(n_genes, n_genes);
-    mat_transpose(Z);
-    mat_mult(corr, Z, B);
+    mat_trans(Zt, Z);
+    mat_mult(corr, Zt, B);
 
     /* Setup result structure */
-    res = scalloc(1, sizeof(MoranResult));
     res->n_genes = n_genes;
     res->morans_i = scalloc(n_genes, sizeof(double));
     for (j = 0; j < n_genes; j++) {
@@ -484,15 +480,14 @@ MoranResult *gex_compute_morans_i(GexMatrix *gex,
     res->qvals = scalloc(n_genes, sizeof(double));
 
     /* Run permutation tests to get Monte Carlo p-values */
-    permZ = mat_new(n_cells, n_genes);
-    gene_perm_counts = vec_new(n_genes);
     vec_zero(gene_perm_counts);
 
     for (k = 0; k < n_perm; k++) {
         mat_copy(permZ, Z);
         mat_col_shuffle(permZ);
         mat_mult(B, W, permZ);
-        mat_mult(corr, permZ, B);
+        mat_trans(Zt, permZ);
+        mat_mult(corr, Zt, B);
 
         double perm_i;
         double curr_count;
@@ -520,12 +515,16 @@ MoranResult *gex_compute_morans_i(GexMatrix *gex,
         vec_free(gene_perm_counts);
     if (Z != NULL)
         mat_free(Z);
+    if (Zt != NULL)
+        mat_free(Zt);
     if (per_W != NULL)
         mat_free(per_W);
     if (W != NULL)
         mat_free(W);
     if (B != NULL)
         mat_free(B);
+    if (corr != NULL)
+        mat_free(corr);
     
     return res;
 }

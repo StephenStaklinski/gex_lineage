@@ -46,7 +46,7 @@ Matrix *weight_matrix_from_covariance(Matrix *Sigma);
 
 void print_weight_matrix_summary(Matrix *W);
 
-MoranResult *gex_compute_morans_i(GexMatrix *gex,
+MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
                                       int n_sigmas,
                                       int n_perm);
