@@ -519,16 +519,22 @@ int main(int argc, char *argv[]) {
     }
 
     /* Write the fitted latent Brownian model parameters to files */
-    if (gex_write_model(outprefix, gex_filtered, model->L, model->Z, 
-                        gex_filtered->cell_names, gex_filtered->gene_names, 
-                        pca->K, model->sigma2_obs, model->sigma2_latent) != 0) {
-        fprintf(stderr, "ERROR: failed to write latent Brownian model outputs with prefix %s.\n", outprefix);
-        return 1;
-    }
+    char **factor_names = scalloc(pca->K, sizeof(char *));
+    generate_names(factor_names, pca->K, "factor");
+    write_model(outprefix, gex_filtered, model->L, model->Z, 
+                        gex_filtered->cell_names, gex_filtered->gene_names, factor_names, 
+                        pca->K, model->sigma2_obs, model->sigma2_latent);
 
     printf("Wrote resulting model parameters to outprefix %s.\n", outprefix);
 
     /* Free memory */
+    if (factor_names != NULL) {
+        for (i = 0; i < pca->K; i++) {
+            if (factor_names[i] != NULL)
+                free(factor_names[i]);
+        }
+        free(factor_names);
+    }
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
     gex_free_matrix_data(gex_filtered);

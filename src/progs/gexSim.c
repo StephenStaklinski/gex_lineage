@@ -317,15 +317,11 @@ int main(int argc, char *argv[]) {
     char expr_buf[4096];
     if (expr_only) {
         snprintf(expr_buf, sizeof(expr_buf), "%s.expr.tsv", outprefix);
-        
+        write_labeled_matrix_tsv(expr_buf, gex->X, gex->cell_names, gex->X->nrows,
+                                    gex->gene_names, gex->X->ncols, "cell");
     } else {
-        snprintf(expr_buf, sizeof(expr_buf), "%s.Z.tsv", outprefix);
-
-        /* Rename gene names to latent factors */
-        generate_names(gex->gene_names, n_genes, "factor");
+        generate_names(gex->gene_names, sim_dim, "factor");
     }
-    write_labeled_matrix_tsv(expr_buf, gex->X, gex->cell_names, gex->X->nrows,
-                                        gex->gene_names, gex->X->ncols, "cell");
 
 
     if (!expr_only) {
@@ -346,20 +342,9 @@ int main(int argc, char *argv[]) {
 
         simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, sigma2_obs, L, gex_obs);
 
-        /* Write out L */
-        char l_buf[4096];
-        snprintf(l_buf, sizeof(l_buf), "%s.L.tsv", outprefix);
-        write_labeled_matrix_tsv(l_buf, L, gex->gene_names, k, gene_names, n_genes, "cell");
-
-        /* Write out X */
-        char x_buf[4096];
-        snprintf(x_buf, sizeof(x_buf), "%s.X.tsv", outprefix);
-        write_labeled_matrix_tsv(x_buf, gex_obs->X, gex_obs->cell_names, n_cells, gex_obs->gene_names, n_genes, "cell");
-
-        /* Write out summary */
-        char summary_buf[4096];
-        snprintf(summary_buf, sizeof(summary_buf), "%s.summary.tsv", outprefix);
-        write_summary_tsv(summary_buf, n_cells, n_genes, sigma2_obs, sigma2s->data, k, gex->gene_names);
+        /* Write out L, Z, X, and summary of simulation parameters */
+        write_model(outprefix, gex_obs, L, gex->X, gex_obs->cell_names, gex_obs->gene_names,
+                        gex->gene_names, k, sigma2_obs, sigma2s->data);
 
         /* Free memory */
         if (L != NULL)

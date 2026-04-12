@@ -43,12 +43,13 @@ void write_summary_tsv(const char *path,
                         int k,
                         char **factor_names);
 
-int gex_write_model(const char *outprefix,
+void write_model(const char *outprefix,
                                GexMatrix *gex,
                                Matrix *L,
                                Matrix *Z,
                                char **cell_names,
                                char **gene_names,
+                               char ** factor_names,
                                int k,
                                double sigma2_obs,
                                double *sigma2_latent);

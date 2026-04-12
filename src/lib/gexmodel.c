@@ -940,33 +940,6 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
     free(model);
 }
 
-/* Helper to generate latent factor names incrementally */
-static char **generate_factor_names(int k) {
-    int i;
-    char **names = NULL;
-
-    if (k <= 0)
-        return NULL;
-    names = scalloc(k, sizeof(char *));
-
-    for (i = 0; i < k; i++) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "LF%d", i + 1);
-        names[i] = strdup(buf);
-        if (names[i] == NULL) {
-            for (int j = 0; j < i; j++) {
-                if (names[j] != NULL) {
-                    free(names[j]);
-                }
-            }
-            free(names);
-            return NULL;
-        }
-    }
-
-    return names;
-}
-
 void write_summary_tsv(const char *path,
                         int n_cells,
                         int n_genes,
@@ -995,58 +968,35 @@ void write_summary_tsv(const char *path,
         fclose(summary_out);
 }
 
-int gex_write_model(const char *outprefix,
+void write_model(const char *outprefix,
                                 GexMatrix *gex,
                                 Matrix *L,
                                 Matrix *Z,
                                 char **cell_names,
                                 char **gene_names,
+                                char **factor_names,
                                 int k,
                                 double sigma2_obs,
                                 double *sigma2_latent) {
     char summary_path[4096];
     char z_path[4096];
     char l_path[4096];
-    char expr_path[4096];
-    char **factor_names = NULL;
-    int j;
-
-    if (outprefix == NULL || gex == NULL || L == NULL || Z == NULL ||
-        L == NULL || Z == NULL || cell_names == NULL || gene_names == NULL ||
-        k <= 0 || sigma2_latent == NULL)
-        return 1;
-
-    /* Draw latent factor names incrementally */
-    factor_names = generate_factor_names(k);
-    if (factor_names == NULL)
-        return 1;
+    char x_path[4096];
 
     snprintf(summary_path, sizeof(summary_path), "%s.summary.tsv", outprefix);
     snprintf(z_path, sizeof(z_path), "%s.Z.tsv", outprefix);
     snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
-    snprintf(expr_path, sizeof(expr_path), "%s.expr.tsv", outprefix);
+    snprintf(x_path, sizeof(x_path), "%s.X.tsv", outprefix);
 
     write_summary_tsv(summary_path, gex->X->nrows, gex->X->ncols, sigma2_obs, sigma2_latent, k, factor_names);
 
     /* Write out the simulated matrices */
-    write_labeled_matrix_tsv(expr_path, gex->X, cell_names, gex->X->nrows,
+    write_labeled_matrix_tsv(x_path, gex->X, cell_names, gex->X->nrows,
                                      gene_names, gex->X->ncols, "cell");
     write_labeled_matrix_tsv(z_path, Z, cell_names, gex->X->nrows,
                                      factor_names, k, "cell");
     write_labeled_matrix_tsv(l_path, L, factor_names, k,
                                      gene_names, gex->X->ncols, "factor");
-
-    /* Free memory */
-    if (factor_names != NULL) {
-        for (j = 0; j < k; j++) {
-            if (factor_names[j] != NULL) {
-                free(factor_names[j]);
-            }
-        }
-        free(factor_names);
-    }
-
-    return 0;
 }
 
 /* Simulate L and X from the input Z and sigma_obs */
