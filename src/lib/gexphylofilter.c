@@ -28,51 +28,6 @@ static int gex_cmp_pval_asc(const void *a, const void *b) {
     return 0;
 }
 
-/* Standardize the columns of a gene expression matrix by
-subtracting the mean and dividing by the standard deviation */
-static Matrix *gex_standardize_columns(GexMatrix *gex) {
-    int i, j;
-    Matrix *Z;
-    double *col = NULL; /* Array to store column values from the expression matrix to use the helper function for mean and variance calculation */
-
-    if (gex == NULL || gex->X == NULL)
-        return NULL;
-
-    Z = mat_new(gex->X->nrows, gex->X->ncols);    /* Initialize the standardized matrix */
-    if (Z == NULL)
-        return NULL;
-    col = smalloc(gex->X->nrows * sizeof(double));
-
-    /* Standardize each column (gene) of the expression matrix */
-    for (j = 0; j < gex->X->ncols; j++) {
-        double mean = 0.0;
-        double var = 0.0;
-        double sd;
-
-        for (i = 0; i < gex->X->nrows; i++)
-            col[i] = mat_get(gex->X, i, j);
-
-        calculate_mean_variance(col, gex->X->nrows, &mean, &var);
-        sd = sqrt(var);
-
-        /* If the standard deviation is very small, set all values to 0. Otherwise, standardize the values 
-        by subtracting the mean and dividing by the standard deviation */
-        if (sd < 1e-12) {
-            for (i = 0; i < gex->X->nrows; i++)
-                mat_set(Z, i, j, 0.0);
-        }
-        else {
-            for (i = 0; i < gex->X->nrows; i++) {
-                double z = (col[i] - mean) / sd;
-                mat_set(Z, i, j, z);
-            }
-        }
-    }
-
-    free(col);
-    return Z;
-}
-
 /* Adjust p-values for multiple testing using the Benjamini-Hochberg procedure.
 Fills the qvals array with the adjusted p-values. */
 static void gex_bh_adjust(double *pvals, double *qvals, int n) {
@@ -110,7 +65,7 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
     free(pairs);
 }
 
-static int gex_count_kept_genes(GexMoransResult *res, double max_q, double min_i) {
+static int gex_count_kept_genes(MoranResult *res, double max_q, double min_i) {
     int j;
     int nkeep = 0;
 
@@ -132,34 +87,6 @@ static int gex_count_kept_lrt_genes(GexLRTResult *res, double max_q) {
     }
 
     return nkeep;
-}
-
-/* Shuffle an array of doubles in place using the Fisher-Yates algorithm. */
-static void gex_shuffle_double(double *x, int n, unsigned int *state) {
-    int i;
-
-    /* Loop backwards from the last element to the second */
-    for (i = n - 1; i > 0; i--) {
-        int j = (int)(rand_u32(state) % (unsigned int)(i + 1)); /* Pick a random index */
-        /* Swap elements at indices i and j */
-        double tmp = x[i];
-        x[i] = x[j];
-        x[j] = tmp;
-    }
-}
-
-/* Compute the weighted quadratic form (x^T * W * x) for a symmetric matrix W 
-and vector x.*/
-static double gex_weighted_quadratic(Matrix *W, double *x, int n) {
-    int i, j;
-    double out = 0.0;
-
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            out += x[i] * mat_get(W, i, j) * x[j];
-    }
-
-    return out;
 }
 
 static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
@@ -505,115 +432,81 @@ calculated here as the expectation over trees of Z^T * W_t * Z,
 where z is the column-wise standardized gene expression matrix and
 W_t is derived internally from the Brownian covariance matrix Sigma_t.
 Returns a pointer to the result structure. */
-GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
+MoranResult *gex_compute_morans_i(GexMatrix *gex,
                                       Matrix **Sigmas,
                                       int n_sigmas,
-                                      int n_perm,
-                                      unsigned int seed) {
-    int i, j, k, t;    /* Loop indices */
-    int n_cells;    /* Number of cells (rows in the expression matrix) */
-    int n_genes;    /* Number of genes (columns in the expression matrix) */
-    unsigned int rng_state; /* State for the random number generator used in permutation testing */
-    Matrix *Z = NULL;   /* Standardized gene expression matrix (n_cells x n_genes) */
-    Matrix **Ws = NULL; /* Weight matrices derived from the Brownian covariance matrices */
-    Matrix *B = NULL;   /* Intermediate matrix for E[W] * Z (n_cells x n_genes) */
-    GexMoransResult *res = NULL;    /* Result structure for Moran's I computation */
-    double *zcol = NULL;    /* Temporary array to hold a single column of the standardized matrix for permutation testing */
-    double *perm = NULL;    /* Temporary array to hold the permuted version of the column for permutation testing */
+                                      int n_perm) {
+    int j, k, t;
+    int n_cells = gex->X->nrows;
+    int n_genes = gex->X->ncols;
+    Matrix *per_W = NULL; /* Weight matrix temp for each covariance matrix */
+    Matrix *W = NULL;   /* Expected weight matrix across trees */
+    Matrix *B = NULL;   /* Intermediate matrix for E[W] * Z */
+    Matrix *Z = NULL;   /* Standardized gene expression matrix */
+    Matrix *corr = NULL;    /* Moran's I correlation matrix */
+    MoranResult *res = NULL;    /* Result structure for Moran's I computation */
+    Matrix *permZ = NULL;    /* Temp matrix to hold permuted columns */
+    Vector *gene_perm_counts = NULL; /* Array to count permutations for each gene */
 
-    /* Validate input parameters */
-    if (gex == NULL || gex->X == NULL || Sigmas == NULL || n_sigmas <= 0 || n_perm <= 0) {
-        fprintf(stderr, "ERROR: gex_compute_morans_i got invalid input\n");
-        return NULL;
-    }
-    n_cells = gex->X->nrows;
-    n_genes = gex->X->ncols;
-    Ws = scalloc(n_sigmas, sizeof(Matrix *));
+    /* Get the E[W] (expected weight matrix) from the covariance matrices */
+    W = mat_new(n_cells, n_cells);
+    per_W = mat_new(n_cells, n_cells);
+    mat_zero(W);
+    mat_zero(per_W);
     for (t = 0; t < n_sigmas; t++) {
-        if (Sigmas[t] == NULL ||
-            Sigmas[t]->nrows != n_cells ||
-            Sigmas[t]->ncols != n_cells) {
-            fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells\n");
-            return NULL;
-        }
-        Ws[t] = weight_matrix_from_covariance(Sigmas[t]);
-        if (Ws[t] == NULL) {
-            fprintf(stderr, "ERROR: failed to derive Moran weight matrix from covariance\n");
-            return NULL;
-        }
+        per_W = weight_matrix_from_covariance(Sigmas[t]);
+        mat_add_mat(W, per_W);
     }
+    mat_scale(W, 1.0 / (double)n_sigmas);
 
     /* Normalize the gene expression matrix */
-    Z = gex_standardize_columns(gex);
-    if (Z == NULL) {
-        fprintf(stderr, "ERROR: failed to standardize gene expression matrix\n");
-        return NULL;
-    }
+    Z = mat_new(n_cells, n_genes);
+    mat_copy(Z, gex->X);
+    mat_standardize_cols(Z);
 
-    /* Compute E[W * Z] across the tree set. */
+    /* Compute B = E[W * Z] as B = E[W] * Z */
     B = mat_new(n_cells, n_genes);
-    if (B == NULL) {
-        return NULL;
-    }
-    mat_zero(B);
-    for (i = 0; i < n_cells; i++) {
-        for (j = 0; j < n_genes; j++) {
-            double sum = 0.0;
-            for (t = 0; t < n_sigmas; t++) {
-                for (k = 0; k < n_cells; k++)
-                    sum += mat_get(Ws[t], i, k) * mat_get(Z, k, j);
-            }
-            mat_set(B, i, j, sum / (double)n_sigmas);
-        }
-    }
-
-    /* Initialize the result structure */
-    res = scalloc(1, sizeof(GexMoransResult));
-    res->corr = mat_new(n_genes, n_genes);
-    res->morans_i = scalloc(n_genes, sizeof(double));
-    res->pvals = scalloc(n_genes, sizeof(double));
-    res->qvals = scalloc(n_genes, sizeof(double));
-    res->n_genes = n_genes;
+    mat_mult(B, W, Z);
 
     /* Compute the Moran's I correlation matrix from Z^T x B */
+    corr = mat_new(n_genes, n_genes);
+    mat_transpose(Z);
+    mat_mult(corr, Z, B);
+
+    /* Setup result structure */
+    res = scalloc(1, sizeof(MoranResult));
+    res->n_genes = n_genes;
+    res->morans_i = scalloc(n_genes, sizeof(double));
     for (j = 0; j < n_genes; j++) {
-        for (k = j; k < n_genes; k++) {
-            double sum = 0.0;
-            for (i = 0; i < n_cells; i++)
-                sum += mat_get(Z, i, j) * mat_get(B, i, k);
-            mat_set(res->corr, j, k, sum);
-            mat_set(res->corr, k, j, sum);
+        res->morans_i[j] = mat_get(corr, j, j);
+    }
+    res->pvals = scalloc(n_genes, sizeof(double));
+    res->qvals = scalloc(n_genes, sizeof(double));
+
+    /* Run permutation tests to get Monte Carlo p-values */
+    permZ = mat_new(n_cells, n_genes);
+    gene_perm_counts = vec_new(n_genes);
+    vec_zero(gene_perm_counts);
+
+    for (k = 0; k < n_perm; k++) {
+        mat_copy(permZ, Z);
+        mat_col_shuffle(permZ);
+        mat_mult(B, W, permZ);
+        mat_mult(corr, permZ, B);
+
+        double perm_i;
+        double curr_count;
+        for (j = 0; j < n_genes; j++) {
+            perm_i = mat_get(corr, j, j);
+            if (perm_i >= res->morans_i[j]) {
+                curr_count = vec_get(gene_perm_counts, j);
+                vec_set(gene_perm_counts, j, curr_count + 1.0);
+            }
         }
-        res->morans_i[j] = mat_get(res->corr, j, j);
     }
 
-    /* Initialize temporary arrays for permutation testing */
-    zcol = smalloc(n_cells * sizeof(double));
-    perm = smalloc(n_cells * sizeof(double));
-
-    /* Run permutation tests per gene */
-    rng_state = (seed == 0u ? 1u : seed);
     for (j = 0; j < n_genes; j++) {
-        int ge_count = 0;
-
-        for (i = 0; i < n_cells; i++) {
-            zcol[i] = mat_get(Z, i, j);
-            perm[i] = zcol[i];
-        }
-
-        for (k = 0; k < n_perm; k++) {
-            double perm_i;
-            memcpy(perm, zcol, n_cells * sizeof(double));   /* Copy the column */
-            gex_shuffle_double(perm, n_cells, &rng_state);  /* Shuffle the column */
-            perm_i = 0.0;
-            for (t = 0; t < n_sigmas; t++)
-                perm_i += gex_weighted_quadratic(Ws[t], perm, n_cells);
-            perm_i /= (double)n_sigmas;  /* Compute the expected weighted quadratic form */
-            if (perm_i >= res->morans_i[j]) /* Track permutations with higher or equal Moran's I */
-                ge_count++;
-        }
-
-        res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_perm + 1.0);  /* Compute the p-value */
+        res->pvals[j] = vec_get(gene_perm_counts, j) / (double)n_perm;
     }
 
     /* Adjust p-values for multiple testing and count significant genes */
@@ -621,85 +514,32 @@ GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
     res->n_significant = gex_count_kept_genes(res, 0.05, 0.0);
 
     /* Free memory */
-    if (zcol != NULL)
-        free(zcol);
-    if (perm != NULL)
-        free(perm);
+    if (permZ != NULL)
+        mat_free(permZ);
+    if (gene_perm_counts != NULL)
+        vec_free(gene_perm_counts);
     if (Z != NULL)
         mat_free(Z);
-    if (Ws != NULL) {
-        for (t = 0; t < n_sigmas; t++) {
-            if (Ws[t] != NULL)
-                mat_free(Ws[t]);
-        }
-        free(Ws);
-    }
+    if (per_W != NULL)
+        mat_free(per_W);
+    if (W != NULL)
+        mat_free(W);
     if (B != NULL)
         mat_free(B);
     
     return res;
 }
 
-/* Print a summary of the Moran's I results */
-void gex_print_morans_summary(GexMoransResult *res,
-                              GexMatrix *gex,
-                              double max_q,
-                              double min_i) {
-    int i, j;
-    int n_print = 10; /* Number of variable entries to print in each summary */
-
-    if (res == NULL || gex == NULL) {
-        fprintf(stderr, "ERROR: cannot summarize NULL Moran's I result\n");
-        return;
-    }
-
-    printf("\n");
-    printf("Computed Moran's I correlation matrix for %d gene(s)\n", res->n_genes);
-    printf("Genes passing filter (q <= %.4f and I > %.4f): %d\n",
-           max_q, min_i, gex_count_kept_genes(res, max_q, min_i));
-
-    printf("First few entries of Moran's I gene-gene correlation matrix:\n");
-    for (i = 0; i < res->n_genes && i < n_print; i++) {
-        printf("%s", gex->gene_names[i]);
-        for (j = 0; j < res->n_genes && j < n_print; j++)
-            printf("\t%g", mat_get(res->corr, i, j));
-        printf("\n");
-    }
-
-    printf("\nFirst few gene-wise Moran's I statistics:\n");
-    printf("gene\tI\tp\tq\tkeep\n");
-    for (j = 0; j < res->n_genes && j < n_print; j++) {
-        int keep = (res->qvals[j] <= max_q && res->morans_i[j] > min_i);
-        printf("%s\t%g\t%g\t%g\t%s\n",
-               gex->gene_names[j],
-               res->morans_i[j],
-               res->pvals[j],
-               res->qvals[j],
-               (keep ? "yes" : "no"));
-    }
-    printf("\n");
-}
-
 /* Write Moran's I results to a TSV file */
-int gex_write_morans_tsv(const char *filename,
-                         GexMoransResult *res,
+void write_moran_tsv(const char *filename,
+                         MoranResult *res,
                          GexMatrix *gex,
                          double max_q,
                          double min_i) {
-    FILE *out;
     int i;
-
-    if (filename == NULL || res == NULL || gex == NULL) {
-        fprintf(stderr, "ERROR: gex_write_morans_tsv got invalid input\n");
-        return -1;
-    }
+    FILE *out;
 
     out = fopen(filename, "w");
-    if (out == NULL) {
-        fprintf(stderr, "ERROR: could not open Moran output file: %s\n", filename);
-        return -1;
-    }
-
     fprintf(out, "gene\tmorans_I\tp_value\tq_value\tkeep\n");
     for (i = 0; i < res->n_genes; i++) {
         int keep = (res->qvals[i] <= max_q && res->morans_i[i] > min_i);
@@ -708,11 +548,9 @@ int gex_write_morans_tsv(const char *filename,
                 res->morans_i[i],
                 res->pvals[i],
                 res->qvals[i],
-                (keep ? "yes" : "no"));
+                (keep ? "True" : "False"));
     }
-
     fclose(out);
-    return 0;
 }
 
 /* Compute the Brownian LRT for a given expression matrix and tree-set of phylogenetic covariance matrices.
@@ -962,51 +800,14 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     return res;
 }
 
-void gex_print_lrt_summary(GexLRTResult *res,
-                           GexMatrix *gex,
-                           double max_q) {
-    int j;
-
-    if (res == NULL || gex == NULL) {
-        fprintf(stderr, "ERROR: cannot summarize NULL LRT result\n");
-        return;
-    }
-
-    printf("\n");
-    printf("Computed Brownian LRT for %d gene(s)\n", res->n_genes);
-    printf("Genes passing LRT filter (q <= %.4f): %d\n",
-           max_q, gex_count_kept_lrt_genes(res, max_q));
-    printf("\nFirst few gene-wise Brownian LRT statistics:\n");
-    printf("gene\tlrt\tp\tq\tkeep\n");
-    for (j = 0; j < res->n_genes && j < 10; j++) {
-        int keep = (res->qvals[j] <= max_q && res->lrt_stat[j] > 0.0);
-        printf("%s\t%g\t%g\t%g\t%s\n",
-               gex->gene_names[j],
-               res->lrt_stat[j],
-               res->pvals[j],
-               res->qvals[j],
-               (keep ? "yes" : "no"));
-    }
-    printf("\n");
-}
-
-int gex_write_lrt_tsv(const char *filename,
+void write_lrt_tsv(const char *filename,
                       GexLRTResult *res,
                       GexMatrix *gex,
                       double max_q) {
-    FILE *out;
     int i;
-
-    if (filename == NULL || res == NULL || gex == NULL) {
-        fprintf(stderr, "ERROR: gex_write_lrt_tsv got invalid input\n");
-        return -1;
-    }
+    FILE *out;
 
     out = fopen(filename, "w");
-    if (out == NULL) {
-        fprintf(stderr, "ERROR: could not open LRT output file: %s\n", filename);
-        return -1;
-    }
 
     if (res->alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat != NULL)
         fprintf(out, "gene\tll_null\tll_alt\tlambda_hat\tlrt_stat\tp_value\tq_value\tkeep\n");
@@ -1024,7 +825,7 @@ int gex_write_lrt_tsv(const char *filename,
                     res->lrt_stat[i],
                     res->pvals[i],
                     res->qvals[i],
-                    (keep ? "yes" : "no"));
+                    (keep ? "True" : "False"));
         }
         else {
             fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
@@ -1034,19 +835,15 @@ int gex_write_lrt_tsv(const char *filename,
                     res->lrt_stat[i],
                     res->pvals[i],
                     res->qvals[i],
-                    (keep ? "yes" : "no"));
+                    (keep ? "True" : "False"));
         }
     }
-
     fclose(out);
-    return 0;
 }
 
-void gex_free_morans_result(GexMoransResult *res) {
+void free_moran_result(MoranResult *res) {
     if (res == NULL)
         return;
-    if (res->corr != NULL)
-        mat_free(res->corr);
     if (res->morans_i != NULL)
         free(res->morans_i);
     if (res->pvals != NULL)
@@ -1078,7 +875,7 @@ void gex_free_lrt_result(GexLRTResult *res) {
 
 /* Determine if a gene should be kept based on the specified 
 filter mode and thresholds. */
-static int gex_keep_gene(GexMoransResult *morans,
+static int gex_keep_gene(MoranResult *morans,
                          GexLRTResult *lrt,
                          int gene_idx,
                          GexFilterMode mode,
@@ -1110,7 +907,7 @@ given significance and signal strength thresholds.
 Returns a pointer to a new GexMatrix containing only 
 the filtered genes. */
 GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
-                                       GexMoransResult *morans,
+                                       MoranResult *morans,
                                        GexLRTResult *lrt,
                                        GexFilterMode mode,
                                        double max_q,

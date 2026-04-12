@@ -73,10 +73,6 @@ static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
         *mode_out = GEX_FILTER_LRT;
         return 0;
     }
-    if (strcmp(s, "both") == 0) {
-        *mode_out = GEX_FILTER_BOTH;
-        return 0;
-    }
     return -1;
 }
 
@@ -102,7 +98,7 @@ static void usage(const char *progname) {
         "[--tree-total-time T] "
         "[--n-filter-trees N] "
         "[--n-model-trees N] "
-        "[--filter-test lrt|moran|both] "
+        "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
         "[--l2-strength S] "
         "[--pca-var-threshold V] "
@@ -145,7 +141,7 @@ int main(int argc, char *argv[]) {
     Matrix *filter_avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
     Matrix **filter_Sigmas = NULL; /* Covariance matrices used for filtering */
     Matrix **model_Sigmas = NULL; /* Selected covariance matrices for latent model fitting */
-    GexMoransResult *morans = NULL; /* Results from Moran's I calculation */
+    MoranResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     PCA *pca = NULL; /* PCA results */
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
@@ -202,7 +198,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
-                fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt, both\n");
+                fprintf(stderr, "ERROR: --filter-test must be one of moran or lrt\n");
                 return 1;
             }
         }
@@ -393,72 +389,44 @@ int main(int argc, char *argv[]) {
     }
 
     if (!no_filter) {
+        const char *tree_msg;
+        int tree_count = n_filter_trees;
         if (n_filter_trees == -1) {
-            printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the average covariance across all %d tree(s)...\n",
-                   n_trees);
+            tree_msg = "the average covariance across all";
+            tree_count = n_trees;
         } else if (n_filter_trees == n_trees) {
-            printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using all %d tree(s)...\n", n_filter_trees);
+            tree_msg = "all";
         } else {
-            printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using the first %d tree(s)...\n",
-                    n_filter_trees);
+            tree_msg = "the first";
         }
+        printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using %s %d tree(s)...\n",
+            tree_msg, tree_count);
+
         /* Run the phylogenetic autocorrelation filter tests if requested */
-        if (filter_mode == GEX_FILTER_MORAN || filter_mode == GEX_FILTER_BOTH) {
+        if (filter_mode == GEX_FILTER_MORAN) {
             morans = gex_compute_morans_i(gex, filter_Sigmas,
                                           (n_filter_trees == -1 ? 1 : n_filter_trees),
-                                          n_perms, seed);
-            if (morans == NULL) {
-                fprintf(stderr, "ERROR: failed to compute Moran's I statistics.\n");
-                return 1;
-            }
-            if (verbose) {
-                gex_print_morans_summary(morans, gex, max_q, moran_min_i);
-            }
+                                          n_perms);
 
-            {
-                char corr_path[4096];
-                snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
-                if (gex_write_morans_tsv(corr_path, morans, gex, max_q, moran_min_i) != 0) {
-                    fprintf(stderr, "ERROR: failed to write Moran correlation results to %s.\n",
-                            corr_path);
-                    return 1;
-                }
-                if (verbose) {
-                    printf("Wrote Moran correlation results to %s.\n", corr_path);
-                }
-            }
+            char corr_path[4096];
+            snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
+            write_moran_tsv(corr_path, morans, gex, max_q, moran_min_i);
         }
 
         /* Run the phylogenetic LRT filter tests if requested */
-        if (filter_mode == GEX_FILTER_LRT || filter_mode == GEX_FILTER_BOTH) {
+        if (filter_mode == GEX_FILTER_LRT) {
             lrt = gex_compute_brownian_lrt(gex, filter_Sigmas,
                                            (n_filter_trees == -1 ? 1 : n_filter_trees),
                                            n_perms, seed, lrt_alt_mode);
-            if (lrt == NULL) {
-                fprintf(stderr, "ERROR: failed to compute Brownian LRT statistics.\n");
-                return 1;
-            }
-            if (verbose) {
-                gex_print_lrt_summary(lrt, gex, max_q);
+
+            char lrt_path[4096];
+            if (lrt_alt_mode == GEX_LRT_ALT_FULL) {
+                snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.full.tsv", outprefix);
+            } else if (lrt_alt_mode == GEX_LRT_ALT_LAMBDA) {
+                snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.lambda.tsv", outprefix);
             }
 
-            {
-                char lrt_path[4096];
-                if (lrt_alt_mode == GEX_LRT_ALT_FULL) {
-                    snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.full.tsv", outprefix);
-                } else if (lrt_alt_mode == GEX_LRT_ALT_LAMBDA) {
-                    snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.lambda.tsv", outprefix);
-                }
-
-                if (gex_write_lrt_tsv(lrt_path, lrt, gex, max_q) != 0) {
-                    fprintf(stderr, "ERROR: failed to write LRT correlation results to %s\n",
-                            lrt_path);
-                    return 1;
-                }
-                if (verbose) {
-                    printf("Wrote LRT correlation results to %s.\n", lrt_path);
-                }
-            }
+            write_lrt_tsv(lrt_path, lrt, gex, max_q);
         }
 
         /* Stop early if only phylogenetic signal filtering is requested */
@@ -538,7 +506,7 @@ int main(int argc, char *argv[]) {
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
     gex_free_matrix_data(gex_filtered);
-    gex_free_morans_result(morans);
+    free_moran_result(morans);
     gex_free_lrt_result(lrt);
     free_pca(pca);
     gex_free_latent_brownian_model(model);

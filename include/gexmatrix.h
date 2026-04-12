@@ -21,6 +21,10 @@ void mat_log1p(Matrix *X);
 
 void mat_center_cols(Matrix *X);
 
+void mat_standardize_cols(Matrix *X);
+
+void mat_col_shuffle(Matrix *X);
+
 void write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,
                                  char **row_names,

@@ -86,6 +86,57 @@ void mat_center_cols(Matrix *X) {
     }
 }
 
+/* Standardize the columns of a matrix by subtracting the mean and 
+dividing by the standard deviation in-place */
+void mat_standardize_cols(Matrix *X) {
+    int i, j;
+
+    for (j = 0; j < X->ncols; j++) {
+        double mean = 0.0;
+        double var = 0.0;
+        double sd;
+
+        /* Get the mean of the column */
+        for (i = 0; i < X->nrows; i++)
+            mean += mat_get(X, i, j);
+        mean /= X->nrows;
+
+        /* Get the variance of the column */
+        for (i = 0; i < X->nrows; i++) {
+            double diff = mat_get(X, i, j) - mean;
+            var += diff * diff;
+        }
+        var /= X->nrows;
+
+        sd = sqrt(var);
+        if (sd < 1e-12)
+            continue;
+
+        /* Standardize the column */
+        for (i = 0; i < X->nrows; i++) {
+            double val = mat_get(X, i, j);
+            val -= mean;
+            val /= sd;
+            mat_set(X, i, j, val);
+        }
+    }
+}
+
+/* Shuffle all columns of a matrix in-place using Fisher–Yates */
+void mat_col_shuffle(Matrix *X) {
+    int i, j;
+    double tmp;
+
+    for (j = 0; j < X->ncols; j++) {
+        for (i = X->nrows - 1; i > 0; i--) {
+            int k = rand() % (i + 1);  /* 0 ≤ k ≤ i */
+            tmp = mat_get(X, i, j);
+            mat_set(X, i, j, mat_get(X, k, j));
+            mat_set(X, k, j, tmp);
+        }
+    }
+}
+
 void write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,
                                  char **row_names,

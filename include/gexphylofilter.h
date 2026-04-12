@@ -17,13 +17,12 @@ typedef enum {
 } GexLRTAltMode;
 
 typedef struct {
-    Matrix *corr;
     double *morans_i;
     double *pvals;
     double *qvals;
     int n_genes;
     int n_significant;
-} GexMoransResult;
+} MoranResult;
 
 typedef struct {
     double *ll_null;
@@ -47,24 +46,18 @@ Matrix *weight_matrix_from_covariance(Matrix *Sigma);
 
 void print_weight_matrix_summary(Matrix *W);
 
-GexMoransResult *gex_compute_morans_i(GexMatrix *gex,
+MoranResult *gex_compute_morans_i(GexMatrix *gex,
                                       Matrix **Sigmas,
                                       int n_sigmas,
-                                      int n_perm,
-                                      unsigned int seed);
+                                      int n_perm);
 
-void gex_print_morans_summary(GexMoransResult *res,
-                              GexMatrix *gex,
-                              double max_q,
-                              double min_i);
-
-int gex_write_morans_tsv(const char *filename,
-                         GexMoransResult *res,
+void write_moran_tsv(const char *filename,
+                         MoranResult *res,
                          GexMatrix *gex,
                          double max_q,
                          double min_i);
 
-void gex_free_morans_result(GexMoransResult *res);
+void free_moran_result(MoranResult *res);
 
 GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        Matrix **Sigmas,
@@ -73,11 +66,7 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                                        unsigned int seed,
                                        GexLRTAltMode alt_mode);
 
-void gex_print_lrt_summary(GexLRTResult *res,
-                           GexMatrix *gex,
-                           double max_q);
-
-int gex_write_lrt_tsv(const char *filename,
+void write_lrt_tsv(const char *filename,
                       GexLRTResult *res,
                       GexMatrix *gex,
                       double max_q);
@@ -85,7 +74,7 @@ int gex_write_lrt_tsv(const char *filename,
 void gex_free_lrt_result(GexLRTResult *res);
 
 GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
-                                       GexMoransResult *morans,
+                                       MoranResult *morans,
                                        GexLRTResult *lrt,
                                        GexFilterMode mode,
                                        double max_q,
