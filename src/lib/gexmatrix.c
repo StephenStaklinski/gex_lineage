@@ -216,6 +216,8 @@ void mat_sqrt_elementwise(Matrix *X) {
     }
 }
 
+/* Divide two matrices element-wise (NOT true matrix multiplication)
+and store the result in a third matrix */
 void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B) {
     int i, j;
 
@@ -231,6 +233,15 @@ void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B) {
             mat_set(dest, i, j, val);
         }
     }
+}
+
+/* Add a scalar value to the diagonal entries of a matrix */
+void mat_add_diag(Matrix *X, double val) {
+    int i, n;
+
+    n = X->nrows < X->ncols ? X->nrows : X->ncols;
+    for (i = 0; i < n; i++)
+        mat_set(X, i, i, mat_get(X, i, i) + val);
 }
 
 /* Return a vector containing the diagonal entries of a matrix */

@@ -65,241 +65,6 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
     free(pairs);
 }
 
-static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
-    return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
-}
-
-/* Compute the log-likelihood of y under N(mu 1, sigma2 * Sigma),
-   profiling out mu and sigma2, using the Cholesky factor L of Sigma. */
-static double gex_loglik_centered_gaussian_chol(double *y,
-                                                Matrix *L,
-                                                double logdet_sigma) {
-    int i, n;
-    Vector *ones = NULL;
-    Vector *yvec = NULL;
-    Vector *tmp = NULL;
-    Vector *Sinv1 = NULL;
-    Vector *Sinvy = NULL;
-    Vector *resid = NULL;
-    Vector *Sinv_resid = NULL;
-    double ones_Sinv_ones = 0.0;
-    double ones_Sinv_y = 0.0;
-    double quad = 0.0;
-    double muhat;
-    double sigma2;
-    double ll;
-
-    n = L->nrows;
-
-    if (n != L->ncols)
-        return NAN;
-
-    ones = vec_new(n);
-    yvec = vec_new(n);
-    tmp = vec_new(n);
-    Sinv1 = vec_new(n);
-    Sinvy = vec_new(n);
-    resid = vec_new(n);
-    Sinv_resid = vec_new(n);
-
-    for (i = 0; i < n; i++) {
-        vec_set(ones, i, 1.0);
-        vec_set(yvec, i, y[i]);
-    }
-
-    /* Solve Sigma * Sinv1 = 1 via L tmp = 1, then L^T Sinv1 = tmp */
-    mat_forward_subst(L, ones, tmp);
-    mat_backward_subst(L, tmp, Sinv1);
-
-    /* Solve Sigma * Sinvy = y via L tmp = y, then L^T Sinvy = tmp */
-    mat_forward_subst(L, yvec, tmp);
-    mat_backward_subst(L, tmp, Sinvy);
-
-    for (i = 0; i < n; i++) {
-        ones_Sinv_ones += vec_get(Sinv1, i);
-        ones_Sinv_y += vec_get(Sinvy, i);
-    }
-
-    if (ones_Sinv_ones <= 0.0)
-        return NAN;
-
-    /* GLS estimate of the mean */
-    muhat = ones_Sinv_y / ones_Sinv_ones;
-
-    for (i = 0; i < n; i++)
-        vec_set(resid, i, y[i] - muhat);
-
-    /* Solve Sigma * Sinv_resid = resid via L tmp = resid, then L^T Sinv_resid = tmp */
-    mat_forward_subst(L, resid, tmp);
-    mat_backward_subst(L, tmp, Sinv_resid);
-
-    /* quad = resid^T Sigma^{-1} resid */
-    for (i = 0; i < n; i++)
-        quad += vec_get(resid, i) * vec_get(Sinv_resid, i);
-
-    sigma2 = quad / (double)n;
-    if (sigma2 < 1e-12)
-        sigma2 = 1e-12;
-
-    ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
-                 logdet_sigma +
-                 (double)n);
-
-    vec_free(ones);
-    vec_free(yvec);
-    vec_free(tmp);
-    vec_free(Sinv1);
-    vec_free(Sinvy);
-    vec_free(resid);
-    vec_free(Sinv_resid);
-    return ll;
-}
-
-typedef struct {
-    double *y;
-    Matrix *Sigma;
-    Matrix *Sigma_lambda;
-    Matrix *L;
-    double diag_mean;
-    double jitter;
-} GexPagelsLambdaOptData;
-
-/* Compute the log-likelihood under a Pagel's lambda style covariance model.
-The diagonal entries are held fixed at the common tip variance and the
-off-diagonal entries are scaled by lambda. */
-static double gex_loglik_pagels_lambda_cov(double *y,
-                                           Matrix *Sigma,
-                                           double diag_mean,
-                                           double jitter,
-                                           double lambda,
-                                           Matrix *Sigma_lambda,
-                                           Matrix *L) {
-    int i, j, n;    /* Loop indices */
-    double logdet_sigma = 0.0;  /* Log determinant of the lambda-transformed covariance matrix */
-
-    /* Get the number of rows in the covariance matrix */
-    n = Sigma->nrows;
-    if (lambda < 0.0 || lambda > 1.0)
-        return -HUGE_VAL;
-
-    /* Build the lambda-transformed covariance matrix.
-    For ultrametric trees, all diagonals should match, so keeping a common
-    diagonal value makes lambda = 0 correspond to the null model up to scale. */
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++) {
-            if (i == j)
-                mat_set(Sigma_lambda, i, j, diag_mean + jitter);
-            else
-                mat_set(Sigma_lambda, i, j, lambda * mat_get(Sigma, i, j));
-        }
-    }
-
-    /* Compute the Cholesky decomposition of the lambda-transformed covariance matrix */
-    if (mat_cholesky(L, Sigma_lambda) != 0)
-        return -HUGE_VAL;
-
-    /* Compute the log determinant of the lambda-transformed covariance matrix */
-    for (i = 0; i < n; i++) {
-        double diag = mat_get(L, i, i);
-        if (diag <= 0.0)
-            return -HUGE_VAL;
-        logdet_sigma += 2.0 * log(diag);
-    }
-
-    return gex_loglik_centered_gaussian_chol(y, L, logdet_sigma);
-}
-
-/* Objective function for fitting Pagel's lambda by one-dimensional numerical optimization. */
-static double gex_pagels_lambda_negloglik(double lambda, void *data) {
-    GexPagelsLambdaOptData *d = (GexPagelsLambdaOptData *)data;
-    double ll = gex_loglik_pagels_lambda_cov(d->y,
-                                             d->Sigma,
-                                             d->diag_mean,
-                                             d->jitter,
-                                             lambda,
-                                             d->Sigma_lambda,
-                                             d->L);
-
-    if (!isfinite(ll))
-        return HUGE_VAL;
-    return -ll;
-}
-
-/* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
-Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
-static double gex_fit_pagels_lambda_loglik(double *y,
-                                           Matrix *Sigma,
-                                           double jitter,
-                                           Matrix *Sigma_lambda,
-                                           Matrix *L,
-                                           double *lambda_hat) {
-    int i, status;  /* Loop index and optimization status */
-    double diag_mean = 0.0; /* Mean of the diagonal elements of the covariance matrix */
-    double lambda;  /* Parameter for Pagel's lambda */
-    double fx;  /* Objective function value */
-    double fx0; /* Objective function value at lambda = 0 (null model) */
-    double fx1; /* Objective function value at lambda = 1 (full model) */
-    double best_lambda; /* Best lambda value found among boundary and interior evaluations */
-    double best_fx; /* Best objective function value found among boundary and interior evaluations */
-    GexPagelsLambdaOptData data;    /* Data structure to pass to the objective function for optimization */
-
-    /* Compute the mean of the diagonal elements of the covariance matrix */
-    for (i = 0; i < Sigma->nrows; i++)
-        diag_mean += mat_get(Sigma, i, i);
-    diag_mean /= (double)Sigma->nrows;
-
-    /* Set up the data structure for optimization */
-    data.y = y;
-    data.Sigma = Sigma;
-    data.Sigma_lambda = Sigma_lambda;
-    data.L = L;
-    data.diag_mean = diag_mean;
-    data.jitter = jitter;
-
-    /* Explicitly evaluate both boundaries because lambda is allowed to sit on
-    the edge of the parameter space and the mixture null depends on that case. */
-    fx0 = gex_pagels_lambda_negloglik(0.0, &data);
-    fx1 = gex_pagels_lambda_negloglik(1.0, &data);
-    if (fx0 <= fx1) {
-        best_fx = fx0;
-        best_lambda = 0.0;
-    }
-    else {
-        best_fx = fx1;
-        best_lambda = 1.0;
-    }
-
-    /* Evaluate the objective function starting at an interior point */
-    lambda = 0.5;
-    fx = gex_pagels_lambda_negloglik(lambda, &data);
-
-    /* Optimize the objective function using Newton's method */
-    status = opt_newton_1d(gex_pagels_lambda_negloglik,
-                           &lambda,
-                           &data,
-                           &fx,
-                           6,
-                           0.0,
-                           1.0,
-                           NULL,
-                           NULL,
-                           NULL);
-
-    /* If the optimizer converges to a finite value that is better than the boundary values, update the best solution */
-    if (isfinite(fx) && fx < best_fx) {
-        best_fx = fx;
-        best_lambda = lambda;
-    }
-
-    /* If the optimizer does not fully converge, still retain the best valid
-    value found among the boundary and interior evaluations. */
-    if (status != 0 && !isfinite(best_fx))
-        return -HUGE_VAL;
-
-    *lambda_hat = best_lambda;
-    return -best_fx;
-}
-
 /* Calculate the inverse pairwise distance weight matrix from a phylogenetic covariance matrix.
 This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
 Nature Genetics (PMID: 39317739). */
@@ -597,6 +362,216 @@ void write_moran_tsv(const char *filename,
     fclose(out);
 }
 
+
+/* Return the log-likelihood of a centered Gaussian with identity covariance */
+static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
+    return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
+}
+
+/* Compute the log-likelihood of y under N(mu 1, sigma2 * Sigma),
+   profiling out mu and sigma2, using the Cholesky factor L of Sigma. */
+static double gex_loglik_centered_gaussian_chol(double *y,
+                                                Matrix *L,
+                                                double logdet_sigma) {
+    int i, n;
+    Vector *ones = NULL;
+    Vector *yvec = NULL;
+    Vector *tmp = NULL;
+    Vector *Sinv1 = NULL;
+    Vector *Sinvy = NULL;
+    Vector *resid = NULL;
+    Vector *Sinv_resid = NULL;
+    double ones_Sinv_ones = 0.0;
+    double ones_Sinv_y = 0.0;
+    double quad = 0.0;
+    double muhat;
+    double sigma2;
+    double ll;
+
+    n = L->nrows;
+
+    if (n != L->ncols)
+        return NAN;
+
+    ones = vec_new(n);
+    yvec = vec_new(n);
+    tmp = vec_new(n);
+    Sinv1 = vec_new(n);
+    Sinvy = vec_new(n);
+    resid = vec_new(n);
+    Sinv_resid = vec_new(n);
+
+    for (i = 0; i < n; i++) {
+        vec_set(ones, i, 1.0);
+        vec_set(yvec, i, y[i]);
+    }
+
+    /* Solve Sigma * Sinv1 = 1 via L tmp = 1, then L^T Sinv1 = tmp */
+    mat_forward_subst(L, ones, tmp);
+    mat_backward_subst(L, tmp, Sinv1);
+
+    /* Solve Sigma * Sinvy = y via L tmp = y, then L^T Sinvy = tmp */
+    mat_forward_subst(L, yvec, tmp);
+    mat_backward_subst(L, tmp, Sinvy);
+
+    for (i = 0; i < n; i++) {
+        ones_Sinv_ones += vec_get(Sinv1, i);
+        ones_Sinv_y += vec_get(Sinvy, i);
+    }
+
+    if (ones_Sinv_ones <= 0.0)
+        return NAN;
+
+    /* GLS estimate of the mean */
+    muhat = ones_Sinv_y / ones_Sinv_ones;
+
+    for (i = 0; i < n; i++)
+        vec_set(resid, i, y[i] - muhat);
+
+    /* Solve Sigma * Sinv_resid = resid via L tmp = resid, then L^T Sinv_resid = tmp */
+    mat_forward_subst(L, resid, tmp);
+    mat_backward_subst(L, tmp, Sinv_resid);
+
+    /* quad = resid^T Sigma^{-1} resid */
+    for (i = 0; i < n; i++)
+        quad += vec_get(resid, i) * vec_get(Sinv_resid, i);
+
+    sigma2 = quad / (double)n;
+    if (sigma2 < 1e-12)
+        sigma2 = 1e-12;
+
+    ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
+                 logdet_sigma +
+                 (double)n);
+    
+    if (!isfinite(ll))
+        ll = -HUGE_VAL;
+
+    vec_free(ones);
+    vec_free(yvec);
+    vec_free(tmp);
+    vec_free(Sinv1);
+    vec_free(Sinvy);
+    vec_free(resid);
+    vec_free(Sinv_resid);
+    return ll;
+}
+
+typedef struct {
+    double *y;
+    Matrix *Sigma;
+    Matrix *Sigma_lambda;
+    Matrix *L;
+} GexPagelsLambdaOptData;
+
+/* Calculate the lambda adjusted covariance matrix to fit the model with */
+static double gex_pagels_lambda_negloglik(double lambda, void *data) {
+    GexPagelsLambdaOptData *d = (GexPagelsLambdaOptData *)data;
+
+    int i, j;    /* Loop indices */
+    int n = d->Sigma->nrows;  /* Number of cells */
+    double logdet_sigma = 0.0;  /* Log determinant of the lambda-transformed covariance matrix */
+    double eps = 1e-12;
+
+    /* Check that lambda is in the valid range [0, 1] */
+    if (lambda < 0.0 || lambda > 1.0)
+        return -HUGE_VAL;
+    
+    mat_copy(d->Sigma_lambda, d->Sigma);  /* Start with the original covariance matrix */
+
+    /* Diagonal elements are the same, adjusted for numerical stability */
+    for (i = 0; i < n; i++)
+        mat_set(d->Sigma_lambda, i, i, mat_get(d->Sigma, i, i) + eps);
+    
+    double lambda_scaled;
+    for (i = 0; i < n; i++) {
+        for (j = i + 1; j < n; j++) {
+            lambda_scaled = lambda * mat_get(d->Sigma, i, j);  /* Off-diagonal elements are scaled by lambda */
+            mat_set(d->Sigma_lambda, i, j, lambda_scaled);
+            mat_set(d->Sigma_lambda, j, i, lambda_scaled);
+        }
+    }
+
+    /* Compute the Cholesky decomposition of the lambda-transformed covariance matrix */
+    if (mat_cholesky(d->L, d->Sigma_lambda) != 0)
+        return -HUGE_VAL;
+
+    /* Compute the log determinant of the lambda-transformed covariance matrix */
+    for (i = 0; i < n; i++) {
+        double diag = mat_get(d->L, i, i);
+        if (diag <= 0.0)
+            return -HUGE_VAL;
+        logdet_sigma += log(diag);
+    }
+    logdet_sigma *= 2.0;
+
+    return -gex_loglik_centered_gaussian_chol(d->y, d->L, logdet_sigma);
+}
+
+/* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
+Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
+static double gex_fit_pagels_lambda_loglik(double *y,
+                                           Matrix *Sigma,
+                                           double *lambda_hat) {
+    int status;  /* Loop index and optimization status */
+    double lambda;  /* Parameter for Pagel's lambda */
+    double fx;  /* Objective function value */
+    double fx0; /* Objective function value at lambda = 0 (null model) */
+    double fx1; /* Objective function value at lambda = 1 (full model) */
+    double best_lambda; /* Best lambda value found among boundary and interior evaluations */
+    double best_fx; /* Best objective function value found among boundary and interior evaluations */
+    GexPagelsLambdaOptData data;    /* Data structure to pass to the objective function for optimization */
+
+    /* Set up the data structure for optimization */
+    data.y = y;
+    data.Sigma = Sigma;
+    data.Sigma_lambda = mat_new(Sigma->nrows, Sigma->ncols);  /* Lambda-transformed covariance matrix for optimization */
+    data.L = mat_new(Sigma->nrows, Sigma->ncols);  /* Cholesky factor for optimization */
+
+    /* Explicitly evaluate both boundaries because lambda is allowed to sit on
+    the edge of the parameter space and the mixture null depends on that case. */
+    fx0 = gex_pagels_lambda_negloglik(0.0, &data);
+    fx1 = gex_pagels_lambda_negloglik(1.0, &data);
+    if (fx0 <= fx1) {
+        best_fx = fx0;
+        best_lambda = 0.0;
+    }
+    else {
+        best_fx = fx1;
+        best_lambda = 1.0;
+    }
+
+    /* Evaluate the objective function starting at an interior point */
+    lambda = 0.5;
+    fx = gex_pagels_lambda_negloglik(lambda, &data);
+
+    /* Optimize the objective function using Newton's method */
+    status = opt_newton_1d(gex_pagels_lambda_negloglik,
+                           &lambda,
+                           &data,
+                           &fx,
+                           6,
+                           0.0,
+                           1.0,
+                           NULL,
+                           NULL,
+                           NULL);
+
+    /* If the optimizer converges to a finite value that is better than the boundary values, update the best solution */
+    if (isfinite(fx) && fx < best_fx) {
+        best_fx = fx;
+        best_lambda = lambda;
+    }
+
+    /* If the optimizer does not fully converge, still retain the best valid
+    value found among the boundary and interior evaluations. */
+    if (status != 0 && !isfinite(best_fx))
+        return -HUGE_VAL;
+
+    *lambda_hat = best_lambda;
+    return -best_fx;
+}
+
 /* Compute the Brownian LRT for a given expression matrix and tree-set of phylogenetic covariance matrices.
    The LRT compares:
 
@@ -605,136 +580,105 @@ void write_moran_tsv(const char *filename,
 
      Alternative:  y ~ N(mu, sigma^2 * Sigma_t)
                    (Brownian motion on each tree t; the alternative log-likelihood
-                   is averaged across the supplied tree set)
+                   is averaged across the supplied tree set; Additional alternative 
+                   with Pagel's lambda transformation of the covariance matrices 
+                   is also supported)
 
    For each gene, the function computes the log-likelihood under both models
    and forms the likelihood ratio statistic LRT = 2 * (logLik_alt - logLik_null).
    P-values are obtained either from Monte Carlo simulation under the null
    for the full Brownian alternative or from the standard 50:50 mixture of
    chi-square with 1 dof and a point mass at zero for the Pagel's lambda
-   alternative. Returns a pointer to the result structure or NULL on failure.
+   alternative.
 */
-GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
+GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
                                        Matrix **Sigmas,
                                        int n_sigmas,
-                                       int n_mc,
+                                       int n_perm,
                                        unsigned int seed,
                                        GexLRTAltMode alt_mode) {
     int i, j, t;   /* Loop indices */
-    int n;  /* Number of cells */
+    int n = X->nrows;  /* Number of cells */
+    int n_genes = X->ncols;  /* Number of genes */
+    double eps = 1e-12;  /* Jitter to add to covariance matrix diagonal elements for numerical stability */
     Matrix **Sigma_regs = NULL;   /* Regularized covariance matrices */
     Matrix **Ls = NULL;   /* Cholesky factors of regularized covariance matrices */
-    Matrix **Sigma_lambdas = NULL;   /* Lambda-transformed covariance matrices */
     GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
     double *logdet_sigmas = NULL;   /* Log determinants of the regularized covariance matrices */
-    double *jitters = NULL;   /* Per-tree diagonal jitters for numerical stability */
     double *y = NULL;   /* Vector for storing the expression values */
-    double *y_sim = NULL;   /* Vector for storing simulated expression values */
     unsigned int rng_state; /* Random number generator state */
 
-    if (gex == NULL || gex->X == NULL || Sigmas == NULL || n_sigmas <= 0 ||
-        alt_mode < GEX_LRT_ALT_FULL || alt_mode > GEX_LRT_ALT_LAMBDA ||
-        (alt_mode == GEX_LRT_ALT_FULL && n_mc <= 0)) {
-        fprintf(stderr, "ERROR: gex_compute_brownian_lrt got invalid input\n");
-        return NULL;
-    }
-
-    n = gex->X->nrows;
     Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
     Ls = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
-    jitters = scalloc(n_sigmas, sizeof(double));
-    if (alt_mode == GEX_LRT_ALT_LAMBDA)
-        Sigma_lambdas = scalloc(n_sigmas, sizeof(Matrix *));
 
+    /* Pre-compute reused terms from the covariance matrices */
     for (t = 0; t < n_sigmas; t++) {
-        double max_diag = 0.0;
-
-        if (Sigmas[t] == NULL || Sigmas[t]->nrows != n || Sigmas[t]->ncols != n) {
-            fprintf(stderr, "ERROR: covariance matrix dimensions do not match number of cells for tree %d\n",
-                    t + 1);
-            return NULL;
-        }
-
         Sigma_regs[t] = mat_new(n, n);
+        mat_copy(Sigma_regs[t], Sigmas[t]);
+        mat_add_diag(Sigma_regs[t], eps);   /* Add jitter to the diagonal for numerical stability */
+
+        /* Compute the Cholesky factor of the covariance matrix */
         Ls[t] = mat_new(n, n);
-        if (alt_mode == GEX_LRT_ALT_LAMBDA)
-            Sigma_lambdas[t] = mat_new(n, n);
-
-        for (i = 0; i < n; i++) {
-            double d = mat_get(Sigmas[t], i, i);
-            if (d > max_diag)
-                max_diag = d;
-        }
-        jitters[t] = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
-
-        for (i = 0; i < n; i++) {
-            for (j = 0; j < n; j++)
-                mat_set(Sigma_regs[t], i, j, mat_get(Sigmas[t], i, j));
-            mat_set(Sigma_regs[t], i, i, mat_get(Sigma_regs[t], i, i) + jitters[t]);
-        }
-
-        /* Compute the Chloesky factor and log determinant of the covariance matrix once
-        and store the results */
         if (mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
-            fprintf(stderr, "ERROR: failed to initialize Brownian covariance matrices for LRT tree %d\n",
-                    t + 1);
+            fprintf(stderr, "ERROR: failed cholesky decomposition for LRT tree %d\n", t + 1);
             return NULL;
         }
+
+        /* Get the log determinant of the covariance matrix from the Cholesky diagonal elements */
         for (i = 0; i < n; i++) {
             double diag = mat_get(Ls[t], i, i);
-            if (diag <= 0.0) {
-                fprintf(stderr, "ERROR: invalid Cholesky factor for LRT tree %d\n", t + 1);
-                return NULL;
-            }
-            logdet_sigmas[t] += 2.0 * log(diag);
+            logdet_sigmas[t] += log(diag);
         }
+        logdet_sigmas[t] *= 2.0;
     }
 
-    /* Initialize result structure and temporary vectors for the LRT computation */
+    /* Initialize LRT result object */
     res = scalloc(1, sizeof(GexLRTResult));
     y = smalloc(n * sizeof(double));
-    if (alt_mode == GEX_LRT_ALT_FULL)
-        y_sim = smalloc(n * sizeof(double));
-    res->ll_null = scalloc(gex->X->ncols, sizeof(double));
-    res->ll_alt = scalloc(gex->X->ncols, sizeof(double));
+    res->ll_null = scalloc(n_genes, sizeof(double));
+    res->ll_alt = scalloc(n_genes, sizeof(double));
     if (alt_mode == GEX_LRT_ALT_LAMBDA)
-        res->lambda_hat = scalloc(gex->X->ncols, sizeof(double));
-    res->lrt_stat = scalloc(gex->X->ncols, sizeof(double));
-    res->pvals = scalloc(gex->X->ncols, sizeof(double));
-    res->qvals = scalloc(gex->X->ncols, sizeof(double));
+        res->lambda_hat = scalloc(n_genes, sizeof(double));
+    res->lrt_stat = scalloc(n_genes, sizeof(double));
+    res->pvals = scalloc(n_genes, sizeof(double));
+    res->qvals = scalloc(n_genes, sizeof(double));
     res->alt_mode = alt_mode;
-    res->n_genes = gex->X->ncols;
+    res->n_genes = n_genes;
+
+    /* Center the data */
+    Matrix *X_centered = mat_new(n, n_genes);
+    mat_copy(X_centered, X);
+    mat_center_cols(X_centered);
 
     /* Run the LRT on each gene */
     rng_state = (seed == 0u ? 1u : seed);
-    for (j = 0; j < gex->X->ncols; j++) {
-        double ll_null; /* Log-likelihood under the null model */
-        double ll_alt;  /* Log-likelihood under the alternative model */
-        double *ll_alts; /* Log-likelihoods under the alternative model for each tree */
-        double mu0; /* Mean under the null model (estimated from the data) */
-        double sigma20; /* Variance under the null model (estimated from the data) */
+    double ll_null; /* Log-likelihood under the null model */
+    double ll_alt;  /* Log-likelihood under the alternative model */
+    double *ll_alts = smalloc(n_sigmas * sizeof(double)); /* Log-likelihoods under the alternative model for each tree */
+    double sigma20; /* Variance under the null model (estimated from the data) */
+
+    for (j = 0; j < n_genes; j++) {
 
         /* Extract gene expression data for the current gene across all cells */
         for (i = 0; i < n; i++)
-            y[i] = mat_get(gex->X, i, j);
+            y[i] = mat_get(X_centered, i, j);
 
-        /* Calculate the mean and variance of the gene expression data */
-        calculate_mean_variance(y, n, &mu0, &sigma20);
+        /* Calculate the variance of the gene expression data */
+        sigma20 = 0.0;
+        for (i = 0; i < n; i++)            
+            sigma20 += y[i] * y[i];
+        sigma20 /= (double)n;
 
-        /* Compute the log-likelihood under the null model, which is the same
-        independent of the alternative model */
+        /* Compute the log-likelihood under the null model */
         ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
         res->ll_null[j] = ll_null;
 
         /* Compute the log-likelihood under the alternative model */
-        ll_alts = smalloc(n_sigmas * sizeof(double));
         ll_alt = 0.0;
         if (alt_mode == GEX_LRT_ALT_FULL) {
             for (t = 0; t < n_sigmas; t++) {
-                ll_alts[t] = gex_loglik_centered_gaussian_chol(y,
-                                                            Ls[t],
-                                                            logdet_sigmas[t]);
+                ll_alts[t] = gex_loglik_centered_gaussian_chol(y, Ls[t], logdet_sigmas[t]);
             }
             if (n_sigmas > 1) {
                 ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
@@ -748,9 +692,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
                 double lambda_hat = 0.0;
                 ll_alts[t] = gex_fit_pagels_lambda_loglik(y,
                                                     Sigmas[t],
-                                                    jitters[t],
-                                                    Sigma_lambdas[t],
-                                                    Ls[t],
                                                     &lambda_hat);
                 lambda_hat_sum += lambda_hat;
             }
@@ -770,39 +711,36 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         if (alt_mode == GEX_LRT_ALT_FULL) {
             /* Estimate p-values by simulating data under the null model to
             use a monte carlo estimate. */
+            double *y_sim = smalloc(n * sizeof(double));
             int ge_count = 0;
             int rep;
-            for (rep = 0; rep < n_mc; rep++) {
-                double ll0_sim;
-                double ll1_sim;
-                double stat_sim;
+            for (rep = 0; rep < n_perm; rep++) {
                 for (i = 0; i < n; i++)
                     /* Draw simulated data independently from the null model N(μ0, σ20) */
-                    y_sim[i] = mu0 + sqrt(sigma20) * rand_normal(&rng_state);
-
-                /* Re-calculate the mean and variance of the simulated gene expression data.
-                This is necessary because we only simulate finite samples, so we are not guaranteed
-                to have the generating distribution mean and variance parameters exactly. */
-                calculate_mean_variance(y_sim, n, &mu0, &sigma20);
+                    y_sim[i] = 0 + sqrt(sigma20) * rand_normal(&rng_state);
 
                 /* Compute the log-likelihood under the null model */
-                ll0_sim = gex_loglik_centered_gaussian_identity(n, sigma20);
+                ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
 
                 /* Compute the expected log-likelihood under the alternative model */
-                ll1_sim = 0.0;
                 for (t = 0; t < n_sigmas; t++) {
-                    ll1_sim += gex_loglik_centered_gaussian_chol(y_sim,
-                                                                Ls[t],
-                                                                logdet_sigmas[t]);
+                    ll_alts[t] = gex_loglik_centered_gaussian_chol(y_sim, Ls[t], logdet_sigmas[t]);
                 }
-                ll1_sim /= (double)n_sigmas;
+                if (n_sigmas > 1) {
+                    ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
+                } else {
+                    ll_alt = ll_alts[0];
+                }
 
                 /* Compute the LRT statistic for the simulated data */
-                stat_sim = 2.0 * (ll1_sim - ll0_sim);
+                double stat_sim = 2.0 * (ll_alt - ll_null);
                 if (stat_sim >= res->lrt_stat[j])
                     ge_count++;
             }
-            res->pvals[j] = ((double)ge_count + 1.0) / ((double)n_mc + 1.0);
+            res->pvals[j] = ((double)ge_count) / ((double)n_perm);
+
+            /* Free memory */
+            free(y_sim);
         }
         else {
             /* Under the boundary null lambda = 0, use the standard 50:50
@@ -814,8 +752,12 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
 
     /* Free memory */
-    free(y);
-    free(y_sim);
+    if (y != NULL)
+        free(y);
+    if (ll_alts != NULL)
+        free(ll_alts);
+    if (X_centered != NULL)
+        mat_free(X_centered);
     if (Sigma_regs != NULL) {
         for (t = 0; t < n_sigmas; t++) {
             if (Sigma_regs[t] != NULL)
@@ -830,15 +772,8 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
         }
         free(Ls);
     }
-    if (Sigma_lambdas != NULL) {
-        for (t = 0; t < n_sigmas; t++) {
-            if (Sigma_lambdas[t] != NULL)
-                mat_free(Sigma_lambdas[t]);
-        }
-        free(Sigma_lambdas);
-    }
-    free(logdet_sigmas);
-    free(jitters);
+    if (logdet_sigmas != NULL)
+        free(logdet_sigmas);
 
     return res;
 }
@@ -946,27 +881,16 @@ static int gex_keep_gene(MoranResult *morans,
 
 /* Filter genes based on LRT and Moran's I results 
 to keep only those passing the filter(s) with the 
-given significance and signal strength thresholds.
-Returns a pointer to a new GexMatrix containing only 
-the filtered genes. */
-GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
-                                       MoranResult *morans,
-                                       GexLRTResult *lrt,
-                                       GexFilterMode mode,
-                                       double max_q) {
+given significance threshold. */
+GexMatrix *gex_filter_genes(GexMatrix *gex,
+                            MoranResult *morans,
+                            GexLRTResult *lrt,
+                            GexFilterMode mode,
+                            double max_q) {
     int i, j;   /* Loop indices */
     int out_j = 0;  /* Index for the output matrix */
     int nkeep = 0;  /* Number of genes retained */
     GexMatrix *out = NULL;  /* Output matrix */
-
-    if (gex == NULL)
-        return NULL;
-    if ((mode == GEX_FILTER_MORAN || mode == GEX_FILTER_BOTH) &&
-        (morans == NULL || gex->X->ncols != morans->n_genes))
-        return NULL;
-    if ((mode == GEX_FILTER_LRT || mode == GEX_FILTER_BOTH) &&
-        (lrt == NULL || gex->X->ncols != lrt->n_genes))
-        return NULL;
 
     /* Count how many genes pass the filter(s) to determine the size of the output matrix */
     for (j = 0; j < gex->X->ncols; j++) {

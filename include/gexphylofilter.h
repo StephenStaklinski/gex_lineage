@@ -56,10 +56,10 @@ void write_moran_tsv(const char *filename,
 
 void free_moran_result(MoranResult *res);
 
-GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
+GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
                                        Matrix **Sigmas,
                                        int n_sigmas,
-                                       int n_mc,
+                                       int n_perm,
                                        unsigned int seed,
                                        GexLRTAltMode alt_mode);
 
@@ -70,7 +70,7 @@ void write_lrt_tsv(const char *filename,
                       
 void free_lrt_result(GexLRTResult *res);
 
-GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
+GexMatrix *gex_filter_genes(GexMatrix *gex,
                                        MoranResult *morans,
                                        GexLRTResult *lrt,
                                        GexFilterMode mode,

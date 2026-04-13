@@ -38,6 +38,8 @@ void mat_sqrt_elementwise(Matrix *X);
 
 void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B);
 
+void mat_add_diag(Matrix *X, double val);
+
 Vector *mat_get_diag(Matrix *X);
 
 Vector *mat_row_sums(Matrix *X);

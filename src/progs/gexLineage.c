@@ -135,7 +135,6 @@ int main(int argc, char *argv[]) {
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
     GexMatrix *gex = NULL;  /* Original expression matrix */
-    Matrix * originalGex = NULL; /* Original expression matrix before preprocessing */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
     Matrix *filter_avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
@@ -319,8 +318,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: failed to load expression matrix.\n");
         return 1;
     }
-    originalGex = mat_new(gex->X->nrows, gex->X->ncols);
-    mat_copy(originalGex,gex->X);
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
     if (verbose) {
@@ -340,17 +337,6 @@ int main(int argc, char *argv[]) {
         uniform_rescale_trees(trees, n_trees, tree_total_time);
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
-
-    /* Pre-process the gene expression data */
-    /* Library size normalization per-cell */
-    mat_normalize_rows(gex->X);
-    /* Scale by global factor to counts per 10k */
-    double scale_factor = 10000.0;
-    mat_scale(gex->X, scale_factor);
-    /* Log-transform the data to stabilize variance and approximate Gaussian */
-    mat_log1p(gex->X);
-    /* Transform log-normalized counts into the residuals */
-    mat_center_cols(gex->X);
 
     /* Calculate the phylogenetic covariance matrix for each input tree. */
     Sigmas = scalloc(n_trees, sizeof(Matrix *));
@@ -399,7 +385,7 @@ int main(int argc, char *argv[]) {
 
         /* Run the phylogenetic autocorrelation filter tests if requested */
         if (filter_mode == GEX_FILTER_MORAN) {
-            morans = gex_compute_morans_i(originalGex, filter_Sigmas,
+            morans = gex_compute_morans_i(gex->X, filter_Sigmas,
                                           (n_filter_trees == -1 ? 1 : n_filter_trees));
 
             char corr_path[4096];
@@ -409,7 +395,7 @@ int main(int argc, char *argv[]) {
 
         /* Run the phylogenetic LRT filter tests if requested */
         if (filter_mode == GEX_FILTER_LRT) {
-            lrt = gex_compute_brownian_lrt(gex, filter_Sigmas,
+            lrt = gex_compute_brownian_lrt(gex->X, filter_Sigmas,
                                            (n_filter_trees == -1 ? 1 : n_filter_trees),
                                            n_perms, seed, lrt_alt_mode);
 
@@ -429,7 +415,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* Filter genes based on the results of the correlation and/or LRT test(s) */
-        gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode, max_q);
+        gex_filtered = gex_filter_genes(gex, morans, lrt, filter_mode, max_q);
         if (gex_filtered == NULL) {
             fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
             return 1;
@@ -469,6 +455,17 @@ int main(int argc, char *argv[]) {
         model_Sigmas = Sigmas;
         n_model_trees = n_trees;
     }
+
+    /* Pre-process the gene expression data for modeling */
+    /* Library size normalization per-cell */
+    mat_normalize_rows(gex->X);
+    /* Scale by global factor to counts per 10k */
+    double scale_factor = 10000.0;
+    mat_scale(gex->X, scale_factor);
+    /* Log-transform the data to stabilize variance and approximate Gaussian */
+    mat_log1p(gex->X);
+    /* Transform log-normalized counts into the residuals */
+    mat_center_cols(gex->X);
 
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
