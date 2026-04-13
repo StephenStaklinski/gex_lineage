@@ -137,6 +137,159 @@ void mat_col_shuffle(Matrix *X) {
     }
 }
 
+/* Sum all entries of a Matrix */
+double mat_sum_entries(Matrix *X) {
+    int i, j;
+    double sum = 0.0;
+
+    /* Calculate the sum of all entries */
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            sum += mat_get(X, i, j);
+        }
+    }
+
+    return sum;
+}
+
+/* Sum all squared entries of a Matrix */
+double mat_sum_squared_entries(Matrix *X) {
+    int i, j;
+    double sum = 0.0;
+
+    /* Calculate the sum of all squared entries */
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            sum += val * val;
+        }
+    }
+
+    return sum;
+}
+
+/* Multiply two matrices element-wise (NOT true matrix multiplication)
+and store the result in a third matrix */
+Matrix *mat_mult_elementwise(Matrix *dest, Matrix *A, Matrix *B) {
+    int i, j;
+
+    if (dest == NULL || A == NULL || B == NULL)
+        return NULL;
+
+    if (A->nrows != B->nrows || A->ncols != B->ncols)
+        return NULL;
+
+    for (i = 0; i < A->nrows; i++) {
+        for (j = 0; j < A->ncols; j++) {
+            double val = mat_get(A, i, j) * mat_get(B, i, j);
+            mat_set(dest, i, j, val);
+        }
+    }
+
+    return dest;
+}
+
+/* Square the entries of a matrix element-wise in-place. */
+void mat_square_elementwise(Matrix *X) {
+    int i, j;
+
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            val *= val;
+            mat_set(X, i, j, val);
+        }
+    }
+}
+
+/* Take the square root of the entries of a matrix element-wise 
+in-place. */
+void mat_sqrt_elementwise(Matrix *X) {
+    int i, j;
+
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            val = sqrt(val);
+            mat_set(X, i, j, val);
+        }
+    }
+}
+
+void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B) {
+    int i, j;
+
+    if (dest == NULL || A == NULL || B == NULL)
+        return;
+
+    if (A->nrows != B->nrows || A->ncols != B->ncols)
+        return;
+
+    for (i = 0; i < A->nrows; i++) {
+        for (j = 0; j < A->ncols; j++) {
+            double val = mat_get(A, i, j) / mat_get(B, i, j);
+            mat_set(dest, i, j, val);
+        }
+    }
+}
+
+/* Return a vector containing the diagonal entries of a matrix */
+Vector *mat_get_diag(Matrix *X) {
+    int i, n;
+    Vector *diag;
+
+    n = X->nrows < X->ncols ? X->nrows : X->ncols;
+    diag = vec_new(n);
+
+    for (i = 0; i < n; i++)
+        vec_set(diag, i, mat_get(X, i, i));
+
+    return diag;
+}
+
+/* Return a vector containing the row sums of a matrix */
+Vector *mat_row_sums(Matrix *X) {
+    int i, j;
+    Vector *row_sums;
+
+    row_sums = vec_new(X->nrows);
+    for (i = 0; i < X->nrows; i++) {
+        double sum = 0.0;
+        for (j = 0; j < X->ncols; j++)
+            sum += mat_get(X, i, j);
+        vec_set(row_sums, i, sum);
+    }
+    return row_sums;
+}
+
+/* Return a vector containing the column sums of a matrix */
+Vector *mat_col_sums(Matrix *X) {
+    int i, j;
+    Vector *col_sums;
+
+    col_sums = vec_new(X->ncols);
+    for (j = 0; j < X->ncols; j++) {
+        double sum = 0.0;
+        for (i = 0; i < X->nrows; i++)
+            sum += mat_get(X, i, j);
+        vec_set(col_sums, j, sum);
+    }
+    return col_sums;
+}
+
+/* Return the sum of the squares of the entries in a vector */
+double vec_sum_squared_entries(Vector *v) {
+    int i;
+    double sum = 0.0;
+
+    for (i = 0; i < v->size; i++) {
+        double val = vec_get(v, i);
+        sum += val * val;
+    }
+
+    return sum;
+}
+
 void write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,
                                  char **row_names,

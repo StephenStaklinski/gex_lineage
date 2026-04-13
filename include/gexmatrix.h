@@ -2,6 +2,7 @@
 #define GEXMATRIX_H
 
 #include <phast/matrix.h>
+#include <phast/vector.h>
 
 typedef struct {
     Matrix *X;  /* cells (nrows) x genes (ncols) */
@@ -24,6 +25,26 @@ void mat_center_cols(Matrix *X);
 void mat_standardize_cols(Matrix *X);
 
 void mat_col_shuffle(Matrix *X);
+
+double mat_sum_entries(Matrix *X);
+
+double mat_sum_squared_entries(Matrix *X);
+
+Matrix *mat_mult_elementwise(Matrix *dest, Matrix *A, Matrix *B);
+
+void mat_square_elementwise(Matrix *X);
+
+void mat_sqrt_elementwise(Matrix *X);
+
+void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B);
+
+Vector *mat_get_diag(Matrix *X);
+
+Vector *mat_row_sums(Matrix *X);
+
+Vector *mat_col_sums(Matrix *X);
+
+double vec_sum_squared_entries(Vector *v);
 
 void write_labeled_matrix_tsv(const char *filename,
                                  Matrix *X,

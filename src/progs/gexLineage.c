@@ -408,8 +408,7 @@ int main(int argc, char *argv[]) {
         /* Run the phylogenetic autocorrelation filter tests if requested */
         if (filter_mode == GEX_FILTER_MORAN) {
             morans = gex_compute_morans_i(originalGex, filter_Sigmas,
-                                          (n_filter_trees == -1 ? 1 : n_filter_trees),
-                                          n_perms);
+                                          (n_filter_trees == -1 ? 1 : n_filter_trees));
 
             char corr_path[4096];
             snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);

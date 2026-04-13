@@ -18,6 +18,7 @@ typedef enum {
 
 typedef struct {
     double *morans_i;
+    double *zscores;
     double *pvals;
     double *qvals;
     int n_genes;
@@ -48,8 +49,7 @@ void print_weight_matrix_summary(Matrix *W);
 
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
-                                      int n_sigmas,
-                                      int n_perm);
+                                      int n_sigmas);
 
 void write_moran_tsv(const char *filename,
                          MoranResult *res,

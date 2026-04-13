@@ -324,83 +324,30 @@ static double gex_fit_pagels_lambda_loglik(double *y,
     return -best_fx;
 }
 
-/* Calculate the weight matrix from a phylogenetic covariance matrix.
+/* Calculate the inverse pairwise distance weight matrix from a phylogenetic covariance matrix.
 This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
-Nature Genetics (PMID: 39317739) and is calculated as the element-wise inverse pairwise distance matrix.
-The weight W_ij = 1/(d_ij + eps) where d_ij is the pairwise distance between tips i and j which can be
-calculated from the covariance matrix as d_ij = Sigma_ii + Sigma_jj - 2*Sigma_ij and eps is a small 
-constant to avoid division by zero. The weight matrix is then normalized to sum to 1.
-Returns a pointer to the allocated weight matrix or NULL on failure. */
+Nature Genetics (PMID: 39317739). */
 Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
     int i, j;
     int n;
-    double max_dist = 0.0;
-    double eps;
-    double total = 0.0;
+    double wij;
     Matrix *W = NULL;
-
-    if (Sigma == NULL || Sigma->nrows != Sigma->ncols || Sigma->nrows <= 0) {
-        fprintf(stderr, "ERROR: weight_matrix_from_covariance got invalid input\n");
-        return NULL;
-    }
 
     /* Allocate the weight matrix with the same dimensions as the covariance matrix*/
     n = Sigma->nrows;  
     W = mat_new(n, n);
 
-    /* Calculate the maximum pairwise distance from the covariance matrix to use for setting eps
-    and simultaneously fill the weight matrix with initial pairwise distance values */
     for (i = 0; i < n; i++) {
-        mat_set(W, i, i, 0.0);  /* Set diagonal elements (comparing each tip to itself) to zero pairwise distance */
+        mat_set(W, i, i, 0.0);  /* Set diagonal elements to zero pairwise distance */
         for (j = i + 1; j < n; j++) {
             double dij = mat_get(Sigma, i, i) + mat_get(Sigma, j, j) -
                          (2.0 * mat_get(Sigma, i, j));
 
-            if (dij < 0.0) {
-                fprintf(stderr, "ERROR: covariance implied negative distance\n");
-                mat_free(W);
-                return NULL;
-            }
-
-            /* Handle numerical precision issues */
-            if (dij < 0.0 && fabs(dij) < 1e-12)
-                dij = 0.0;
-            
-            /* Update the maximum distance for setting relative eps */
-            if (dij > max_dist)
-                max_dist = dij;
-
-            /* Store the pairwise distance in the weight matrix temporarily for now, will convert to weights after setting eps */
-            mat_set(W, i, j, dij);
-            mat_set(W, j, i, dij);
-        }
-    }
-
-    /* Set the epsilon value as a relative tolerance based on the maximum distance */
-    eps = (max_dist > 0.0 ? 1e-8 * max_dist : 1e-8);
-
-    /* Fill the weight matrix */
-    for (i = 0; i < n; i++) {
-        mat_set(W, i, i, 0.0);
-        for (j = i + 1; j < n; j++) {
-            double dij = mat_get(W, i, j);
-            double wij = 1.0 / (dij + eps);
+            /* Set the weight as the inverse pairwise distance */
+            wij = 1.0 / dij;
             mat_set(W, i, j, wij);
             mat_set(W, j, i, wij);
-            total += 2.0 * wij;
         }
-    }
-
-    if (total <= 0.0) {
-        fprintf(stderr, "ERROR: weight matrix normalization failed\n");
-        mat_free(W);
-        return NULL;
-    }
-
-    /* Normalize the weight matrix to sum to 1 */
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < n; j++)
-            mat_set(W, i, j, mat_get(W, i, j) / total);
     }
 
     return W;
@@ -425,29 +372,25 @@ void print_weight_matrix_summary(Matrix *W) {
     printf("\n");
 }
 
+/* Compute Moran's I-based phylogenetic autocorrelation for each 
+gene in the expression matrix. This function is written to match 
+the xcor function from the R package PATH by Schiffman et al. 
+2024 Nature Genetics (PMID: 39317739). 
 
-/* Compute Moran's I for each gene in the expression matrix.
-Moran's I is a measure of spatial autocorrelation, which is
-calculated here as the expectation over trees of Z^T * W_t * Z,
-where z is the column-wise standardized gene expression matrix and
-W_t is derived internally from the Brownian covariance matrix Sigma_t.
-Returns a pointer to the result structure. */
+Note: There is inefficiency in the implementation below
+since only diagonal elements are used for the final statistic, but the full 
+matrix is computed in several places. I am leaving this as is to match PATH
+exactly, but it could be optimized in the future.
+*/
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
-                                      int n_sigmas,
-                                      int n_perm) {
-    int j, k, t;
-    int n_cells = X->nrows;
+                                      int n_sigmas) {
+    int j, t;
+    int n = X->nrows;
     int n_genes = X->ncols;
+    double w;
     Matrix *per_W = NULL;   /* Weight matrix temp for each covariance matrix */
-    Matrix *W = mat_new(n_cells, n_cells);   /* Expected weight matrix across trees */
-    Matrix *B = mat_new(n_cells, n_genes);   /* Intermediate matrix for E[W] * Z */
-    Matrix *Z = mat_new(n_cells, n_genes);   /* Standardized gene expression matrix */
-    Matrix *Zt = mat_new(n_genes, n_cells);  /* Transpose of Z for computing Z^T * B */
-    Matrix *corr = mat_new(n_genes, n_genes);    /* Moran's I correlation matrix */
-    MoranResult *res = scalloc(1, sizeof(MoranResult));    /* Result structure for Moran's I computation */
-    Matrix *permZ = mat_new(n_cells, n_genes);   /* Temp matrix to hold permuted columns */
-    Vector *gene_perm_counts = vec_new(n_genes); /* Array to count permutations for each gene */
+    Matrix *W = mat_new(n, n);   /* Expected weight matrix across trees */
 
     /* Get the E[W] (expected weight matrix) from the covariance matrices */
     mat_zero(W);
@@ -458,50 +401,180 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         per_W = NULL;
     }
     mat_scale(W, 1.0 / (double)n_sigmas);
+    /* Normalize all entries to sum to 1 */
+    w = mat_sum_entries(W);
+    mat_scale(W, 1.0 / w);
+    w = mat_sum_entries(W);  /* Recompute w after scaling to sum to 1 for use in variance calculations */
 
-    /* Normalize the gene expression matrix */
-    mat_copy(Z, X);
-    mat_standardize_cols(Z);
+    /* Free memory */
+    if (per_W != NULL)
+        mat_free(per_W);
 
-    /* Compute B = E[W * Z] as B = E[W] * Z */
-    mat_mult(B, W, Z);
+    /* Center genes */
+    Matrix *d0 = mat_new(n, n_genes);
+    mat_copy(d0, X);
+    mat_center_cols(d0);
 
-    /* Compute the Moran's I correlation matrix from Z^T x B */
-    mat_trans(Zt, Z);
-    mat_mult(corr, Zt, B);
+    /* Compute the covariance matrix of genes */
+    Matrix *d0t = mat_new(n_genes, n);
+    mat_trans(d0t, d0);
+    Matrix *d1 = mat_new(n_genes, n_genes);
+    mat_mult(d1, d0t, d0);
+    mat_scale(d1, 1.0 / (double)n);
+
+    Vector *d1_diag = mat_get_diag(d1);
+    Matrix *d1_2 = mat_new(n_genes, n_genes);
+    vec_outer_prod(d1_2, d1_diag, d1_diag);
+    Matrix *d1_2_sqrt = mat_new(n_genes, n_genes);
+    mat_copy(d1_2_sqrt, d1_2);
+    mat_sqrt_elementwise(d1_2_sqrt);
+
+    /* Free memory */
+    if (d1 != NULL)
+        mat_free(d1);
+    if (d1_diag != NULL)
+        vec_free(d1_diag);
+    if (d1_2 != NULL)
+        mat_free(d1_2);
+
+    /* Unused code from PATH xcor function (?) */
+    // /* Compute the matrix of cross-products of squared centered gene values. */
+    // Matrix *d0squared = mat_new(n, n_genes);
+    // mat_copy(d0squared, d0);
+    // mat_square_elementwise(d0squared);
+    // Matrix *d0squaredt = mat_new(n_genes, n);
+    // mat_trans(d0squaredt, d0squared);
+    // Matrix *d2 = mat_new(n_genes, n_genes);
+    // mat_mult(d2, d0squaredt, d0squared);
+    // mat_scale(d2, 1.0 / (double)n);
+
+    // /* Free memory */
+    // if (d0squared != NULL)
+    //     mat_free(d0squared);
+    // if (d0squaredt != NULL)
+    //     mat_free(d0squaredt);
+    // if (d2 != NULL)
+    //     mat_free(d2);
+
+    /* Sum of all elements in W^T * W */
+    Matrix *Wt = mat_new(n, n);
+    mat_trans(Wt, W);
+    Matrix *WtW = mat_new(n, n);
+    mat_mult_elementwise(WtW, Wt, W);
+    double S3 = mat_sum_entries(WtW);   /* Might be the same at S4 since W is symmetric (?) */
+
+    /* Free memory */
+    if (Wt != NULL)
+        mat_free(Wt);
+    if (WtW != NULL)
+        mat_free(WtW);
+
+    /* Sum of squared W elements */
+    double S4 = mat_sum_squared_entries(W);
+
+    /* Sum of all elements in W*W */
+    Matrix *WW = mat_new(n, n);
+    mat_mult(WW, W, W);
+    double S5 = mat_sum_entries(WW);
+
+    /* Free memory */
+    if (WW != NULL)
+        mat_free(WW);
+
+    /* Sum of rowSum and colSum from W */
+    Vector *WrowSums = mat_row_sums(W);
+    double sum_WrowSums_squared = vec_sum_squared_entries(WrowSums);
+    Vector *WcolSums = mat_col_sums(W);
+    double sum_WcolSums_squared = vec_sum_squared_entries(WcolSums);    /* Maybe the same as sum_WrowSums_squared if W is symmetric (?) */
+    double S6 = sum_WrowSums_squared + sum_WcolSums_squared;
+
+    /* Free memory */
+    if (WrowSums != NULL)
+        vec_free(WrowSums);
+    if (WcolSums != NULL)
+        vec_free(WcolSums);
+
+    double S1 = S3 + S4;
+    double S2 = 2.0 * S5 + S6;
+
+    /* Calculate the Moran's I correlation matrix */
+    Matrix *B = mat_new(n, n_genes);   /* Intermediate matrix for E[W] * Z */
+    mat_mult(B, W, d0);
+    Matrix *Iraw = mat_new(n_genes, n_genes);
+    mat_mult(Iraw, d0t, B);
+    Matrix *I = mat_new(n_genes, n_genes);
+    mat_div_elementwise(I, Iraw, d1_2_sqrt);
+
+    /* Free memory */
+    if (d0t != NULL)
+        mat_free(d0t);
+    if (B != NULL)
+        mat_free(B);
+
+    /* Get the expected statistic under the null */
+    double E_I2 = -(1.0 / (double)(n - 1));
+
+    /* Get the variance terms for each gene */
+    double A = 2.0 * (w * w - S2 + S1)
+             + (2.0 * S3 - 2.0 * S5) * (n - 3)
+             + S3 * (n - 2) * (n - 3);
+
+    double Bterm = 6.0 * (w * w - S2 + S1)
+                 + (4.0 * S1 - 2.0 * S2) * (n - 3)
+                 + S1 * (n - 2) * (n - 3);
+
+    double Cterm = (w * w - S2 + S1)
+                 + (2.0 * S4 - S6) * (n - 3)
+                 + S4 * (n - 2) * (n - 3);
+
+    double denom = (double)(n - 1) * (n - 2) * (n - 3) * (w * w);
+
+    double *Vjs = smalloc(n_genes * sizeof(double));
+
+    for (j = 0; j < n_genes; j++) {
+        int i;
+        double ss2 = 0.0;
+        double ss4 = 0.0;
+        double d1j, d2j;
+
+        for (i = 0; i < n; i++) {
+            double z = mat_get(d0, i, j);
+            double z2 = z * z;
+            ss2 += z2;
+            ss4 += z2 * z2;
+        }
+
+        d1j = ss2 / (double)n;
+        d2j = ss4 / (double)n;
+
+        if (d1j <= 0.0 || denom <= 0.0) {
+            Vjs[j] = 0.0;
+            continue;
+        }
+
+        Vjs[j] = (n * A
+                  - (d2j / (d1j * d1j)) * Bterm
+                  + n * Cterm) / denom
+               - 1.0 / ((double)(n - 1) * (n - 1));
+
+        if (!isfinite(Vjs[j]) || Vjs[j] <= 0.0)
+            Vjs[j] = 0.0;
+    }
 
     /* Setup result structure */
+    MoranResult *res = scalloc(1, sizeof(MoranResult));
     res->n_genes = n_genes;
     res->morans_i = scalloc(n_genes, sizeof(double));
-    for (j = 0; j < n_genes; j++) {
-        res->morans_i[j] = mat_get(corr, j, j);
-    }
     res->pvals = scalloc(n_genes, sizeof(double));
     res->qvals = scalloc(n_genes, sizeof(double));
+    res->zscores = scalloc(n_genes, sizeof(double));
 
-    /* Run permutation tests to get Monte Carlo p-values */
-    vec_zero(gene_perm_counts);
-
-    for (k = 0; k < n_perm; k++) {
-        mat_copy(permZ, Z);
-        mat_col_shuffle(permZ);
-        mat_mult(B, W, permZ);
-        mat_trans(Zt, permZ);
-        mat_mult(corr, Zt, B);
-
-        double perm_i;
-        double curr_count;
-        for (j = 0; j < n_genes; j++) {
-            perm_i = mat_get(corr, j, j);
-            if (perm_i >= res->morans_i[j]) {
-                curr_count = vec_get(gene_perm_counts, j);
-                vec_set(gene_perm_counts, j, curr_count + 1.0);
-            }
-        }
-    }
-
+    /* Copy the diagonal statistic and compute analytical p-values
+    from z-scores */
     for (j = 0; j < n_genes; j++) {
-        res->pvals[j] = vec_get(gene_perm_counts, j) / (double)n_perm;
+        res->morans_i[j] = mat_get(I, j, j);
+        res->zscores[j] = (res->morans_i[j] - E_I2) / sqrt(Vjs[j]);
+        res->pvals[j] = erfc(fabs(res->zscores[j]) / sqrt(2.0));
     }
 
     /* Adjust p-values for multiple testing and count significant genes */
@@ -509,23 +582,15 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     res->n_significant = gex_count_kept_genes(res, 0.05, 0.0);
 
     /* Free memory */
-    if (permZ != NULL)
-        mat_free(permZ);
-    if (gene_perm_counts != NULL)
-        vec_free(gene_perm_counts);
-    if (Z != NULL)
-        mat_free(Z);
-    if (Zt != NULL)
-        mat_free(Zt);
-    if (per_W != NULL)
-        mat_free(per_W);
     if (W != NULL)
         mat_free(W);
-    if (B != NULL)
-        mat_free(B);
-    if (corr != NULL)
-        mat_free(corr);
-    
+    if (d0 != NULL)
+        mat_free(d0);
+    if (I != NULL)
+        mat_free(I);
+    if (Vjs != NULL)
+        free(Vjs);
+
     return res;
 }
 
@@ -539,12 +604,13 @@ void write_moran_tsv(const char *filename,
     FILE *out;
 
     out = fopen(filename, "w");
-    fprintf(out, "gene\tmorans_I\tp_value\tq_value\tkeep\n");
+    fprintf(out, "gene\tphy_cor\tz_score\tp_value\tpadj\tkeep\n");
     for (i = 0; i < res->n_genes; i++) {
         int keep = (res->qvals[i] <= max_q && res->morans_i[i] > min_i);
-        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%s\n",
+        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
                 gex->gene_names[i],
                 res->morans_i[i],
+                res->zscores[i],
                 res->pvals[i],
                 res->qvals[i],
                 (keep ? "True" : "False"));
@@ -845,6 +911,8 @@ void free_moran_result(MoranResult *res) {
         return;
     if (res->morans_i != NULL)
         free(res->morans_i);
+    if (res->zscores != NULL)
+        free(res->zscores);
     if (res->pvals != NULL)
         free(res->pvals);
     if (res->qvals != NULL)
