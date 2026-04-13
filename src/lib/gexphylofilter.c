@@ -65,30 +65,6 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
     free(pairs);
 }
 
-static int gex_count_kept_genes(MoranResult *res, double max_q, double min_i) {
-    int j;
-    int nkeep = 0;
-
-    for (j = 0; j < res->n_genes; j++) {
-        if (res->qvals[j] <= max_q && res->morans_i[j] > min_i)
-            nkeep++;
-    }
-
-    return nkeep;
-}
-
-static int gex_count_kept_lrt_genes(GexLRTResult *res, double max_q) {
-    int j;
-    int nkeep = 0;
-
-    for (j = 0; j < res->n_genes; j++) {
-        if (res->qvals[j] <= max_q && res->lrt_stat[j] > 0.0)
-            nkeep++;
-    }
-
-    return nkeep;
-}
-
 static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
     return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
 }
@@ -377,10 +353,10 @@ gene in the expression matrix. This function is written to match
 the xcor function from the R package PATH by Schiffman et al. 
 2024 Nature Genetics (PMID: 39317739). 
 
-Note: There is inefficiency in the implementation below
-since only diagonal elements are used for the final statistic, but the full 
-matrix is computed in several places. I am leaving this as is to match PATH
-exactly, but it could be optimized in the future.
+Note: There were some inifficiencies in the PATH implementation
+for which some of them I have fixed here. I left commented code for the exact
+match to the original code. There are still inefficiencies left behind
+to fix in the future if a fully optimized version is needed.
 */
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
@@ -404,7 +380,7 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     /* Normalize all entries to sum to 1 */
     w = mat_sum_entries(W);
     mat_scale(W, 1.0 / w);
-    w = mat_sum_entries(W);  /* Recompute w after scaling to sum to 1 for use in variance calculations */
+    w = 1.0;  /* W was already normalized to sum to 1 */
 
     /* Free memory */
     if (per_W != NULL)
@@ -437,7 +413,7 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     if (d1_2 != NULL)
         mat_free(d1_2);
 
-    /* Unused code from PATH xcor function (?) */
+    /* Unused code from PATH, retained but commented out here */
     // /* Compute the matrix of cross-products of squared centered gene values. */
     // Matrix *d0squared = mat_new(n, n_genes);
     // mat_copy(d0squared, d0);
@@ -456,21 +432,25 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     // if (d2 != NULL)
     //     mat_free(d2);
 
-    /* Sum of all elements in W^T * W */
-    Matrix *Wt = mat_new(n, n);
-    mat_trans(Wt, W);
-    Matrix *WtW = mat_new(n, n);
-    mat_mult_elementwise(WtW, Wt, W);
-    double S3 = mat_sum_entries(WtW);   /* Might be the same at S4 since W is symmetric (?) */
+    /* Unnecessary S3 calculation from PATH, retained but commented out here.
+    Simpler calculation below for S4 which is equivalent to S3 here since W 
+    is symmetric */
+    // /* Sum of all elements in W^T * W */
+    // Matrix *Wt = mat_new(n, n);
+    // mat_trans(Wt, W);
+    // Matrix *WtW = mat_new(n, n);
+    // mat_mult_elementwise(WtW, Wt, W);
+    // double S3 = mat_sum_entries(WtW);
 
-    /* Free memory */
-    if (Wt != NULL)
-        mat_free(Wt);
-    if (WtW != NULL)
-        mat_free(WtW);
+    // /* Free memory */
+    // if (Wt != NULL)
+    //     mat_free(Wt);
+    // if (WtW != NULL)
+    //     mat_free(WtW);
 
     /* Sum of squared W elements */
     double S4 = mat_sum_squared_entries(W);
+    double S3 = S4; /* Same as S4 since W is symmetric, original calculation code commented out above */
 
     /* Sum of all elements in W*W */
     Matrix *WW = mat_new(n, n);
@@ -484,15 +464,16 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     /* Sum of rowSum and colSum from W */
     Vector *WrowSums = mat_row_sums(W);
     double sum_WrowSums_squared = vec_sum_squared_entries(WrowSums);
-    Vector *WcolSums = mat_col_sums(W);
-    double sum_WcolSums_squared = vec_sum_squared_entries(WcolSums);    /* Maybe the same as sum_WrowSums_squared if W is symmetric (?) */
-    double S6 = sum_WrowSums_squared + sum_WcolSums_squared;
+    // Vector *WcolSums = mat_col_sums(W);
+    // double sum_WcolSums_squared = vec_sum_squared_entries(WcolSums);
+    // double S6 = sum_WrowSums_squared + sum_WcolSums_squared;
+    double S6 = 2.0 * sum_WrowSums_squared; /* Same as sum_WcolSums_squared since W is symmetric, original calculation code commented out above */
 
     /* Free memory */
     if (WrowSums != NULL)
         vec_free(WrowSums);
-    if (WcolSums != NULL)
-        vec_free(WcolSums);
+    // if (WcolSums != NULL)
+    //     vec_free(WcolSums);
 
     double S1 = S3 + S4;
     double S2 = 2.0 * S5 + S6;
@@ -579,7 +560,6 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 
     /* Adjust p-values for multiple testing and count significant genes */
     gex_bh_adjust(res->pvals, res->qvals, n_genes);
-    res->n_significant = gex_count_kept_genes(res, 0.05, 0.0);
 
     /* Free memory */
     if (W != NULL)
@@ -598,15 +578,14 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 void write_moran_tsv(const char *filename,
                          MoranResult *res,
                          GexMatrix *gex,
-                         double max_q,
-                         double min_i) {
+                         double max_q) {
     int i;
     FILE *out;
 
     out = fopen(filename, "w");
     fprintf(out, "gene\tphy_cor\tz_score\tp_value\tpadj\tkeep\n");
     for (i = 0; i < res->n_genes; i++) {
-        int keep = (res->qvals[i] <= max_q && res->morans_i[i] > min_i);
+        int keep = (res->qvals[i] <= max_q);
         fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
                 gex->gene_names[i],
                 res->morans_i[i],
@@ -833,7 +812,6 @@ GexLRTResult *gex_compute_brownian_lrt(GexMatrix *gex,
     }
 
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
-    res->n_significant = gex_count_kept_lrt_genes(res, 0.05);   /* Number of significant genes to keep*/
 
     /* Free memory */
     free(y);
@@ -921,7 +899,7 @@ void free_moran_result(MoranResult *res) {
     free(res);
 }
 
-void gex_free_lrt_result(GexLRTResult *res) {
+void free_lrt_result(GexLRTResult *res) {
     if (res == NULL)
         return;
 
@@ -946,15 +924,13 @@ static int gex_keep_gene(MoranResult *morans,
                          GexLRTResult *lrt,
                          int gene_idx,
                          GexFilterMode mode,
-                         double max_q,
-                         double min_i) {
+                         double max_q) {
     int keep_moran = 0; /* Flag indicating if the gene passes the Moran's I filter */
     int keep_lrt = 0;   /* Flag indicating if the gene passes the LRT filter */
 
     /* Apply the filters based on if the provided objects are not NULL */
     if (morans != NULL)
-        keep_moran = (morans->qvals[gene_idx] <= max_q &&
-                      morans->morans_i[gene_idx] > min_i);
+        keep_moran = (morans->qvals[gene_idx] <= max_q);
     if (lrt != NULL)
         keep_lrt = (lrt->qvals[gene_idx] <= max_q &&
                     lrt->lrt_stat[gene_idx] > 0.0);
@@ -977,8 +953,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                                        MoranResult *morans,
                                        GexLRTResult *lrt,
                                        GexFilterMode mode,
-                                       double max_q,
-                                       double min_i) {
+                                       double max_q) {
     int i, j;   /* Loop indices */
     int out_j = 0;  /* Index for the output matrix */
     int nkeep = 0;  /* Number of genes retained */
@@ -995,7 +970,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
 
     /* Count how many genes pass the filter(s) to determine the size of the output matrix */
     for (j = 0; j < gex->X->ncols; j++) {
-        if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i))
+        if (gex_keep_gene(morans, lrt, j, mode, max_q))
             nkeep++;
     }
     if (nkeep <= 0) {
@@ -1020,7 +995,7 @@ GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
 
     /* Fill the output matrix with passing genes  */
     for (j = 0; j < gex->X->ncols; j++) {
-        if (gex_keep_gene(morans, lrt, j, mode, max_q, min_i)) {
+        if (gex_keep_gene(morans, lrt, j, mode, max_q)) {
             /* Copy gene name that passed the filter(s) */
             out->gene_names[out_j] = strdup(gex->gene_names[j]);
             if (out->gene_names[out_j] == NULL) {

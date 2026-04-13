@@ -123,7 +123,6 @@ int main(int argc, char *argv[]) {
     int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
-    double moran_min_i = 0.0;   /* Minimum Moran's I value for retention during filtering */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double l2_strength = 1e-3;  /* L2 regularization strength for loadings; 0 disables the penalty. */
@@ -240,13 +239,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             max_q = atof(argv[++i]);
-        }
-        else if (strcmp(argv[i], "--moran-min-i") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            moran_min_i = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
@@ -412,7 +404,7 @@ int main(int argc, char *argv[]) {
 
             char corr_path[4096];
             snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
-            write_moran_tsv(corr_path, morans, gex, max_q, moran_min_i);
+            write_moran_tsv(corr_path, morans, gex, max_q);
         }
 
         /* Run the phylogenetic LRT filter tests if requested */
@@ -437,8 +429,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* Filter genes based on the results of the correlation and/or LRT test(s) */
-        gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode,
-                                                   max_q, moran_min_i);
+        gex_filtered = gex_filter_genes_by_results(gex, morans, lrt, filter_mode, max_q);
         if (gex_filtered == NULL) {
             fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
             return 1;
@@ -509,7 +500,7 @@ int main(int argc, char *argv[]) {
     gex_free_matrix_data(gex);
     gex_free_matrix_data(gex_filtered);
     free_moran_result(morans);
-    gex_free_lrt_result(lrt);
+    free_lrt_result(lrt);
     free_pca(pca);
     gex_free_latent_brownian_model(model);
     if (Sigmas != NULL) {

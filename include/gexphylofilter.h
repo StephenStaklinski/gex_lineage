@@ -22,7 +22,6 @@ typedef struct {
     double *pvals;
     double *qvals;
     int n_genes;
-    int n_significant;
 } MoranResult;
 
 typedef struct {
@@ -34,7 +33,6 @@ typedef struct {
     double *qvals;
     GexLRTAltMode alt_mode;
     int n_genes;
-    int n_significant;
 } GexLRTResult;
 
 typedef enum {
@@ -54,8 +52,7 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 void write_moran_tsv(const char *filename,
                          MoranResult *res,
                          GexMatrix *gex,
-                         double max_q,
-                         double min_i);
+                         double max_q);
 
 void free_moran_result(MoranResult *res);
 
@@ -71,13 +68,12 @@ void write_lrt_tsv(const char *filename,
                       GexMatrix *gex,
                       double max_q);
                       
-void gex_free_lrt_result(GexLRTResult *res);
+void free_lrt_result(GexLRTResult *res);
 
 GexMatrix *gex_filter_genes_by_results(GexMatrix *gex,
                                        MoranResult *morans,
                                        GexLRTResult *lrt,
                                        GexFilterMode mode,
-                                       double max_q,
-                                       double min_i);
+                                       double max_q);
 
 #endif
