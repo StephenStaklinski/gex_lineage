@@ -368,79 +368,46 @@ static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
     return -0.5 * ((double)n * (log(2.0 * M_PI * sigma2) + 1.0));
 }
 
-/* Compute the log-likelihood of y under N(mu 1, sigma2 * Sigma),
-   profiling out mu and sigma2, using the Cholesky factor L of Sigma. */
+/* Compute the profiled log-likelihood of y under y ~ N(mu * 1, sigma2 * Sigma),
+where mu and sigma2 are estimated by MLE, using the Cholesky factor L of Sigma. */
 static double gex_loglik_centered_gaussian_chol(double *y,
                                                 Matrix *L,
                                                 double logdet_sigma) {
-    int i, n;
-    Vector *ones = NULL;
-    Vector *yvec = NULL;
-    Vector *tmp = NULL;
-    Vector *Sinv1 = NULL;
-    Vector *Sinvy = NULL;
-    Vector *resid = NULL;
-    Vector *Sinv_resid = NULL;
-    double ones_Sinv_ones = 0.0;
-    double ones_Sinv_y = 0.0;
-    double quad = 0.0;
-    double muhat;
-    double sigma2;
-    double ll;
-
-    n = L->nrows;
-
-    if (n != L->ncols)
-        return NAN;
-
-    ones = vec_new(n);
-    yvec = vec_new(n);
-    tmp = vec_new(n);
-    Sinv1 = vec_new(n);
-    Sinvy = vec_new(n);
-    resid = vec_new(n);
-    Sinv_resid = vec_new(n);
-
-    for (i = 0; i < n; i++) {
-        vec_set(ones, i, 1.0);
-        vec_set(yvec, i, y[i]);
-    }
-
-    /* Solve Sigma * Sinv1 = 1 via L tmp = 1, then L^T Sinv1 = tmp */
-    mat_forward_subst(L, ones, tmp);
-    mat_backward_subst(L, tmp, Sinv1);
-
-    /* Solve Sigma * Sinvy = y via L tmp = y, then L^T Sinvy = tmp */
-    mat_forward_subst(L, yvec, tmp);
-    mat_backward_subst(L, tmp, Sinvy);
-
-    for (i = 0; i < n; i++) {
-        ones_Sinv_ones += vec_get(Sinv1, i);
-        ones_Sinv_y += vec_get(Sinvy, i);
-    }
-
-    if (ones_Sinv_ones <= 0.0)
-        return NAN;
+    int i;
+    int n = L->nrows;
+    Vector *ones = vec_new(n);
+    vec_set_all(ones, 1.0);
+    Vector *yvec = vec_new_from_array(y, n);
+    Vector *tmp = vec_new(n);
+    Vector *Sinv1 = vec_new(n);
+    Vector *Sinvy = vec_new(n);
+    Vector *resid = vec_new(n);
+    Vector *Sinv_resid = vec_new(n);
 
     /* GLS estimate of the mean */
-    muhat = ones_Sinv_y / ones_Sinv_ones;
+    mat_forward_subst(L, ones, tmp);
+    mat_backward_subst(L, tmp, Sinv1);
+    mat_forward_subst(L, yvec, tmp);
+    mat_backward_subst(L, tmp, Sinvy);
+    double muhat = vec_sum(Sinvy) / vec_sum(Sinv1);
 
+    /* Compute residuals and solve for sigma2 */
     for (i = 0; i < n; i++)
         vec_set(resid, i, y[i] - muhat);
 
-    /* Solve Sigma * Sinv_resid = resid via L tmp = resid, then L^T Sinv_resid = tmp */
     mat_forward_subst(L, resid, tmp);
     mat_backward_subst(L, tmp, Sinv_resid);
 
-    /* quad = resid^T Sigma^{-1} resid */
+    double quad = 0.0;
     for (i = 0; i < n; i++)
         quad += vec_get(resid, i) * vec_get(Sinv_resid, i);
 
-    sigma2 = quad / (double)n;
+    double sigma2 = quad / (double)n;
     if (sigma2 < 1e-12)
         sigma2 = 1e-12;
 
-    ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
+    /* Compute the log-likelihood */
+    double ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
                  logdet_sigma +
                  (double)n);
     
@@ -513,8 +480,6 @@ Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
 static double gex_fit_pagels_lambda_loglik(double *y,
                                            Matrix *Sigma,
                                            double *lambda_hat) {
-    int status;  /* Loop index and optimization status */
-    double lambda;  /* Parameter for Pagel's lambda */
     double fx;  /* Objective function value */
     double fx0; /* Objective function value at lambda = 0 (null model) */
     double fx1; /* Objective function value at lambda = 1 (full model) */
@@ -528,47 +493,46 @@ static double gex_fit_pagels_lambda_loglik(double *y,
     data.Sigma_lambda = mat_new(Sigma->nrows, Sigma->ncols);  /* Lambda-transformed covariance matrix for optimization */
     data.L = mat_new(Sigma->nrows, Sigma->ncols);  /* Cholesky factor for optimization */
 
-    /* Explicitly evaluate both boundaries because lambda is allowed to sit on
-    the edge of the parameter space and the mixture null depends on that case. */
+    /* Explicitly evaluate both boundaries */
     fx0 = gex_pagels_lambda_negloglik(0.0, &data);
     fx1 = gex_pagels_lambda_negloglik(1.0, &data);
     if (fx0 <= fx1) {
         best_fx = fx0;
         best_lambda = 0.0;
-    }
-    else {
+    } else {
         best_fx = fx1;
         best_lambda = 1.0;
     }
 
-    /* Evaluate the objective function starting at an interior point */
-    lambda = 0.5;
-    fx = gex_pagels_lambda_negloglik(lambda, &data);
-
-    /* Optimize the objective function using Newton's method */
-    status = opt_newton_1d(gex_pagels_lambda_negloglik,
-                           &lambda,
-                           &data,
-                           &fx,
-                           6,
-                           0.0,
-                           1.0,
-                           NULL,
-                           NULL,
-                           NULL);
-
-    /* If the optimizer converges to a finite value that is better than the boundary values, update the best solution */
-    if (isfinite(fx) && fx < best_fx) {
-        best_fx = fx;
-        best_lambda = lambda;
+    /* Only run Brent if the midpoint is lower than both boundaries,
+    which is required for a valid bracket */
+    double fx_mid = gex_pagels_lambda_negloglik(0.5, &data);
+    if (fx_mid < fx0 && fx_mid < fx1) {
+        double tol = 1e-4;
+        double xmin = 0.5;
+        fx = opt_brent(0.0, 0.5, 1.0,
+                       gex_pagels_lambda_negloglik,
+                       tol,
+                       &xmin,
+                       &data,
+                       NULL);
+        if (isfinite(fx) && fx < best_fx) {
+            best_fx = fx;
+            best_lambda = xmin;
+        }
     }
 
-    /* If the optimizer does not fully converge, still retain the best valid
-    value found among the boundary and interior evaluations. */
-    if (status != 0 && !isfinite(best_fx))
+    if (!isfinite(best_fx))
         return -HUGE_VAL;
 
     *lambda_hat = best_lambda;
+
+    /* Free memory */
+    if (data.Sigma_lambda != NULL)
+        mat_free(data.Sigma_lambda);
+    if (data.L != NULL)
+        mat_free(data.L);
+
     return -best_fx;
 }
 
@@ -611,6 +575,10 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
     Ls = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
+
+    double *y_sim;
+    if (alt_mode == GEX_LRT_ALT_FULL)
+        y_sim = smalloc(n * sizeof(double));
 
     /* Pre-compute reused terms from the covariance matrices */
     for (t = 0; t < n_sigmas; t++) {
@@ -711,16 +679,23 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         if (alt_mode == GEX_LRT_ALT_FULL) {
             /* Estimate p-values by simulating data under the null model to
             use a monte carlo estimate. */
-            double *y_sim = smalloc(n * sizeof(double));
             int ge_count = 0;
             int rep;
+            double sqrt_sigma20 = sqrt(sigma20);
+            double sigma20_sim;
             for (rep = 0; rep < n_perm; rep++) {
                 for (i = 0; i < n; i++)
                     /* Draw simulated data independently from the null model N(μ0, σ20) */
-                    y_sim[i] = 0 + sqrt(sigma20) * rand_normal(&rng_state);
+                    y_sim[i] = 0 + sqrt_sigma20 * rand_normal(&rng_state);
+                
+                /* Recalculate the variance of the simulated data */
+                sigma20_sim = 0.0;
+                for (i = 0; i < n; i++)
+                    sigma20_sim += y_sim[i] * y_sim[i];
+                sigma20_sim /= (double)n;
 
                 /* Compute the log-likelihood under the null model */
-                ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
+                ll_null = gex_loglik_centered_gaussian_identity(n, sigma20_sim);
 
                 /* Compute the expected log-likelihood under the alternative model */
                 for (t = 0; t < n_sigmas; t++) {
@@ -738,9 +713,6 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
                     ge_count++;
             }
             res->pvals[j] = ((double)ge_count) / ((double)n_perm);
-
-            /* Free memory */
-            free(y_sim);
         }
         else {
             /* Under the boundary null lambda = 0, use the standard 50:50
@@ -754,6 +726,8 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     /* Free memory */
     if (y != NULL)
         free(y);
+    if (alt_mode == GEX_LRT_ALT_FULL && y_sim != NULL)
+        free(y_sim);
     if (ll_alts != NULL)
         free(ll_alts);
     if (X_centered != NULL)
