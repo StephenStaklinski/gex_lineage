@@ -41,7 +41,7 @@ typedef enum {
     GEX_FILTER_BOTH = 2
 } GexFilterMode;
 
-Matrix *weight_matrix_from_covariance(Matrix *Sigma);
+void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma);
 
 void print_weight_matrix_summary(Matrix *W);
 

@@ -65,33 +65,26 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
     free(pairs);
 }
 
-/* Calculate the inverse pairwise distance weight matrix from a phylogenetic covariance matrix.
-This weight matrix approach is based on the PATH method by Schiffman et al. 2024 
-Nature Genetics (PMID: 39317739). */
-Matrix *weight_matrix_from_covariance(Matrix *Sigma) {
+/* Calculate the inverse pairwise distance weight matrix from a phylogenetic 
+covariance matrix. This weight matrix approach is based on the PATH method 
+by Schiffman et al. 2024 Nature Genetics (PMID: 39317739). */
+void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma) {
     int i, j;
-    int n;
+    int n = Sigma->nrows; 
+    double Sii;
+    double dij;
     double wij;
-    Matrix *W = NULL;
-
-    /* Allocate the weight matrix with the same dimensions as the covariance matrix*/
-    n = Sigma->nrows;  
-    W = mat_new(n, n);
 
     for (i = 0; i < n; i++) {
         mat_set(W, i, i, 0.0);  /* Set diagonal elements to zero pairwise distance */
+        Sii = mat_get(Sigma, i, i);
         for (j = i + 1; j < n; j++) {
-            double dij = mat_get(Sigma, i, i) + mat_get(Sigma, j, j) -
-                         (2.0 * mat_get(Sigma, i, j));
-
-            /* Set the weight as the inverse pairwise distance */
-            wij = 1.0 / dij;
+            dij = Sii + mat_get(Sigma, j, j) - (2.0 * mat_get(Sigma, i, j));
+            wij = 1.0 / dij; /* Set the weight as the inverse pairwise distance */
             mat_set(W, i, j, wij);
             mat_set(W, j, i, wij);
         }
     }
-
-    return W;
 }
 
 /* Print a summary of the covariance-based weight matrix. */
@@ -114,14 +107,12 @@ void print_weight_matrix_summary(Matrix *W) {
 }
 
 /* Compute Moran's I-based phylogenetic autocorrelation for each 
-gene in the expression matrix. This function is written to match 
-the xcor function from the R package PATH by Schiffman et al. 
+gene in the expression matrix. This function is written to functionally 
+match the xcor function from the R package PATH by Schiffman et al. 
 2024 Nature Genetics (PMID: 39317739). 
 
-Note: There were some inifficiencies in the PATH implementation
-for which some of them I have fixed here. I left commented code for the exact
-match to the original code. There are still inefficiencies left behind
-to fix in the future if a fully optimized version is needed.
+Note: There were some inefficiencies in the PATH implementation
+that I fixed, so the code is not an exact match.
 */
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
@@ -130,22 +121,18 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     int n = X->nrows;
     int n_genes = X->ncols;
     double w;
-    Matrix *per_W = NULL;   /* Weight matrix temp for each covariance matrix */
+    Matrix *per_W = NULL;   /* Weight matrix tmp for each covariance matrix */
     Matrix *W = mat_new(n, n);   /* Expected weight matrix across trees */
+    mat_zero(W);
 
     /* Get the E[W] (expected weight matrix) from the covariance matrices */
-    mat_zero(W);
     for (t = 0; t < n_sigmas; t++) {
-        per_W = weight_matrix_from_covariance(Sigmas[t]);
-        mat_add_mat(W, per_W);
-        mat_free(per_W);
-        per_W = NULL;
+        weight_matrix_from_covariance(W, Sigmas[t]);
     }
     mat_scale(W, 1.0 / (double)n_sigmas);
     /* Normalize all entries to sum to 1 */
     w = mat_sum_entries(W);
     mat_scale(W, 1.0 / w);
-    w = 1.0;  /* W was already normalized to sum to 1 */
 
     /* Free memory */
     if (per_W != NULL)
@@ -178,44 +165,9 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     if (d1_2 != NULL)
         mat_free(d1_2);
 
-    /* Unused code from PATH, retained but commented out here */
-    // /* Compute the matrix of cross-products of squared centered gene values. */
-    // Matrix *d0squared = mat_new(n, n_genes);
-    // mat_copy(d0squared, d0);
-    // mat_square_elementwise(d0squared);
-    // Matrix *d0squaredt = mat_new(n_genes, n);
-    // mat_trans(d0squaredt, d0squared);
-    // Matrix *d2 = mat_new(n_genes, n_genes);
-    // mat_mult(d2, d0squaredt, d0squared);
-    // mat_scale(d2, 1.0 / (double)n);
-
-    // /* Free memory */
-    // if (d0squared != NULL)
-    //     mat_free(d0squared);
-    // if (d0squaredt != NULL)
-    //     mat_free(d0squaredt);
-    // if (d2 != NULL)
-    //     mat_free(d2);
-
-    /* Unnecessary S3 calculation from PATH, retained but commented out here.
-    Simpler calculation below for S4 which is equivalent to S3 here since W 
-    is symmetric */
-    // /* Sum of all elements in W^T * W */
-    // Matrix *Wt = mat_new(n, n);
-    // mat_trans(Wt, W);
-    // Matrix *WtW = mat_new(n, n);
-    // mat_mult_elementwise(WtW, Wt, W);
-    // double S3 = mat_sum_entries(WtW);
-
-    // /* Free memory */
-    // if (Wt != NULL)
-    //     mat_free(Wt);
-    // if (WtW != NULL)
-    //     mat_free(WtW);
-
     /* Sum of squared W elements */
     double S4 = mat_sum_squared_entries(W);
-    double S3 = S4; /* Same as S4 since W is symmetric, original calculation code commented out above */
+    double S1 = 2 * S4;
 
     /* Sum of all elements in W*W */
     Matrix *WW = mat_new(n, n);
@@ -228,19 +180,12 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 
     /* Sum of rowSum and colSum from W */
     Vector *WrowSums = mat_row_sums(W);
-    double sum_WrowSums_squared = vec_sum_squared_entries(WrowSums);
-    // Vector *WcolSums = mat_col_sums(W);
-    // double sum_WcolSums_squared = vec_sum_squared_entries(WcolSums);
-    // double S6 = sum_WrowSums_squared + sum_WcolSums_squared;
-    double S6 = 2.0 * sum_WrowSums_squared; /* Same as sum_WcolSums_squared since W is symmetric, original calculation code commented out above */
+    double S6 = 2.0 * vec_sum_squared_entries(WrowSums);
 
     /* Free memory */
     if (WrowSums != NULL)
         vec_free(WrowSums);
-    // if (WcolSums != NULL)
-    //     vec_free(WcolSums);
 
-    double S1 = S3 + S4;
     double S2 = 2.0 * S5 + S6;
 
     /* Calculate the Moran's I correlation matrix */
@@ -261,19 +206,19 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     double E_I2 = -(1.0 / (double)(n - 1));
 
     /* Get the variance terms for each gene */
-    double A = 2.0 * (w * w - S2 + S1)
-             + (2.0 * S3 - 2.0 * S5) * (n - 3)
-             + S3 * (n - 2) * (n - 3);
+    double A = 2.0 * (1.0 - S2 + S1)
+             + (2.0 * S4 - 2.0 * S5) * (n - 3)
+             + S4 * (n - 2) * (n - 3);
 
-    double Bterm = 6.0 * (w * w - S2 + S1)
+    double Bterm = 6.0 * (1.0 - S2 + S1)
                  + (4.0 * S1 - 2.0 * S2) * (n - 3)
                  + S1 * (n - 2) * (n - 3);
 
-    double Cterm = (w * w - S2 + S1)
+    double Cterm = (1.0 - S2 + S1)
                  + (2.0 * S4 - S6) * (n - 3)
                  + S4 * (n - 2) * (n - 3);
 
-    double denom = (double)(n - 1) * (n - 2) * (n - 3) * (w * w);
+    double denom = (double)(n - 1) * (n - 2) * (n - 3);
 
     double *Vjs = smalloc(n_genes * sizeof(double));
 
@@ -576,9 +521,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     Ls = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
 
-    double *y_sim;
-    if (alt_mode == GEX_LRT_ALT_FULL)
-        y_sim = smalloc(n * sizeof(double));
+    double *y_sim = smalloc(n * sizeof(double));
 
     /* Pre-compute reused terms from the covariance matrices */
     for (t = 0; t < n_sigmas; t++) {
@@ -726,7 +669,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     /* Free memory */
     if (y != NULL)
         free(y);
-    if (alt_mode == GEX_LRT_ALT_FULL && y_sim != NULL)
+    if (y_sim != NULL)
         free(y_sim);
     if (ll_alts != NULL)
         free(ll_alts);
