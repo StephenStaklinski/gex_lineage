@@ -153,7 +153,6 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     if (WrowSums != NULL)
         vec_free(WrowSums);
 
-    /* No WW needed */
     double S4 = mat_sum_squared_entries(W);
     double S1 = 2.0 * S4;
     double S5 = row_ss;      /* assuming symmetric W */
