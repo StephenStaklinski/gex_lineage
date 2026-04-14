@@ -262,6 +262,7 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
         return NULL;
 
     int i, j;
+    int tol = 1e-12;  /* Tolerance for checking if sigma2s are the same across cols for MVN reuse */
     int n_rows = Sigmas[0]->nrows; /* Assume all Sigmas have the same number of rows */
     Matrix *res = mat_new(n_rows, n_cols);
     mat_zero(res);
@@ -269,7 +270,6 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
     Vector *sim_vec = vec_new(n_rows);
 
     for (i = 0; i < n_sigmas; i++) {
-
 
         /* Draw the simulation results per desired col (gene or latent factor) from the MVN */
         mat_zero(cur_sim);
@@ -279,11 +279,11 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
 
             if (!reuse_mvn) {
                 /* Scale the input Sigma by the Brownian variance parameter sigma2 to get the covariance for this simulation */
-                Matrix *scaled_Sigma = mat_create_copy(Sigmas[j]);  /* Copy to scale and since it will be freed automatically by mat_free */
+                Matrix *scaled_Sigma = mat_create_copy(Sigmas[i]);  /* Copy to scale and since it will be freed automatically by mvn_free */
                 mat_scale(scaled_Sigma, vec_get(sigma2s, j));
 
                 /* Create MVN object from the scaled covariance matrix */
-                Vector *mu_copy = vec_create_copy(mu);  /* Copy since mat_free will free the supplied mu directly */
+                Vector *mu_copy = vec_create_copy(mu);  /* Copy since mvn_free will free the supplied mu directly */
                 mvn_obj = mvn_new(n_rows, mu_copy, scaled_Sigma);
                 mvn_preprocess(mvn_obj, FALSE);
             }
@@ -291,7 +291,7 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
             mvn_sample(mvn_obj, sim_vec);
             mat_set_col(cur_sim, j, sim_vec);
 
-            if (j != (n_cols - 1) && vec_get(sigma2s, j) == vec_get(sigma2s, j + 1)) {
+            if ((j != (n_cols - 1) && (fabs(vec_get(sigma2s, j) - vec_get(sigma2s, j + 1)) <= tol))) {
                 reuse_mvn = 1;
             } else {
                 reuse_mvn = 0;
