@@ -117,7 +117,7 @@ that I fixed, so the code is not an exact match.
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
                                       int n_sigmas) {
-    int j, t;
+    int j, t, k;
     int n = X->nrows;
     int n_genes = X->ncols;
     double w;
@@ -131,7 +131,8 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         mat_add_mat(W, perW);
     }
     mat_scale(W, 1.0 / (double)n_sigmas);
-    /* Normalize all entries to sum to 1 */
+    /* Normalize all entries to sum to 1, which is necessary for the 
+    way calculations are setup below. */
     w = mat_sum_entries(W);
     mat_scale(W, 1.0 / w);
 
@@ -144,32 +145,20 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     mat_copy(d0, X);
     mat_center_cols(d0);
 
-    /* Sum of squared W elements */
-    double S4 = mat_sum_squared_entries(W);
-    double S1 = 2 * S4;
-
-    /* Sum of all elements in W*W */
-    Matrix *WW = mat_new(n, n);
-    mat_mult(WW, W, W);
-    double S5 = mat_sum_entries(WW);
-
-    /* Free memory */
-    if (WW != NULL)
-        mat_free(WW);
-
-    /* Sum of rowSum and colSum from W */
+    /* Row sums */
     Vector *WrowSums = mat_row_sums(W);
-    double S6 = 2.0 * vec_sum_squared_entries(WrowSums);
+    double row_ss = vec_sum_squared_entries(WrowSums);
 
     /* Free memory */
     if (WrowSums != NULL)
         vec_free(WrowSums);
 
+    /* No WW needed */
+    double S4 = mat_sum_squared_entries(W);
+    double S1 = 2.0 * S4;
+    double S5 = row_ss;      /* assuming symmetric W */
+    double S6 = 2.0 * row_ss;
     double S2 = 2.0 * S5 + S6;
-
-    /* Compute E[W] * Z once; each gene only needs the diagonal quadratic form */
-    Matrix *B = mat_new(n, n_genes);   /* Intermediate matrix for E[W] * Z */
-    mat_mult(B, W, d0);
 
     /* Get the expected statistic under the null */
     double E_I2 = -(1.0 / (double)(n - 1));
@@ -201,16 +190,20 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 
     /* Compute only the diagonal Moran statistic and its z-score per gene. */
     for (j = 0; j < n_genes; j++) {
-        int i;
         double numerator = 0.0;
         double ss2 = 0.0;
         double ss4 = 0.0;
         double d1j, d2j;
 
-        for (i = 0; i < n; i++) {
-            double z = mat_get(d0, i, j);
-            double z2 = z * z;
-            numerator += z * mat_get(B, i, j);
+        for (t = 0; t < n; t++) {
+            double zi = mat_get(d0, t, j);
+            double z2 = zi * zi;
+            double bi = 0.0;
+
+            for (k = 0; k < n; k++)
+                bi += mat_get(W, t, k) * mat_get(d0, k, j);
+
+            numerator += zi * bi;
             ss2 += z2;
             ss4 += z2 * z2;
         }
@@ -218,22 +211,31 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         d1j = ss2 / (double)n;
         d2j = ss4 / (double)n;
 
+        /* Handle degenerate cases safely */
         if (d1j <= 0.0 || denom <= 0.0) {
             Vjs[j] = 0.0;
+            res->morans_i[j] = 0.0;
+            res->zscores[j] = 0.0;
+            res->pvals[j] = 1.0;
+            continue;
         }
-        else {
-            Vjs[j] = (n * A
-                      - (d2j / (d1j * d1j)) * Bterm
-                      + n * Cterm) / denom
-                   - 1.0 / ((double)(n - 1) * (n - 1));
 
-            if (!isfinite(Vjs[j]) || Vjs[j] <= 0.0)
-                Vjs[j] = 0.0;
-        }
+        Vjs[j] = (n * A
+                - (d2j / (d1j * d1j)) * Bterm
+                + n * Cterm) / denom
+            - 1.0 / ((double)(n - 1) * (n - 1));
 
         res->morans_i[j] = numerator / d1j;
-        res->zscores[j] = (res->morans_i[j] - E_I2) / sqrt(Vjs[j]);
-        res->pvals[j] = erfc(fabs(res->zscores[j]) / sqrt(2.0));
+
+        if (!isfinite(Vjs[j]) || Vjs[j] <= 0.0 || !isfinite(res->morans_i[j])) {
+            Vjs[j] = 0.0;
+            res->zscores[j] = 0.0;
+            res->pvals[j] = 1.0;
+        }
+        else {
+            res->zscores[j] = (res->morans_i[j] - E_I2) / sqrt(Vjs[j]);
+            res->pvals[j] = erfc(fabs(res->zscores[j]) / sqrt(2.0));
+        }
     }
 
     /* Adjust p-values for multiple testing and count significant genes */
@@ -244,8 +246,6 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         mat_free(W);
     if (d0 != NULL)
         mat_free(d0);
-    if (B != NULL)
-        mat_free(B);
     if (Vjs != NULL)
         free(Vjs);
 
