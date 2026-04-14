@@ -121,17 +121,23 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     int n = X->nrows;
     int n_genes = X->ncols;
     double w;
+    Matrix *perW = mat_new(n, n);  /* Per-tree weight matrix */
     Matrix *W = mat_new(n, n);   /* Expected weight matrix across trees */
     mat_zero(W);
 
     /* Get the E[W] (expected weight matrix) from the covariance matrices */
     for (t = 0; t < n_sigmas; t++) {
-        weight_matrix_from_covariance(W, Sigmas[t]);
+        weight_matrix_from_covariance(perW, Sigmas[t]);
+        mat_add_mat(W, perW);
     }
     mat_scale(W, 1.0 / (double)n_sigmas);
     /* Normalize all entries to sum to 1 */
     w = mat_sum_entries(W);
     mat_scale(W, 1.0 / w);
+
+    /* Free memory */
+    if (perW != NULL)
+        mat_free(perW);
 
     /* Center genes */
     Matrix *d0 = mat_new(n, n_genes);
