@@ -270,27 +270,41 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
 
     for (i = 0; i < n_sigmas; i++) {
 
-        /* Scale the input Sigma by the Brownian variance parameter sigma2 to get the covariance for this simulation */
-        Matrix *scaled_Sigma = mat_create_copy(Sigmas[i]);  /* Copy to scale and since it will be freed automatically by mat_free */
-        mat_scale(scaled_Sigma, vec_get(sigma2s, i));
 
-        /* Create MVN object from the scaled covariance matrix */
-        Vector *mu_copy = vec_create_copy(mu);  /* Copy since mat_free will free the supplied mu directly */
-        MVN *mvn_obj = mvn_new(n_rows, mu_copy, scaled_Sigma);
-        mvn_preprocess(mvn_obj, FALSE);
-
-        /* Draw the simulation results per desired col from the MVN */
+        /* Draw the simulation results per desired col (gene or latent factor) from the MVN */
         mat_zero(cur_sim);
+        int reuse_mvn = 0;  /* If sigma2 is the same across a col, then reuse the MVN object */
+        MVN *mvn_obj = NULL;
         for (j = 0; j < n_cols; j++) {
+
+            if (!reuse_mvn) {
+                /* Scale the input Sigma by the Brownian variance parameter sigma2 to get the covariance for this simulation */
+                Matrix *scaled_Sigma = mat_create_copy(Sigmas[j]);  /* Copy to scale and since it will be freed automatically by mat_free */
+                mat_scale(scaled_Sigma, vec_get(sigma2s, j));
+
+                /* Create MVN object from the scaled covariance matrix */
+                Vector *mu_copy = vec_create_copy(mu);  /* Copy since mat_free will free the supplied mu directly */
+                mvn_obj = mvn_new(n_rows, mu_copy, scaled_Sigma);
+                mvn_preprocess(mvn_obj, FALSE);
+            }
+
             mvn_sample(mvn_obj, sim_vec);
             mat_set_col(cur_sim, j, sim_vec);
+
+            if (j != (n_cols - 1) && vec_get(sigma2s, j) == vec_get(sigma2s, j + 1)) {
+                reuse_mvn = 1;
+            } else {
+                reuse_mvn = 0;
+            }
+
+            if (!reuse_mvn) {
+                /* Free memory */
+                mvn_free(mvn_obj);
+            }
         }
 
         /* Accumulate results over each Sigma */
         mat_add_mat(res, cur_sim);
-
-        /* Free memory */
-        mvn_free(mvn_obj);
     }
 
     /* Finish the expectation over n_sigmas */
