@@ -121,7 +121,6 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     int n = X->nrows;
     int n_genes = X->ncols;
     double w;
-    Matrix *per_W = NULL;   /* Weight matrix tmp for each covariance matrix */
     Matrix *W = mat_new(n, n);   /* Expected weight matrix across trees */
     mat_zero(W);
 
@@ -134,36 +133,10 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     w = mat_sum_entries(W);
     mat_scale(W, 1.0 / w);
 
-    /* Free memory */
-    if (per_W != NULL)
-        mat_free(per_W);
-
     /* Center genes */
     Matrix *d0 = mat_new(n, n_genes);
     mat_copy(d0, X);
     mat_center_cols(d0);
-
-    /* Compute the covariance matrix of genes */
-    Matrix *d0t = mat_new(n_genes, n);
-    mat_trans(d0t, d0);
-    Matrix *d1 = mat_new(n_genes, n_genes);
-    mat_mult(d1, d0t, d0);
-    mat_scale(d1, 1.0 / (double)n);
-
-    Vector *d1_diag = mat_get_diag(d1);
-    Matrix *d1_2 = mat_new(n_genes, n_genes);
-    vec_outer_prod(d1_2, d1_diag, d1_diag);
-    Matrix *d1_2_sqrt = mat_new(n_genes, n_genes);
-    mat_copy(d1_2_sqrt, d1_2);
-    mat_sqrt_elementwise(d1_2_sqrt);
-
-    /* Free memory */
-    if (d1 != NULL)
-        mat_free(d1);
-    if (d1_diag != NULL)
-        vec_free(d1_diag);
-    if (d1_2 != NULL)
-        mat_free(d1_2);
 
     /* Sum of squared W elements */
     double S4 = mat_sum_squared_entries(W);
@@ -188,19 +161,9 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 
     double S2 = 2.0 * S5 + S6;
 
-    /* Calculate the Moran's I correlation matrix */
+    /* Compute E[W] * Z once; each gene only needs the diagonal quadratic form */
     Matrix *B = mat_new(n, n_genes);   /* Intermediate matrix for E[W] * Z */
     mat_mult(B, W, d0);
-    Matrix *Iraw = mat_new(n_genes, n_genes);
-    mat_mult(Iraw, d0t, B);
-    Matrix *I = mat_new(n_genes, n_genes);
-    mat_div_elementwise(I, Iraw, d1_2_sqrt);
-
-    /* Free memory */
-    if (d0t != NULL)
-        mat_free(d0t);
-    if (B != NULL)
-        mat_free(B);
 
     /* Get the expected statistic under the null */
     double E_I2 = -(1.0 / (double)(n - 1));
@@ -222,8 +185,18 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 
     double *Vjs = smalloc(n_genes * sizeof(double));
 
+    /* Setup result structure */
+    MoranResult *res = scalloc(1, sizeof(MoranResult));
+    res->n_genes = n_genes;
+    res->morans_i = scalloc(n_genes, sizeof(double));
+    res->pvals = scalloc(n_genes, sizeof(double));
+    res->qvals = scalloc(n_genes, sizeof(double));
+    res->zscores = scalloc(n_genes, sizeof(double));
+
+    /* Compute only the diagonal Moran statistic and its z-score per gene. */
     for (j = 0; j < n_genes; j++) {
         int i;
+        double numerator = 0.0;
         double ss2 = 0.0;
         double ss4 = 0.0;
         double d1j, d2j;
@@ -231,6 +204,7 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         for (i = 0; i < n; i++) {
             double z = mat_get(d0, i, j);
             double z2 = z * z;
+            numerator += z * mat_get(B, i, j);
             ss2 += z2;
             ss4 += z2 * z2;
         }
@@ -240,30 +214,18 @@ MoranResult *gex_compute_morans_i(Matrix *X,
 
         if (d1j <= 0.0 || denom <= 0.0) {
             Vjs[j] = 0.0;
-            continue;
+        }
+        else {
+            Vjs[j] = (n * A
+                      - (d2j / (d1j * d1j)) * Bterm
+                      + n * Cterm) / denom
+                   - 1.0 / ((double)(n - 1) * (n - 1));
+
+            if (!isfinite(Vjs[j]) || Vjs[j] <= 0.0)
+                Vjs[j] = 0.0;
         }
 
-        Vjs[j] = (n * A
-                  - (d2j / (d1j * d1j)) * Bterm
-                  + n * Cterm) / denom
-               - 1.0 / ((double)(n - 1) * (n - 1));
-
-        if (!isfinite(Vjs[j]) || Vjs[j] <= 0.0)
-            Vjs[j] = 0.0;
-    }
-
-    /* Setup result structure */
-    MoranResult *res = scalloc(1, sizeof(MoranResult));
-    res->n_genes = n_genes;
-    res->morans_i = scalloc(n_genes, sizeof(double));
-    res->pvals = scalloc(n_genes, sizeof(double));
-    res->qvals = scalloc(n_genes, sizeof(double));
-    res->zscores = scalloc(n_genes, sizeof(double));
-
-    /* Copy the diagonal statistic and compute analytical p-values
-    from z-scores */
-    for (j = 0; j < n_genes; j++) {
-        res->morans_i[j] = mat_get(I, j, j);
+        res->morans_i[j] = numerator / d1j;
         res->zscores[j] = (res->morans_i[j] - E_I2) / sqrt(Vjs[j]);
         res->pvals[j] = erfc(fabs(res->zscores[j]) / sqrt(2.0));
     }
@@ -276,8 +238,8 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         mat_free(W);
     if (d0 != NULL)
         mat_free(d0);
-    if (I != NULL)
-        mat_free(I);
+    if (B != NULL)
+        mat_free(B);
     if (Vjs != NULL)
         free(Vjs);
 
