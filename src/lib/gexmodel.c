@@ -352,50 +352,37 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
-// /* Compute the L2 (Euclidean) norm of the gradient ||g||_2 = sqrt( sum_i g_i^2 ),
-// treating all parameter gradients (Z, L, log(sigma2_latent), log(sigma2_obs))
-// as a single concatenated vector g. Returns the overall gradient magnitude. */
-// static double gex_model_grad_norm(Matrix *grad_Z,
-//                                   Matrix *grad_L,
-//                                   double *grad_log_sigma_latent,
-//                                   double grad_log_sigma_obs,
-//                                   int k) {
-//     int i, j;
-//     double ss = 0.0;
-//     /* Add the squared gradients for Z */
-//     for (i = 0; i < grad_Z->nrows; i++)
-//         for (j = 0; j < grad_Z->ncols; j++)
-//             ss += pow(mat_get(grad_Z, i, j), 2.0);
-//     /* Add the squared gradients for L */
-//     for (i = 0; i < grad_L->nrows; i++)
-//         for (j = 0; j < grad_L->ncols; j++)
-//             ss += pow(mat_get(grad_L, i, j), 2.0);
-//     /* Add the squared gradients for log(sigma2_latent) for all latent factors */
-//     for (i = 0; i < k; i++)
-//         ss += pow(grad_log_sigma_latent[i], 2.0);
-//     /* Add the squared gradient for log(sigma2_obs) */
-//     ss += grad_log_sigma_obs * grad_log_sigma_obs;
-//     return sqrt(ss);
-// }
-
-// /* Scale all gradients by a constant factor. */
-// static void gex_model_scale_grads(Matrix *grad_Z,
-//                                   Matrix *grad_L,
-//                                   double *grad_log_sigma_latent,
-//                                   double *grad_log_sigma_obs,
-//                                   int k,
-//                                   double scale) {
-//     int i, j;
-//     for (i = 0; i < grad_Z->nrows; i++)
-//         for (j = 0; j < grad_Z->ncols; j++)
-//             mat_set(grad_Z, i, j, mat_get(grad_Z, i, j) * scale);
-//     for (i = 0; i < grad_L->nrows; i++)
-//         for (j = 0; j < grad_L->ncols; j++)
-//             mat_set(grad_L, i, j, mat_get(grad_L, i, j) * scale);
-//     for (i = 0; i < k; i++)
-//         grad_log_sigma_latent[i] *= scale;
-//     *grad_log_sigma_obs *= scale;
-// }
+/* Compute the L2 (Euclidean) norm by treating all parameter gradients 
+as a single concatenated vector. */
+static double gex_model_grad_norm(Matrix *grad_Z,
+                                  Matrix *grad_L,
+                                  double *grad_log_sigma_latent,
+                                  double grad_log_sigma_obs,
+                                  int k) {
+    int i, j;
+    double ss = 0.0;
+    int val;
+    /* Add the squared gradients for Z */
+    for (i = 0; i < grad_Z->nrows; i++) {
+        for (j = 0; j < grad_Z->ncols; j++) {
+            val = mat_get(grad_Z, i, j);
+            ss += val * val;
+        }
+    }
+    /* Add the squared gradients for L */
+    for (i = 0; i < grad_L->nrows; i++) {
+        for (j = 0; j < grad_L->ncols; j++) {
+            val = mat_get(grad_L, i, j);
+            ss += val * val;
+        }
+    }
+    /* Add the squared gradients for log(sigma2_latent) for all latent factors */
+    for (i = 0; i < k; i++)
+        ss += grad_log_sigma_latent[i] * grad_log_sigma_latent[i];
+    /* Add the squared gradient for log(sigma2_obs) */
+    ss += grad_log_sigma_obs * grad_log_sigma_obs;
+    return sqrt(ss);
+}
 
 /* Perform one Adam optimization update for a scalar parameter in place.
 Updates the first and second moment estimates using the current gradient,
@@ -413,12 +400,13 @@ static void adam_step_scalar(double *param,
                                double grad,
                                double *m,
                                double *v,
-                               int step,
+                               double pow_beta1,
+                               double pow_beta2,
                                double lr) {
     double m_new = ADAM_BETA1 * (*m) + (1.0 - ADAM_BETA1) * grad;
     double v_new = ADAM_BETA2 * (*v) + (1.0 - ADAM_BETA2) * grad * grad;
-    double mhat = m_new / (1.0 - pow(ADAM_BETA1, step));
-    double vhat = v_new / (1.0 - pow(ADAM_BETA2, step));
+    double mhat = m_new / (1.0 - pow_beta1);
+    double vhat = v_new / (1.0 - pow_beta2);
 
     *m = m_new;
     *v = v_new;
@@ -430,7 +418,8 @@ static void adam_step_matrix(Matrix *param,
                                          Matrix *grad,
                                          Matrix *m,
                                          Matrix *v,
-                                         int step,
+                                         double pow_beta1,
+                                         double pow_beta2,
                                          double lr) {
     int i, j;
     for (i = 0; i < param->nrows; i++) {
@@ -440,7 +429,7 @@ static void adam_step_matrix(Matrix *param,
             double m_ij = mat_get(m, i, j);
             double v_ij = mat_get(v, i, j);
 
-            adam_step_scalar(&p, g, &m_ij, &v_ij, step, lr);
+            adam_step_scalar(&p, g, &m_ij, &v_ij, pow_beta1, pow_beta2, lr);
 
             mat_set(param, i, j, p);
             mat_set(m, i, j, m_ij);
@@ -451,15 +440,16 @@ static void adam_step_matrix(Matrix *param,
 
 /* Adam update wrapper for a vector parameter */
 static void adam_step_vector(double *param,
-                                         double *grad,
-                                         double *m,
-                                         double *v,
-                                         int n,
-                                         int step,
-                                         double lr) {
+                                double *grad,
+                                double *m,
+                                double *v,
+                                int n,
+                                double pow_beta1,
+                                double pow_beta2,
+                                double lr) {
     int i;
     for (i = 0; i < n; i++) {
-        adam_step_scalar(&param[i], grad[i], &m[i], &v[i], step, lr);
+        adam_step_scalar(&param[i], grad[i], &m[i], &v[i], pow_beta1, pow_beta2, lr);
     }
 }
 
@@ -603,6 +593,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5);
     sched_state = sched_new_state(sched);
     metrics.grad_norm = 0.0;
+    double pow_beta1;
+    double pow_beta2;
 
     /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
@@ -618,10 +610,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
         
-        // /* Compute the gradient norm */
-        // metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
-        //                                         grad_log_sigma_latent,
-        //                                         grad_log_sigma_obs, k);
+        /* Compute the gradient norm */
+        metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
+                                                grad_log_sigma_latent,
+                                                grad_log_sigma_obs, k);
 
         /* Compare the short and long running averages of the objective so
         that convergence is judged using denoised trends at two time scales. */
@@ -643,23 +635,28 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             rel_objective_change = HUGE_VAL;
         }
 
-        // /* Re-scale the gradients if their norm exceeds the clipping threshold. */
-        // if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
-        //     double scale = directives.clip_norm / metrics.grad_norm;
-        //     gex_model_scale_grads(grad_Z, grad_L, grad_log_sigma_latent,
-        //                           &grad_log_sigma_obs, k, scale);
-        //     metrics.grad_norm = directives.clip_norm;
-        // }
+        /* Re-scale the gradients if their norm exceeds the clipping threshold. */
+        if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
+            double scale = directives.clip_norm / metrics.grad_norm;
+            mat_scale(grad_Z, scale);
+            mat_scale(grad_L, scale);
+            for (d = 0; d < k; d++)
+                grad_log_sigma_latent[d] *= scale;
+            grad_log_sigma_obs *= scale;
+            metrics.grad_norm = directives.clip_norm;
+        }
 
         /* Perturb the model parameters */
-        adam_step_matrix(model->Z, grad_Z, mZ, vZ, step, directives.lr);
-        adam_step_matrix(model->L, grad_L, mL, vL, step, directives.lr);
+        pow_beta1 = pow(ADAM_BETA1, step);
+        pow_beta2 = pow(ADAM_BETA2, step);
+        adam_step_matrix(model->Z, grad_Z, mZ, vZ, pow_beta1, pow_beta2, directives.lr);
+        adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, directives.lr);
         adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
                                     m_log_sigma_latent, v_log_sigma_latent,
-                                    k, step, directives.lr);
+                                    k, pow_beta1, pow_beta2, directives.lr);
         adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
                            &m_log_sigma_obs, &v_log_sigma_obs,
-                           step, directives.lr);
+                           pow_beta1, pow_beta2, directives.lr);
 
         /* Track whether the optimizer has entered a stable regime */
         if (step >= min_steps && rel_objective_change < objective_tol)
@@ -779,7 +776,6 @@ Matrix **downsample_sigmas(Matrix **Sigmas,
     int i;
     Matrix **selected = NULL;
     int *indices = NULL;
-    set_seed(-1);
 
     if (Sigmas == NULL || n_sigmas <= 0)
         return NULL;
@@ -834,10 +830,6 @@ void write_summary_tsv(const char *path,
 
     fclose(summary_out);
     summary_out = NULL;
-
-        /* Free memory */
-    if (summary_out != NULL)
-        fclose(summary_out);
 }
 
 void write_model(const char *outprefix,

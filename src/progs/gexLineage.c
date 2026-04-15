@@ -56,6 +56,7 @@ static void usage(const char *progname) {
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
         "[--l2-strength S] "
+        "[--dim K] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -82,6 +83,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double l2_strength = 1e-3;  /* L2 regularization strength for loadings; 0 disables the penalty. */
+    int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
@@ -170,6 +172,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             l2_strength = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--dim") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            k = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--lrt-alt") == 0) {
             if (i + 1 >= argc) {
@@ -405,8 +414,12 @@ int main(int argc, char *argv[]) {
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
-    pca = compute_pca(gex_filtered->X, pca_var_threshold);
-    printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
+    pca = compute_pca(gex_filtered->X, k, pca_var_threshold);
+    if (k == 0) {
+        printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
+    } else {
+        printf("Retained the top %d PCA component(s).\n", k);
+    }
     if (verbose) {
         print_pca_summary(pca);
     }

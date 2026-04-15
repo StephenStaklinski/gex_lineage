@@ -53,10 +53,10 @@ static int pca_components_for_variance_threshold_internal(double *var_explained,
 
 /* Compute PCA for a gene expression matrix. 
 Return a pointer to the result or NULL on failure. */
-PCA *compute_pca(Matrix *X, double variance_threshold) {
+PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     int i, j;   /* Loop indices */
     int p = X->ncols;;  /* Number of genes */
-    int keep_K; /* Number of components to keep based on variance threshold */
+    int keep_K = k; /* Number of components to keep */
     Matrix *Xc = mat_create_copy(X); /* Centered gene expression matrix */
     Matrix *Cov = NULL; /* Covariance matrix of the centered data */
     Matrix *eigvecs = NULL; /* Matrix of eigenvectors (columns) from eigendecomposition of covariance matrix */
@@ -132,12 +132,11 @@ PCA *compute_pca(Matrix *X, double variance_threshold) {
         }
     }
 
-    keep_K = pca_components_for_variance_threshold_internal(out->var_explained,
+    /* If k was not specified, determine how many components to keep based on the variance threshold */
+    if (k == 0) {
+        keep_K = pca_components_for_variance_threshold_internal(out->var_explained,
                                                                 out->K,
                                                                 variance_threshold);
-    if (keep_K <= 0 || keep_K > out->K) {
-        free_pca(out);
-        return NULL;
     }
 
     /* Allocate memory for the reduced PCA components and variance explained */

@@ -10,7 +10,7 @@ typedef struct {
     int K;
 } PCA;
 
-PCA *compute_pca(Matrix *gex, double variance_threshold);
+PCA *compute_pca(Matrix *gex, int k, double variance_threshold);
 
 void free_pca(PCA *pca);
 

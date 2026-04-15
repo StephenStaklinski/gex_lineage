@@ -380,6 +380,7 @@ void write_labeled_matrix_tsv(const char *filename,
     }
 
     fclose(out);
+    out = NULL;
 }
 
 /* Compute the Frobenius norm of a matrix.
