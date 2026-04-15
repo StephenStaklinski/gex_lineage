@@ -15,8 +15,8 @@ typedef struct {
     int k;
     Matrix *Z;              /* n_cells x k latent factors */
     Matrix *L;              /* k latent factors x n_genes */
-    double *sigma2_latent;  /* length k */
-    double sigma2_obs;
+    double *log_sigma2_latent;  /* length k */
+    double log_sigma2_obs;
     double l2_strength;
     double objective;
     double observation_objective;

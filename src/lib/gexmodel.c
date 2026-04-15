@@ -22,7 +22,6 @@ including the Gaussian normalization constant, fills residual matrix,
 and computes gradients w.r.t. Z and log(sigma2_obs). */
 static double gaussian_observation_term(const GexLatentBrownianModel *model,
                                         Matrix *Xc,
-                                        double sigma2_obs,
                                         Matrix *resid,
                                         Matrix *grad_Z,
                                         double *grad_log_sigma_obs) {
@@ -31,6 +30,7 @@ static double gaussian_observation_term(const GexLatentBrownianModel *model,
     int p = Xc->ncols;
     int k = model->Z->ncols;
     double obj = 0.0;
+    double sigma2_obs = exp(model->log_sigma2_obs);
 
     /* Initialize gradient accumulator for log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
@@ -181,7 +181,7 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
     /* Add the Brownian motion multivariate Gaussian mixture prior on Z for each
     latent dimension z_d, marginalizing over a set of candidate trees. */
     for (d = 0; d < k; d++) {
-        double sigma2_d = model->sigma2_latent[d];
+        double sigma2_d = exp(model->log_sigma2_latent[d]);
         double log_mix;
         double expected_quad_over_sigma2 = 0.0;
 
@@ -243,13 +243,13 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
 static double l2_regularized_L_term(GexLatentBrownianModel *model,
                                     Matrix *resid,
                                     Matrix *grad_L,
-                                    double sigma2_obs,
                                     double lambda_L) {
     int i, j, d;
     int n = model->n_cells;
     int p = model->n_genes;
     int k = model->k;
     double obj = 0.0;
+    double sigma2_obs = exp(model->log_sigma2_obs);
 
     /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization. */
     for (d = 0; d < k; d++) {
@@ -317,17 +317,10 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     int p = model->n_genes; /* Number of genes */
     int k = model->k;   /* Number of latent factors */
     double lambda_L = model->l2_strength;   /* L2 regularization strength for L */
-    double sigma2_obs = model->sigma2_obs;  /* Observation noise variance */
     double obj = 0.0;   /* Objective function value */
-    Matrix *resid = NULL;   /* Residual matrix */
+    Matrix *resid = mat_new(n, p);   /* Residual matrix */
 
-    /* Initialize the residual matrix as cells x genes */
-    resid = mat_new(n, p);
-    if (resid == NULL)
-        return HUGE_VAL;
-
-    /* Initialize and zero the gradients for Z, L, log(sigma2_latent) for all 
-    latent factors, and log(sigma2_obs) */
+    /* Zero gradients */
     mat_zero(grad_Z);
     mat_zero(grad_L);
     for (d = 0; d < k; d++)
@@ -337,7 +330,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the likelihood from the gaussian observation model X_ij ~ N((ZL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. Z and log(sigma2_obs). */
     model->observation_objective =
-        gaussian_observation_term(model, Xc, sigma2_obs, resid, grad_Z, grad_log_sigma_obs);
+        gaussian_observation_term(model, Xc, resid, grad_Z, grad_log_sigma_obs);
     obj += model->observation_objective;
 
     /* Add the mixture-of-Brownian prior contribution on Z and accumulate the
@@ -352,7 +345,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     }
 
     /* Add the L2 regularization penalty on L and compute the gradient w.r.t. L. */
-    model->l2_objective = l2_regularized_L_term(model, resid, grad_L, sigma2_obs, lambda_L);
+    model->l2_objective = l2_regularized_L_term(model, resid, grad_L, lambda_L);
     obj += model->l2_objective;
 
     mat_free(resid);
@@ -404,18 +397,36 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
 //     *grad_log_sigma_obs *= scale;
 // }
 
-/* Perform one Adam optimization update for a matrix parameter.
-
-For each entry (i,j), update the first moment (m) and second moment (v)
-estimates using the current gradient, apply bias correction to obtain
-mhat and vhat, and then update the parameter using:
+/* Perform one Adam optimization update for a scalar parameter in place.
+Updates the first and second moment estimates using the current gradient,
+applies bias correction to obtain mhat and vhat, and then updates the
+parameter using:
 
     param -= lr * mhat / (sqrt(vhat) + eps)
 
 where m tracks the exponential moving average of gradients,
 v tracks the exponential moving average of squared gradients,
-and bias correction accounts for initialization at early steps. */
-static void gex_model_adam_update_matrix(Matrix *param,
+and mhat and vhat are the corresponding bias-corrected estimates used
+for the parameter update. Bias correction accounts for initialization
+at early steps. */
+static void adam_step_scalar(double *param,
+                               double grad,
+                               double *m,
+                               double *v,
+                               int step,
+                               double lr) {
+    double m_new = ADAM_BETA1 * (*m) + (1.0 - ADAM_BETA1) * grad;
+    double v_new = ADAM_BETA2 * (*v) + (1.0 - ADAM_BETA2) * grad * grad;
+    double mhat = m_new / (1.0 - pow(ADAM_BETA1, step));
+    double vhat = v_new / (1.0 - pow(ADAM_BETA2, step));
+
+    *m = m_new;
+    *v = v_new;
+    *param -= lr * mhat / (sqrt(vhat) + ADAM_EPS);
+}
+
+/* Adam update wrapper for a Matrix parameter */
+static void adam_step_matrix(Matrix *param,
                                          Matrix *grad,
                                          Matrix *m,
                                          Matrix *v,
@@ -424,30 +435,22 @@ static void gex_model_adam_update_matrix(Matrix *param,
     int i, j;
     for (i = 0; i < param->nrows; i++) {
         for (j = 0; j < param->ncols; j++) {
+            double p = mat_get(param, i, j);
             double g = mat_get(grad, i, j);
-            double m_new = ADAM_BETA1 * mat_get(m, i, j) + (1.0 - ADAM_BETA1) * g;
-            double v_new = ADAM_BETA2 * mat_get(v, i, j) + (1.0 - ADAM_BETA2) * g * g;
-            double mhat = m_new / (1.0 - pow(ADAM_BETA1, step));
-            double vhat = v_new / (1.0 - pow(ADAM_BETA2, step));
-            mat_set(m, i, j, m_new);
-            mat_set(v, i, j, v_new);
-            mat_set(param, i, j, mat_get(param, i, j) - lr * mhat / (sqrt(vhat) + ADAM_EPS));
+            double m_ij = mat_get(m, i, j);
+            double v_ij = mat_get(v, i, j);
+
+            adam_step_scalar(&p, g, &m_ij, &v_ij, step, lr);
+
+            mat_set(param, i, j, p);
+            mat_set(m, i, j, m_ij);
+            mat_set(v, i, j, v_ij);
         }
     }
 }
 
-/* Perform one Adam optimization update for a vector parameter.
-
-For each element i, update the first moment (m[i]) and second moment (v[i])
-estimates using the current gradient, apply bias correction to obtain
-mhat and vhat, and update the parameter using:
-
-    param[i] -= lr * mhat / (sqrt(vhat) + eps)
-
-where m stores the exponential moving average of gradients,
-v stores the exponential moving average of squared gradients,
-and bias correction accounts for initialization at early steps. */
-static void gex_model_adam_update_vector(double *param,
+/* Adam update wrapper for a vector parameter */
+static void adam_step_vector(double *param,
                                          double *grad,
                                          double *m,
                                          double *v,
@@ -456,13 +459,7 @@ static void gex_model_adam_update_vector(double *param,
                                          double lr) {
     int i;
     for (i = 0; i < n; i++) {
-        double m_new = ADAM_BETA1 * m[i] + (1.0 - ADAM_BETA1) * grad[i];
-        double v_new = ADAM_BETA2 * v[i] + (1.0 - ADAM_BETA2) * grad[i] * grad[i];
-        double mhat = m_new / (1.0 - pow(ADAM_BETA1, step));
-        double vhat = v_new / (1.0 - pow(ADAM_BETA2, step));
-        m[i] = m_new;
-        v[i] = v_new;
-        param[i] -= lr * mhat / (sqrt(vhat) + ADAM_EPS);
+        adam_step_scalar(&param[i], grad[i], &m[i], &v[i], step, lr);
     }
 }
 
@@ -483,7 +480,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       const char *outprefix) {
     /* Optimization related */
     int step;   /* Optimization step */
-    int max_steps = 100000;   /* Maximum number of optimization steps */
+    int max_steps = 1000000;   /* Maximum number of optimization steps to prevent infinite run */
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
     int stable_steps_needed = 100;   /* Number of consecutive stable steps required for convergence */
     int running_avg_window_long = 500;   /* Number of recent steps used for the long running objective average */
@@ -524,8 +521,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double *v_log_sigma_latent = NULL;  /* Adam optimizer variance estimates for latent noise */
     double m_log_sigma_obs = 0.0;   /* Adam optimizer moment estimate for observation noise */
     double v_log_sigma_obs = 0.0;   /* Adam optimizer variance estimate for observation noise */
-    double log_sigma_obs;   /* Log of observation noise standard deviation */
-    double *log_sigma_latent = NULL;    /* Log of latent noise standard deviations */
     Matrix *grad_Z = NULL, *grad_L = NULL, *mZ = NULL, *vZ = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
 
     /* Other */
@@ -579,16 +574,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             sse += diff * diff;
         }
     }
-    model->sigma2_obs = sse / ((double)model->n_cells * model->n_genes);
-    log_sigma_obs = log(model->sigma2_obs); /* Log for optimization stability */
+    model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
 
     /* Initialize the latent variance parameters to a desired tip variance on the given tree scale (assuming an ultrametric tree) */
-    model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    log_sigma_latent = scalloc(k, sizeof(double));  /* Log for optimization stability */
+    model->log_sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
     double desired_tip_variance = 1.0;
     for (i = 0; i < k; i++) {
-        model->sigma2_latent[i] = desired_tip_variance / mat_get(Sigmas[0], 0, 0);
-        log_sigma_latent[i] = log(model->sigma2_latent[i]);
+        model->log_sigma2_latent[i] = log(desired_tip_variance / mat_get(Sigmas[0], 0, 0));
     }
 
     /* Allocate gradients, moments, and variances for Adam */
@@ -618,13 +610,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Update the learning rate and clipping directives for this optimization step. */
         sched_next(sched, sched_state, (step == 1 ? NULL : &metrics), &directives);
-
-        /* Update the variance parameters in the model object from their log-space 
-        optimization representations. */
-        model->sigma2_obs = exp(log_sigma_obs);
-        for (d = 0; d < k; d++) {
-            model->sigma2_latent[d] = exp(log_sigma_latent[d]);
-        }
 
         /* Compute the objective function and gradients */
         model->objective = gex_model_objective_and_grad(model, gex->X, Sigma_invs,
@@ -666,36 +651,21 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         //     metrics.grad_norm = directives.clip_norm;
         // }
 
-        /* Update the model parameters using Adam optimization steps. */
-        gex_model_adam_update_matrix(model->Z, grad_Z, mZ, vZ, step, directives.lr);
-        gex_model_adam_update_matrix(model->L, grad_L, mL, vL, step, directives.lr);
-        gex_model_adam_update_vector(log_sigma_latent, grad_log_sigma_latent,
-                                     m_log_sigma_latent, v_log_sigma_latent,
-                                     k, step, directives.lr);
-        
-        /* Update the log-space variance parameters. */
-        {
-            double grad_arr[1], m_arr[1], v_arr[1], param_arr[1];
-            grad_arr[0] = grad_log_sigma_obs;
-            m_arr[0] = m_log_sigma_obs;
-            v_arr[0] = v_log_sigma_obs;
-            param_arr[0] = log_sigma_obs;
-            gex_model_adam_update_vector(param_arr, grad_arr, m_arr, v_arr, 1, step, directives.lr);
-            log_sigma_obs = param_arr[0];
-            m_log_sigma_obs = m_arr[0];
-            v_log_sigma_obs = v_arr[0];
-        }
+        /* Perturb the model parameters */
+        adam_step_matrix(model->Z, grad_Z, mZ, vZ, step, directives.lr);
+        adam_step_matrix(model->L, grad_L, mL, vL, step, directives.lr);
+        adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
+                                    m_log_sigma_latent, v_log_sigma_latent,
+                                    k, step, directives.lr);
+        adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
+                           &m_log_sigma_obs, &v_log_sigma_obs,
+                           step, directives.lr);
 
-        /* Track whether the optimizer has entered a stable regime where the
-        objective changes by less than the target relative tolerance from one
-        step to the next. Once this persists for enough consecutive steps
-        beyond the minimum step count, stop the optimization early. */
-        if (step >= min_steps && rel_objective_change < objective_tol) {
+        /* Track whether the optimizer has entered a stable regime */
+        if (step >= min_steps && rel_objective_change < objective_tol)
             stable_steps++;
-        }
-        else {
+        else
             stable_steps = 0;
-        }
 
         /* Log the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
@@ -710,9 +680,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 model->observation_objective,
                 model->brownian_prior_objective,
                 model->l2_objective,
-                model->sigma2_obs);
+                exp(model->log_sigma2_obs));
         for (d = 0; d < k; d++)
-            fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
+            fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
+        fprintf(logf, "\n");
         fflush(logf);
 
         /* Update both moving-average histories. */
@@ -745,14 +716,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             converged = 1;
             break;
         }
-
-    }
-    
-    /* Update the model object with the final variance parameter values from their log-space 
-    representations. */
-    model->sigma2_obs = exp(log_sigma_obs);
-    for (step = 0; step < k; step++) {
-        model->sigma2_latent[step] = exp(log_sigma_latent[step]);
     }
 
     /* Compute the final state objective and gradients. */
@@ -767,7 +730,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     fflush(logf);
 
     /* Free memory */
-    if (log_sigma_latent != NULL) free(log_sigma_latent);
     if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
     if (m_log_sigma_latent != NULL) free(m_log_sigma_latent);
     if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
@@ -802,8 +764,8 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
         mat_free(model->Z);
     if (model->L != NULL) 
         mat_free(model->L);
-    if (model->sigma2_latent != NULL) 
-        free(model->sigma2_latent);
+    if (model->log_sigma2_latent != NULL) 
+        free(model->log_sigma2_latent);
     if (model->latent_mvn != NULL) 
         mvn_free(model->latent_mvn);
 

@@ -32,7 +32,7 @@ static void usage(const char *progname) {
         "[--sigma2-obs S] "
         "[--include-factorization ]"
         "[--identity-cov] "
-        "[--verbose]",
+        "[--verbose]"
         "[--seed S]\n",
         progname);
 }

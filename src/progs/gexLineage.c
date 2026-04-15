@@ -428,11 +428,15 @@ int main(int argc, char *argv[]) {
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(pca->K, sizeof(char *));
     generate_names(factor_names, pca->K, "factor");
+    double *sigma2_latent = scalloc(pca->K, sizeof(double));
+    for (i = 0; i < pca->K; i++) {
+        sigma2_latent[i] = exp(model->log_sigma2_latent[i]);
+    }
     write_model(outprefix, gex_filtered, model->L, model->Z, 
                         gex_filtered->cell_names, gex_filtered->gene_names, factor_names, 
-                        pca->K, model->sigma2_obs, model->sigma2_latent);
+                        pca->K, exp(model->log_sigma2_obs), sigma2_latent);
 
-    printf("Wrote resulting model parameters to outprefix %s.\n", outprefix);
+    printf("Wrote resulting model parameters to outprefix %s\n", outprefix);
 
     /* Free memory */
     if (factor_names != NULL) {
