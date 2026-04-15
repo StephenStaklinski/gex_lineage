@@ -465,7 +465,6 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
                                        Matrix **Sigmas,
                                        int n_sigmas,
                                        int n_perm,
-                                       unsigned int seed,
                                        GexLRTAltMode alt_mode) {
     int i, j, t;   /* Loop indices */
     int n = X->nrows;  /* Number of cells */
@@ -517,7 +516,6 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     mat_center_cols(X_centered);
 
     /* Run the LRT on each gene */
-    rng_state = (seed == 0u ? 1u : seed);
     double ll_null; /* Log-likelihood under the null model */
     double ll_alt;  /* Log-likelihood under the alternative model */
     double *ll_alts = smalloc(n_sigmas * sizeof(double)); /* Log-likelihoods under the alternative model for each tree */
@@ -581,9 +579,11 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
             double sqrt_sigma20 = sqrt(sigma20);
             double sigma20_sim;
             for (rep = 0; rep < n_perm; rep++) {
-                for (i = 0; i < n; i++)
+                for (i = 0; i < n; i++) {
                     /* Draw simulated data independently from the null model N(μ0, σ20) */
+                    rng_state = (unsigned int)random();
                     y_sim[i] = 0 + sqrt_sigma20 * rand_normal(&rng_state);
+                }
                 
                 /* Recalculate the variance of the simulated data */
                 sigma20_sim = 0.0;

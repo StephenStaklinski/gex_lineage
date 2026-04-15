@@ -60,7 +60,6 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
                                        Matrix **Sigmas,
                                        int n_sigmas,
                                        int n_perm,
-                                       unsigned int seed,
                                        GexLRTAltMode alt_mode);
 
 void write_lrt_tsv(const char *filename,

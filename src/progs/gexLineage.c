@@ -86,7 +86,6 @@ int main(int argc, char *argv[]) {
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
-    unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
 
     /* Data structures for calculations later */
@@ -103,7 +102,7 @@ int main(int argc, char *argv[]) {
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
-    
+    set_seed(-1); /* Random seed, for now */
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trees") == 0) {
@@ -196,13 +195,6 @@ int main(int argc, char *argv[]) {
             }
             max_q = atof(argv[++i]);
         }
-        else if (strcmp(argv[i], "--seed") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            seed = (unsigned int)strtoul(argv[++i], NULL, 10);
-        }
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
         }
@@ -214,6 +206,13 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
+        }
+        else if (strcmp(argv[i], "--seed") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            set_seed((unsigned int)atoi(argv[++i]));
         }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
@@ -357,7 +356,7 @@ int main(int argc, char *argv[]) {
         if (filter_mode == GEX_FILTER_LRT) {
             lrt = gex_compute_brownian_lrt(gex->X, filter_Sigmas,
                                            (n_filter_trees == -1 ? 1 : n_filter_trees),
-                                           n_perms, seed, lrt_alt_mode);
+                                           n_perms,lrt_alt_mode);
 
             char lrt_path[4096];
             if (lrt_alt_mode == GEX_LRT_ALT_FULL) {

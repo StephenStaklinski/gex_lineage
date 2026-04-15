@@ -32,7 +32,8 @@ static void usage(const char *progname) {
         "[--sigma2-obs S] "
         "[--include-factorization ]"
         "[--identity-cov] "
-        "[--verbose]\n",
+        "[--verbose]",
+        "[--seed S]\n",
         progname);
 }
 
@@ -67,6 +68,7 @@ int main(int argc, char *argv[]) {
     int i;
     int n_cells;
     int sim_dim;
+    set_seed(-1); /* Random seed, for now */
     
 
     for (i = 1; i < argc; i++) {
@@ -141,6 +143,13 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
+        }
+        else if (strcmp(argv[i], "--seed") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            set_seed((unsigned int)atoi(argv[++i]));
         }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);

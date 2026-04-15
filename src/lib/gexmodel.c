@@ -586,9 +586,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
     log_sigma_latent = scalloc(k, sizeof(double));  /* Log for optimization stability */
     double desired_tip_variance = 1.0;
-    for (i = 0; i < k; i++)
+    for (i = 0; i < k; i++) {
         model->sigma2_latent[i] = desired_tip_variance / mat_get(Sigmas[0], 0, 0);
         log_sigma_latent[i] = log(model->sigma2_latent[i]);
+    }
 
     /* Allocate gradients, moments, and variances for Adam */
     grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
@@ -816,7 +817,7 @@ Matrix **downsample_sigmas(Matrix **Sigmas,
     int i;
     Matrix **selected = NULL;
     int *indices = NULL;
-    unsigned int rng_state = (unsigned int)(time(NULL) ^ getpid()); /* Initialize RNG state */
+    set_seed(-1);
 
     if (Sigmas == NULL || n_sigmas <= 0)
         return NULL;
@@ -838,12 +839,8 @@ Matrix **downsample_sigmas(Matrix **Sigmas,
         indices[i] = i;
 
     for (i = 0; i < n_keep; i++) {
-        int j;
-        int tmp;
-
-        rng_state = (rng_state * 1664525u) + 1013904223u;
-        j = i + (int)(rng_state % (unsigned int)(n_sigmas - i));
-        tmp = indices[i];
+        int j = i + (int)(random() % (n_sigmas - i));
+        int tmp = indices[i];
         indices[i] = indices[j];
         indices[j] = tmp;
         selected[i] = Sigmas[indices[i]];
@@ -922,7 +919,7 @@ void simulate_factorization_and_reconstruction(Matrix *Z,
                                      Matrix *L_out,
                                      GexMatrix *gex_out) {
     int i, j, d;    /* Loop indices */
-    unsigned int rng_state = (unsigned int)(time(NULL) ^ getpid()); /* Initialize RNG state */
+    unsigned int rng_state;
 
     /* Draw gene loadings L ~ N(0,1) and rescale each row to have norm
     sqrt(n_genes / k), ensuring each latent dimension contributes
@@ -932,6 +929,7 @@ void simulate_factorization_and_reconstruction(Matrix *Z,
     for (d = 0; d < k; d++) {
         row_ss = 0.0;    /* Sum of squares for the current row */
         for (j = 0; j < n_genes; j++) {
+            rng_state = (unsigned int)random();
             double val = rand_normal(&rng_state);
             mat_set(L_out, d, j, val);
             row_ss += val * val;
@@ -952,8 +950,10 @@ void simulate_factorization_and_reconstruction(Matrix *Z,
     for (i = 0; i < n_cells; i++) {
         for (j = 0; j < n_genes; j++) {
             double val = mat_get(gex_out->X, i, j);
-            if (sigma2_obs > 0.0)
+            if (sigma2_obs > 0.0) {
+                rng_state = (unsigned int)random();
                 val += sqrt(sigma2_obs) * rand_normal(&rng_state);
+            }
             mat_set(gex_out->X, i, j, val);
         }
     }
