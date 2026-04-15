@@ -414,7 +414,7 @@ int main(int argc, char *argv[]) {
 
     /* Downsample the input set of trees for fitting the latent model if requested */
     if (n_model_trees > 0 && n_model_trees < n_trees) {
-        model_Sigmas = downsample_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u);
+        model_Sigmas = downsample_sigmas(Sigmas, n_trees, n_model_trees);
         printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
     } else {
         model_Sigmas = Sigmas;
@@ -424,7 +424,7 @@ int main(int argc, char *argv[]) {
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
     model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees,
-                                          pca, l2_strength, seed, outprefix);
+                                          pca, l2_strength, outprefix);
 
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(pca->K, sizeof(char *));

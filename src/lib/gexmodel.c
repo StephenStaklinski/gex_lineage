@@ -480,7 +480,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       int n_sigmas,
                                                       PCA *pca,
                                                       double l2_strength,
-                                                      unsigned int seed,
                                                       const char *outprefix) {
     /* Optimization related */
     int step;   /* Optimization step */
@@ -509,7 +508,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     const double objective_tol = 1e-3;  /* Relative objective tolerance used for convergence */
 
     /* Model related */
-    int k;  /* Number of latent dimensions */
+    int k = pca->K;   /* Number of latent dimensions comes from the number of input PCA components */
     int n_cells = gex->X->nrows;
     int n_genes = gex->X->ncols;
     GexLatentBrownianModel *model = NULL;   /* Fitted model */
@@ -534,22 +533,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
 
-    /* Input validation */
-    if (gex == NULL || gex->X == NULL || Sigmas == NULL || n_sigmas <= 0 || pca == NULL ||
-        pca->K <= 0 || outprefix == NULL)
-        return NULL;
-
-    /* Open a log file to record the optimization trajectory while fitting
-    the latent Brownian model. */
+    /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
     fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
-    for (i = 0; i < pca->K; i++)
+    for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_norm\tL_norm\n");
 
-    /* Build regularized versions of the phylogenetic covariance matrices and
-    precompute the inverse and log-determinant for each tree. */
+    /* Pre-compute the inverse and log-determinant for each tree */
     n = gex->X->nrows;
     Sigma_invs = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
@@ -558,9 +550,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         mat_invert(Sigma_invs[i], Sigmas[i]);
         logdet_sigmas[i] = mat_logdet(Sigmas[i]);
     }
-
-    /* Use the number of input PCA components as the number of latent dimensions */
-    k = pca->K; 
 
     /* Allocate the model object and its core parameter matrices. */
     model = scalloc(1, sizeof(GexLatentBrownianModel));
@@ -577,38 +566,27 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     for (i = 0; i < k; i++)
         model->sigma2_latent[i] = desired_tip_variance / mat_get(Sigmas[0], 0, 0);
 
-    /* Initialize the factor loading matrix directly from the retained PCA
-    components, then initialize latent coordinates as the corresponding PCA
-    scores Z = X_centered * L^T. */
-    for (d = 0; d < model->k; d++) {
-        for (j = 0; j < model->n_genes; j++)
-            mat_set(model->L, d, j, mat_get(pca->components, d, j));
-    }
+    /* L comes from the PCA */
+    mat_copy(model->L, pca->components);
 
-    for (i = 0; i < model->n_cells; i++) {
-        for (d = 0; d < model->k; d++) {
-            double score = 0.0;
-            for (j = 0; j < model->n_genes; j++)
-                score += mat_get(gex->X, i, j) * mat_get(model->L, d, j);
-            mat_set(model->Z, i, d, score);
-        }
-    }
+    /* Initialize Z = X * L^T */
+    Matrix *Lt = mat_transpose(pca->components);
+    mat_mult(model->Z, gex->X, Lt);
+    mat_free(Lt);
 
-    /* Initialize the observation variance parameter by computing the residual sum of squares.
-    This accounts for the difference between the observed and predicted values given
-    the retention of only a subset of PCA components. */
+    /* Initialize sigma2_obs from the residual sum of squares */
     double sse = 0.0;
+    double pred, diff;
     for (i = 0; i < model->n_cells; i++) {
         for (j = 0; j < model->n_genes; j++) {
-            double pred = 0.0;
+            pred = 0.0;
             for (d = 0; d < model->k; d++)
                 pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);
-            sse += pow(mat_get(gex->X, i, j) - pred, 2.0);
+            diff = mat_get(gex->X, i, j) - pred;
+            sse += diff * diff;
         }
     }
     model->sigma2_obs = sse / ((double)model->n_cells * model->n_genes);
-    if (model->sigma2_obs < 1e-6)
-        model->sigma2_obs = 1e-6;
 
     /* Allocate gradients, moments, and variances that Adam needs for each parameter.
     Use a log-variance parameterization during optimization for the variance parameters 
@@ -624,6 +602,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     vZ = mat_new(model->n_cells, k);    /* Second moment of latent coordinates */
     mL = mat_new(k, model->n_genes);    /* First moment of factor loadings */
     vL = mat_new(k, model->n_genes);    /* Second moment of factor loadings */
+    mat_zero(mZ); mat_zero(vZ); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
 
     /* Initialize history arrays for running averages of the objective function */
     objective_hist_long = scalloc(running_avg_window_long, sizeof(double));
@@ -633,16 +612,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     for (step = 0; step < k; step++)
         log_sigma_latent[step] = log(model->sigma2_latent[step]);
 
-    /* Zero the gradient matrices. */
-    mat_zero(mZ); mat_zero(vZ); mat_zero(mL); mat_zero(vL);
-    (void)seed;
-
     /* Initialize the scheduler that controls learning-rate and clipping
     directives across optimization steps.*/
     sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5); /* Parameter order: n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
     sched_state = sched_new_state(sched);
-    if (sched == NULL || sched_state == NULL)
-        return NULL;
     metrics.grad_norm = 0.0;    /* Initialize the gradient norm */
 
     /* Run gradient-based optimization of latent coordinates, gene loadings,
@@ -854,12 +827,11 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
 /* Select a subset of covariance matrices (trees) by sampling without replacement. */
 Matrix **downsample_sigmas(Matrix **Sigmas,
                                 int n_sigmas,
-                                int n_keep,
-                                unsigned int seed) {
+                                int n_keep) {
     int i;
     Matrix **selected = NULL;
     int *indices = NULL;
-    unsigned int rng_state = (seed == 0u ? 1u : seed);
+    unsigned int rng_state = (unsigned int)(time(NULL) ^ getpid()); /* Initialize RNG state */
 
     if (Sigmas == NULL || n_sigmas <= 0)
         return NULL;
