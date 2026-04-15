@@ -361,7 +361,7 @@ static double gex_model_grad_norm(Matrix *grad_Z,
                                   int k) {
     int i, j;
     double ss = 0.0;
-    int val;
+    double val;
     /* Add the squared gradients for Z */
     for (i = 0; i < grad_Z->nrows; i++) {
         for (j = 0; j < grad_Z->ncols; j++) {
@@ -524,6 +524,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
     for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
+    fprintf(logf, "\n");
 
     /* Pre-compute the inverse and log-determinant for each tree */
     n = gex->X->nrows;
@@ -566,11 +567,25 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
     model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
 
-    /* Initialize the latent variance parameters to a desired tip variance on the given tree scale (assuming an ultrametric tree) */
+    /* Initialize the latent variance parameters to the desired tip variance implied 
+    by the PCA initialization of Z for the given tree scale (assuming an ultrametric tree) */
     model->log_sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    double desired_tip_variance = 1.0;
-    for (i = 0; i < k; i++) {
-        model->log_sigma2_latent[i] = log(desired_tip_variance / mat_get(Sigmas[0], 0, 0));
+    double tip_var_scale = mat_get(Sigmas[0], 0, 0);
+    for (d = 0; d < k; d++) {
+        double mean_z = 0.0;
+        double var_z = 0.0;
+
+        for (i = 0; i < n_cells; i++)
+            mean_z += mat_get(model->Z, i, d);
+        mean_z /= (double)n_cells;
+
+        for (i = 0; i < n_cells; i++) {
+            double diff = mat_get(model->Z, i, d) - mean_z;
+            var_z += diff * diff;
+        }
+        var_z /= (double)n_cells;
+
+        model->log_sigma2_latent[d] = log(var_z / tip_var_scale);
     }
 
     /* Allocate gradients, moments, and variances for Adam */
