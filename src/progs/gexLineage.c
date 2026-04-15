@@ -18,10 +18,10 @@
 
 /* Select a subset of covariance matrices (trees) for latent model fitting
 by sampling without replacement. */
-static Matrix **gexlineage_select_model_sigmas(Matrix **Sigmas,
-                                               int n_sigmas,
-                                               int n_keep,
-                                               unsigned int seed) {
+static Matrix **downsample_model_sigmas(Matrix **Sigmas,
+                                    int n_sigmas,
+                                    int n_keep,
+                                    unsigned int seed) {
     int i;
     Matrix **selected = NULL;
     int *indices = NULL;
@@ -413,50 +413,10 @@ int main(int argc, char *argv[]) {
         if (filter_only) {
             return 0;
         }
-
-        /* Filter genes based on the results of the correlation and/or LRT test(s) */
-        gex_filtered = gex_filter_genes(gex, morans, lrt, filter_mode, max_q);
-        if (gex_filtered == NULL) {
-            fprintf(stderr, "ERROR: failed to filter genes by selected test(s).\n");
-            return 1;
-        }
-        printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
-        printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
-    } else {
-        gex_filtered = gex;
-        gex = NULL;
-        printf("Skipping phylogenetic signal gene filtering and using all %d gene(s) for modeling.\n",
-               gex_filtered->X->ncols);
-        printf("Running PCA on the input unfiltered gene expression matrix to select the number of latent factor dimensions for the model...\n");
     }
 
-    /* Run PCA on the filtered matrix and retain the smallest number of
-    components needed to explain at least the requested variance. */
-    pca = compute_pca(gex_filtered->X, pca_var_threshold);
-    if (pca == NULL) {
-        fprintf(stderr, "ERROR: PCA failed.\n");
-        return 1;
-    }
-    printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n",
-           pca->K, 100.0 * pca_var_threshold);
-    if (verbose) {
-        print_pca_summary(pca);
-    }
-
-    /* Downsample the input set of covariance matrices (trees) for fitting the latent model if requested */
-    if (n_model_trees > 0 && n_model_trees < n_trees) {
-        model_Sigmas = gexlineage_select_model_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u);
-        if (model_Sigmas == NULL) {
-            fprintf(stderr, "ERROR: failed to select covariance matrices for latent model fitting.\n");
-            return 1;
-        }
-        printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
-    } else {
-        model_Sigmas = Sigmas;
-        n_model_trees = n_trees;
-    }
-
-    /* Pre-process the gene expression data for modeling */
+    /* Pre-process the gene expression data for modeling before filtering genes */
+    printf("Pre-processing the gene expression data for modeling...\n");
     /* Library size normalization per-cell */
     mat_normalize_rows(gex->X);
     /* Scale by global factor to counts per 10k */
@@ -467,14 +427,42 @@ int main(int argc, char *argv[]) {
     /* Transform log-normalized counts into the residuals */
     mat_center_cols(gex->X);
 
+
+    if (no_filter) {
+        /* Keep all genes */
+        gex_filtered = gex;
+        gex = NULL;
+        printf("Skipping phylogenetic signal gene filtering and using all %d gene(s) for modeling.\n", gex_filtered->X->ncols);
+        printf("Running PCA on the input unfiltered gene expression matrix to select the number of latent factor dimensions for the model...\n");
+    } else {
+        /* Filter genes */
+        gex_filtered = gex_filter_genes(gex, morans, lrt, filter_mode, max_q);
+        printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
+        printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
+
+    }
+
+    /* Run PCA on the filtered matrix and retain the smallest number of
+    components needed to explain at least the requested variance. */
+    pca = compute_pca(gex_filtered->X, pca_var_threshold);
+    printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
+    if (verbose) {
+        print_pca_summary(pca);
+    }
+
+    /* Downsample the input set of trees for fitting the latent model if requested */
+    if (n_model_trees > 0 && n_model_trees < n_trees) {
+        model_Sigmas = downsample_model_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u);
+        printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
+    } else {
+        model_Sigmas = Sigmas;
+        n_model_trees = n_trees;
+    }
+
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
     model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees,
                                           pca, l2_strength, seed, outprefix);
-    if (model == NULL) {
-        fprintf(stderr, "ERROR: failed to fit latent Brownian gene expression model.\n");
-        return 1;
-    }
 
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(pca->K, sizeof(char *));

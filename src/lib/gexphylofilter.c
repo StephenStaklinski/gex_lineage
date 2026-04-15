@@ -795,10 +795,6 @@ GexMatrix *gex_filter_genes(GexMatrix *gex,
     /* Copy cell names */
     for (i = 0; i < out->X->nrows; i++) {
         out->cell_names[i] = strdup(gex->cell_names[i]);
-        if (out->cell_names[i] == NULL) {
-            gex_free_matrix_data(out);
-            return NULL;
-        }
     }
 
     /* Fill the output matrix with passing genes  */
@@ -806,10 +802,7 @@ GexMatrix *gex_filter_genes(GexMatrix *gex,
         if (gex_keep_gene(morans, lrt, j, mode, max_q)) {
             /* Copy gene name that passed the filter(s) */
             out->gene_names[out_j] = strdup(gex->gene_names[j]);
-            if (out->gene_names[out_j] == NULL) {
-                gex_free_matrix_data(out);
-                return NULL;
-            }
+            
             /* Copy expression values for the passing gene */
             for (i = 0; i < gex->X->nrows; i++)
                 mat_set(out->X, i, out_j, mat_get(gex->X, i, j));
