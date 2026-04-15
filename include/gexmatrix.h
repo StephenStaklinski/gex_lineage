@@ -10,17 +10,19 @@ typedef struct {
     char **gene_names;
 } GexMatrix;
 
+void gex_free_matrix_data(GexMatrix *gex);
+
 void mat_set_col(Matrix *res, int i, Vector *sim_vec);
 
 void mat_add_mat(Matrix *dest, Matrix *src);
-
-void gex_free_matrix_data(GexMatrix *gex);
 
 void mat_normalize_rows(Matrix *X);
 
 void mat_log1p(Matrix *X);
 
 void mat_center_cols(Matrix *X);
+
+Matrix *mat_centered_cov(Matrix *Xc);
 
 void mat_standardize_cols(Matrix *X);
 
@@ -55,5 +57,11 @@ void write_labeled_matrix_tsv(const char *filename,
                                  char **col_names,
                                  int n_cols,
                                  const char *corner_label);
+
+double mat_frobenius_norm(Matrix *M);
+
+double mat_logdet_chol(Matrix *L);
+
+double mat_logdet(Matrix *Sigma);
 
 #endif

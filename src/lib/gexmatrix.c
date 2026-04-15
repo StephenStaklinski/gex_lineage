@@ -6,6 +6,28 @@
 #include <math.h>
 #include <stdlib.h>
 
+void gex_free_matrix_data(GexMatrix *gex) {
+    int i;
+
+    if (gex == NULL) return;
+
+    if (gex->cell_names != NULL) {
+        for (i = 0; i < gex->X->nrows; i++)
+            free(gex->cell_names[i]);
+        free(gex->cell_names);
+    }
+
+    if (gex->gene_names != NULL) {
+        for (i = 0; i < gex->X->ncols; i++)
+            free(gex->gene_names[i]);
+        free(gex->gene_names);
+    }
+
+    if (gex->X != NULL)
+        mat_free(gex->X);
+
+    free(gex);
+}
 
 /* Set the i-th column of matrix res to the values in vector sim_vec 
 in-place. */
@@ -84,6 +106,29 @@ void mat_center_cols(Matrix *X) {
             mat_set(X, i, j, val);
         }
     }
+}
+
+/* Compute the covariance matrix of a centered matrix. */
+Matrix *mat_centered_cov(Matrix *Xc) {
+    int i, j, k;
+    int n = Xc->nrows;
+    int p = Xc->ncols;
+    Matrix *Cov = NULL;
+
+    Cov = mat_new(p, p);
+
+    for (j = 0; j < p; j++) {
+        for (k = j; k < p; k++) {
+            double sum = 0.0;
+            for (i = 0; i < n; i++) {
+                sum += mat_get(Xc, i, j) * mat_get(Xc, i, k);
+            }
+            sum /= (double)(n - 1);
+            mat_set(Cov, j, k, sum);
+            mat_set(Cov, k, j, sum);
+        }
+    }
+    return Cov;
 }
 
 /* Standardize the columns of a matrix by subtracting the mean and 
@@ -337,26 +382,43 @@ void write_labeled_matrix_tsv(const char *filename,
     fclose(out);
 }
 
-void gex_free_matrix_data(GexMatrix *gex) {
-    int i;
+/* Compute the Frobenius norm of a matrix.
+This is equivalent to the Euclidean (l2) norm of all entries
+treated as a single vector. */
+double mat_frobenius_norm(Matrix *M) {
+    int i, j;
+    double ss = 0.0;
 
-    if (gex == NULL) return;
-
-    if (gex->cell_names != NULL) {
-        for (i = 0; i < gex->X->nrows; i++)
-            free(gex->cell_names[i]);
-        free(gex->cell_names);
+    for (i = 0; i < M->nrows; i++) {
+        for (j = 0; j < M->ncols; j++)
+            ss += pow(mat_get(M, i, j), 2.0);
     }
 
-    if (gex->gene_names != NULL) {
-        for (i = 0; i < gex->X->ncols; i++)
-            free(gex->gene_names[i]);
-        free(gex->gene_names);
-    }
-
-    if (gex->X != NULL)
-        mat_free(gex->X);
-
-    free(gex);
+    return sqrt(ss);
 }
 
+/* Compute the log-determinant of a matrix given its Cholesky factor L. */
+double mat_logdet_chol(Matrix *L) {
+    int j;
+    double logdet_sigma = 0.0;
+    for (j = 0; j < L->nrows; j++) {
+        double diag = mat_get(L, j, j);
+        logdet_sigma += log(diag);
+    }
+    logdet_sigma *= 2.0;
+
+    return logdet_sigma;
+}
+
+/* Compute the log-determinant of a matrix*/
+double mat_logdet(Matrix *Sigma) {
+
+    Matrix *L = mat_new(Sigma->nrows, Sigma->nrows);
+    mat_cholesky(L, Sigma);
+
+    double logdet_sigma =  mat_logdet_chol(L);
+
+    mat_free(L);
+
+    return logdet_sigma;
+}

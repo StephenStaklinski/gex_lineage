@@ -1,5 +1,7 @@
 #include "gexpca.h"
 
+#include "gexmatrix.h"
+
 #include <phast/matrix.h>
 #include <phast/misc.h>
 #include <phast/eigen.h>
@@ -22,58 +24,6 @@ static int cmp_eigpair_desc(const void *a, const void *b) {
     if (ea->val < eb->val) return 1;
     if (ea->val > eb->val) return -1;
     return 0;
-}
-
-/* Center the columns of a matrix by subtracting the mean of each column. */
-Matrix *center_matrix(Matrix *X) {
-    int i, j;
-    int n = X->nrows;
-    int p = X->ncols;
-    double *means = NULL;
-    Matrix *Xc = NULL;
-
-    means = scalloc(p, sizeof(double));
-
-    Xc = mat_new(n, p);
-
-    for (j = 0; j < p; j++) {
-        for (i = 0; i < n; i++)
-            means[j] += mat_get(X, i, j);
-        means[j] /= (double)n;
-    }
-
-    for (i = 0; i < n; i++) {
-        for (j = 0; j < p; j++) {
-            mat_set(Xc, i, j, mat_get(X, i, j) - means[j]);
-        }
-    }
-
-    free(means);
-    return Xc;
-}
-
-/* Compute the covariance matrix of a centered matrix. */
-static Matrix *compute_covariance(Matrix *Xc) {
-    int i, j, k;
-    int n = Xc->nrows;
-    int p = Xc->ncols;
-    Matrix *Cov = NULL;
-
-    Cov = mat_new(p, p);
-
-    for (j = 0; j < p; j++) {
-        for (k = j; k < p; k++) {
-            double sum = 0.0;
-            for (i = 0; i < n; i++) {
-                sum += mat_get(Xc, i, j) * mat_get(Xc, i, k);
-            }
-            sum /= (double)(n - 1);
-            mat_set(Cov, j, k, sum);
-            mat_set(Cov, k, j, sum);
-        }
-    }
-
-    return Cov;
 }
 
 /* Compute the number of PCA components needed to explain a certain proportion of the total variance. */
@@ -105,9 +55,9 @@ static int pca_components_for_variance_threshold_internal(double *var_explained,
 Return a pointer to the result or NULL on failure. */
 PCA *compute_pca(Matrix *X, double variance_threshold) {
     int i, j;   /* Loop indices */
-    int p;  /* Number of genes */
+    int p = X->ncols;;  /* Number of genes */
     int keep_K; /* Number of components to keep based on variance threshold */
-    Matrix *Xc = NULL;  /* Centered gene expression matrix */
+    Matrix *Xc = mat_create_copy(X); /* Centered gene expression matrix */
     Matrix *Cov = NULL; /* Covariance matrix of the centered data */
     Matrix *eigvecs = NULL; /* Matrix of eigenvectors (columns) from eigendecomposition of covariance matrix */
     Vector *eigvals = NULL; /* Vector of eigenvalues from eigendecomposition of covariance matrix */
@@ -117,29 +67,11 @@ PCA *compute_pca(Matrix *X, double variance_threshold) {
     Matrix *new_components = NULL; /* Reduced components matrix */
     double *new_var = NULL;    /* Reduced variance explained array */
 
-    if (X == NULL) {
-        fprintf(stderr, "ERROR: compute_pca received NULL matrix\n");
-        return NULL;
-    }
-
-    if (X->nrows < 2) {
-        fprintf(stderr, "ERROR: need at least 2 rows to compute PCA\n");
-        return NULL;
-    }
-
-    p = X->ncols;
-
     /* Center the gene expression matrix by subtracting the mean of each column */
-    Xc = center_matrix(X);
-    if (Xc == NULL)
-        return NULL;
+    mat_center_cols(Xc);
 
     /* Compute the covariance matrix of the centered data */
-    Cov = compute_covariance(Xc);
-    if (Cov == NULL) {
-        mat_free(Xc);
-        return NULL;
-    }
+    Cov = mat_centered_cov(Xc);
 
     /* Allocate memory for eigenvectors and eigenvalues */
     eigvals = vec_new(p);

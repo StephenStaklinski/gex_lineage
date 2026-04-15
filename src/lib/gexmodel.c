@@ -129,69 +129,6 @@ static double log_mvn_vec(const double *z,
            -0.5 * quad / sigma2;
 }
 
-/* Build a jitter-regularized copy of a symmetric matrix, then compute its
-inverse and log-determinant. Returns 0 on success and -1 on failure. */
-static int compute_matrix_inv_and_logdet(Matrix *Sigma,
-                                   Matrix *Sigma_inv,
-                                   double *logdet_sigma) {
-    int j;
-    int n;
-    double max_diag = 0.0;
-    double jitter;
-    Matrix *Sigma_reg = NULL;
-    Matrix *L = NULL;
-
-    if (Sigma == NULL || Sigma_inv == NULL || logdet_sigma == NULL)
-        return -1;
-    if (Sigma->nrows != Sigma->ncols ||
-        Sigma_inv->nrows != Sigma->nrows ||
-        Sigma_inv->ncols != Sigma->ncols)
-        return -1;
-
-    n = Sigma->nrows;
-    Sigma_reg = mat_create_copy(Sigma);
-    L = mat_new(n, n);
-    if (Sigma_reg == NULL || L == NULL) {
-        if (Sigma_reg != NULL)
-            mat_free(Sigma_reg);
-        if (L != NULL)
-            mat_free(L);
-        return -1;
-    }
-
-    for (j = 0; j < n; j++) {
-        double diag = mat_get(Sigma, j, j);
-        if (diag > max_diag)
-            max_diag = diag;
-    }
-    jitter = (max_diag > 0.0 ? 1e-8 * max_diag : 1e-8);
-
-    for (j = 0; j < n; j++)
-        mat_set(Sigma_reg, j, j, mat_get(Sigma_reg, j, j) + jitter);
-
-    if (mat_invert(Sigma_inv, Sigma_reg) != 0 ||
-        mat_cholesky(L, Sigma_reg) != 0) {
-        mat_free(Sigma_reg);
-        mat_free(L);
-        return -1;
-    }
-
-    *logdet_sigma = 0.0;
-    for (j = 0; j < n; j++) {
-        double diag = mat_get(L, j, j);
-        if (diag <= 0.0) {
-            mat_free(Sigma_reg);
-            mat_free(L);
-            return -1;
-        }
-        *logdet_sigma += 2.0 * log(diag);
-    }
-
-    mat_free(Sigma_reg);
-    mat_free(L);
-    return 0;
-}
-
 /* Compute the mixture-of-Brownian Gaussian prior contribution for the latent
 factors Z across all latent dimensions. Returns the contribution to the
 objective, adds the prior gradient to Z, and computes gradients with respect
@@ -422,50 +359,50 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
-/* Compute the L2 (Euclidean) norm of the gradient ||g||_2 = sqrt( sum_i g_i^2 ),
-treating all parameter gradients (Z, L, log(sigma2_latent), log(sigma2_obs))
-as a single concatenated vector g. Returns the overall gradient magnitude. */
-static double gex_model_grad_norm(Matrix *grad_Z,
-                                  Matrix *grad_L,
-                                  double *grad_log_sigma_latent,
-                                  double grad_log_sigma_obs,
-                                  int k) {
-    int i, j;
-    double ss = 0.0;
-    /* Add the squared gradients for Z */
-    for (i = 0; i < grad_Z->nrows; i++)
-        for (j = 0; j < grad_Z->ncols; j++)
-            ss += pow(mat_get(grad_Z, i, j), 2.0);
-    /* Add the squared gradients for L */
-    for (i = 0; i < grad_L->nrows; i++)
-        for (j = 0; j < grad_L->ncols; j++)
-            ss += pow(mat_get(grad_L, i, j), 2.0);
-    /* Add the squared gradients for log(sigma2_latent) for all latent factors */
-    for (i = 0; i < k; i++)
-        ss += pow(grad_log_sigma_latent[i], 2.0);
-    /* Add the squared gradient for log(sigma2_obs) */
-    ss += grad_log_sigma_obs * grad_log_sigma_obs;
-    return sqrt(ss);
-}
+// /* Compute the L2 (Euclidean) norm of the gradient ||g||_2 = sqrt( sum_i g_i^2 ),
+// treating all parameter gradients (Z, L, log(sigma2_latent), log(sigma2_obs))
+// as a single concatenated vector g. Returns the overall gradient magnitude. */
+// static double gex_model_grad_norm(Matrix *grad_Z,
+//                                   Matrix *grad_L,
+//                                   double *grad_log_sigma_latent,
+//                                   double grad_log_sigma_obs,
+//                                   int k) {
+//     int i, j;
+//     double ss = 0.0;
+//     /* Add the squared gradients for Z */
+//     for (i = 0; i < grad_Z->nrows; i++)
+//         for (j = 0; j < grad_Z->ncols; j++)
+//             ss += pow(mat_get(grad_Z, i, j), 2.0);
+//     /* Add the squared gradients for L */
+//     for (i = 0; i < grad_L->nrows; i++)
+//         for (j = 0; j < grad_L->ncols; j++)
+//             ss += pow(mat_get(grad_L, i, j), 2.0);
+//     /* Add the squared gradients for log(sigma2_latent) for all latent factors */
+//     for (i = 0; i < k; i++)
+//         ss += pow(grad_log_sigma_latent[i], 2.0);
+//     /* Add the squared gradient for log(sigma2_obs) */
+//     ss += grad_log_sigma_obs * grad_log_sigma_obs;
+//     return sqrt(ss);
+// }
 
-/* Scale all gradients by a constant factor. */
-static void gex_model_scale_grads(Matrix *grad_Z,
-                                  Matrix *grad_L,
-                                  double *grad_log_sigma_latent,
-                                  double *grad_log_sigma_obs,
-                                  int k,
-                                  double scale) {
-    int i, j;
-    for (i = 0; i < grad_Z->nrows; i++)
-        for (j = 0; j < grad_Z->ncols; j++)
-            mat_set(grad_Z, i, j, mat_get(grad_Z, i, j) * scale);
-    for (i = 0; i < grad_L->nrows; i++)
-        for (j = 0; j < grad_L->ncols; j++)
-            mat_set(grad_L, i, j, mat_get(grad_L, i, j) * scale);
-    for (i = 0; i < k; i++)
-        grad_log_sigma_latent[i] *= scale;
-    *grad_log_sigma_obs *= scale;
-}
+// /* Scale all gradients by a constant factor. */
+// static void gex_model_scale_grads(Matrix *grad_Z,
+//                                   Matrix *grad_L,
+//                                   double *grad_log_sigma_latent,
+//                                   double *grad_log_sigma_obs,
+//                                   int k,
+//                                   double scale) {
+//     int i, j;
+//     for (i = 0; i < grad_Z->nrows; i++)
+//         for (j = 0; j < grad_Z->ncols; j++)
+//             mat_set(grad_Z, i, j, mat_get(grad_Z, i, j) * scale);
+//     for (i = 0; i < grad_L->nrows; i++)
+//         for (j = 0; j < grad_L->ncols; j++)
+//             mat_set(grad_L, i, j, mat_get(grad_L, i, j) * scale);
+//     for (i = 0; i < k; i++)
+//         grad_log_sigma_latent[i] *= scale;
+//     *grad_log_sigma_obs *= scale;
+// }
 
 /* Perform one Adam optimization update for a matrix parameter.
 
@@ -527,21 +464,6 @@ static void gex_model_adam_update_vector(double *param,
         v[i] = v_new;
         param[i] -= lr * mhat / (sqrt(vhat) + ADAM_EPS);
     }
-}
-
-/* Compute the Frobenius norm of a matrix.
-This is equivalent to the Euclidean (l2) norm of all entries
-treated as a single vector. */
-static double frobenius_norm(Matrix *M) {
-    int i, j;
-    double ss = 0.0;
-
-    for (i = 0; i < M->nrows; i++) {
-        for (j = 0; j < M->ncols; j++)
-            ss += pow(mat_get(M, i, j), 2.0);
-    }
-
-    return sqrt(ss);
 }
 
 /* Main model entry point. Fit a low-rank factorization of the centered gene
@@ -631,17 +553,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     n = gex->X->nrows;
     Sigma_invs = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
-
     for (i = 0; i < n_sigmas; i++) {
-        if (Sigmas[i] == NULL || Sigmas[i]->nrows != n || Sigmas[i]->ncols != n)
-            return NULL;
-
         Sigma_invs[i] = mat_new(n, n);
-        if (Sigma_invs[i] == NULL)
-            return NULL;
-
-        if (compute_matrix_inv_and_logdet(Sigmas[i], Sigma_invs[i], &logdet_sigmas[i]) != 0)
-            return NULL;
+        mat_invert(Sigma_invs[i], Sigmas[i]);
+        logdet_sigmas[i] = mat_logdet(Sigmas[i]);
     }
 
     /* Use the number of input PCA components as the number of latent dimensions */
@@ -742,12 +657,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         /* Update the variance parameters in the model object from their log-space 
         optimization representations. */
         model->sigma2_obs = exp(log_sigma_obs);
-        if (model->sigma2_obs < 1e-8) 
-            model->sigma2_obs = 1e-8;
         for (d = 0; d < k; d++) {
             model->sigma2_latent[d] = exp(log_sigma_latent[d]);
-            if (model->sigma2_latent[d] < 1e-8) 
-                model->sigma2_latent[d] = 1e-8;
         }
 
         /* Compute the objective function and gradients */
@@ -757,10 +668,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
         
-        /* Compute the gradient norm */
-        metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
-                                                grad_log_sigma_latent,
-                                                grad_log_sigma_obs, k);
+        // /* Compute the gradient norm */
+        // metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
+        //                                         grad_log_sigma_latent,
+        //                                         grad_log_sigma_obs, k);
 
         /* Compare the short and long running averages of the objective so
         that convergence is judged using denoised trends at two time scales. */
@@ -782,13 +693,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             rel_objective_change = HUGE_VAL;
         }
 
-        /* Re-scale the gradients if their norm exceeds the clipping threshold. */
-        if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
-            double scale = directives.clip_norm / metrics.grad_norm;
-            gex_model_scale_grads(grad_Z, grad_L, grad_log_sigma_latent,
-                                  &grad_log_sigma_obs, k, scale);
-            metrics.grad_norm = directives.clip_norm;
-        }
+        // /* Re-scale the gradients if their norm exceeds the clipping threshold. */
+        // if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
+        //     double scale = directives.clip_norm / metrics.grad_norm;
+        //     gex_model_scale_grads(grad_Z, grad_L, grad_log_sigma_latent,
+        //                           &grad_log_sigma_obs, k, scale);
+        //     metrics.grad_norm = directives.clip_norm;
+        // }
 
         /* Update the model parameters using Adam optimization steps. */
         gex_model_adam_update_matrix(model->Z, grad_Z, mZ, vZ, step, directives.lr);
@@ -838,8 +749,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
         fprintf(logf, "\t%.17g\t%.17g\n",
-                frobenius_norm(model->Z),
-                frobenius_norm(model->L));
+                mat_frobenius_norm(model->Z),
+                mat_frobenius_norm(model->L));
         fflush(logf);
 
         /* Update both moving-average histories. */
@@ -938,6 +849,51 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
         mvn_free(model->latent_mvn);
 
     free(model);
+}
+
+/* Select a subset of covariance matrices (trees) by sampling without replacement. */
+Matrix **downsample_sigmas(Matrix **Sigmas,
+                                int n_sigmas,
+                                int n_keep,
+                                unsigned int seed) {
+    int i;
+    Matrix **selected = NULL;
+    int *indices = NULL;
+    unsigned int rng_state = (seed == 0u ? 1u : seed);
+
+    if (Sigmas == NULL || n_sigmas <= 0)
+        return NULL;
+
+    if (n_keep <= 0 || n_keep >= n_sigmas)
+        n_keep = n_sigmas;
+
+    selected = scalloc(n_keep, sizeof(Matrix *));
+
+    if (n_keep == n_sigmas) {
+        for (i = 0; i < n_sigmas; i++)
+            selected[i] = Sigmas[i];
+        return selected;
+    }
+
+    indices = smalloc(n_sigmas * sizeof(int));
+
+    for (i = 0; i < n_sigmas; i++)
+        indices[i] = i;
+
+    for (i = 0; i < n_keep; i++) {
+        int j;
+        int tmp;
+
+        rng_state = (rng_state * 1664525u) + 1013904223u;
+        j = i + (int)(rng_state % (unsigned int)(n_sigmas - i));
+        tmp = indices[i];
+        indices[i] = indices[j];
+        indices[j] = tmp;
+        selected[i] = Sigmas[indices[i]];
+    }
+
+    free(indices);
+    return selected;
 }
 
 void write_summary_tsv(const char *path,

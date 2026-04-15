@@ -35,6 +35,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
 
+Matrix **downsample_sigmas(Matrix **Sigmas,
+                                    int n_sigmas,
+                                    int n_keep,
+                                    unsigned int seed);
+
 void write_summary_tsv(const char *path,
                         int n_cells,
                         int n_genes,

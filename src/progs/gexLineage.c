@@ -16,51 +16,6 @@
 #include <string.h>
 #include <math.h>
 
-/* Select a subset of covariance matrices (trees) for latent model fitting
-by sampling without replacement. */
-static Matrix **downsample_model_sigmas(Matrix **Sigmas,
-                                    int n_sigmas,
-                                    int n_keep,
-                                    unsigned int seed) {
-    int i;
-    Matrix **selected = NULL;
-    int *indices = NULL;
-    unsigned int rng_state = (seed == 0u ? 1u : seed);
-
-    if (Sigmas == NULL || n_sigmas <= 0)
-        return NULL;
-
-    if (n_keep <= 0 || n_keep >= n_sigmas)
-        n_keep = n_sigmas;
-
-    selected = scalloc(n_keep, sizeof(Matrix *));
-
-    if (n_keep == n_sigmas) {
-        for (i = 0; i < n_sigmas; i++)
-            selected[i] = Sigmas[i];
-        return selected;
-    }
-
-    indices = smalloc(n_sigmas * sizeof(int));
-
-    for (i = 0; i < n_sigmas; i++)
-        indices[i] = i;
-
-    for (i = 0; i < n_keep; i++) {
-        int j;
-        int tmp;
-
-        rng_state = (rng_state * 1664525u) + 1013904223u;
-        j = i + (int)(rng_state % (unsigned int)(n_sigmas - i));
-        tmp = indices[i];
-        indices[i] = indices[j];
-        indices[j] = tmp;
-        selected[i] = Sigmas[indices[i]];
-    }
-
-    free(indices);
-    return selected;
-}
 
 /* Parse the filter mode from a string. Sets pointer to mode_out.
 Returns 0 on success or -1 on failure. */
@@ -107,6 +62,7 @@ static void usage(const char *progname) {
         "[--moran-min-i I] "
         "[--filter-only] "
         "[--no-filter] "
+        "[--no-preprocess ]"
         "[--verbose] "
         "[--seed S]\n",
         progname);
@@ -128,6 +84,7 @@ int main(int argc, char *argv[]) {
     double l2_strength = 1e-3;  /* L2 regularization strength for loadings; 0 disables the penalty. */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
+    int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     unsigned int seed = 1u;   /* Random seed (positive) for all stochastic calculations */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
@@ -251,6 +208,9 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--no-filter") == 0) {
             no_filter = 1;
+        }
+        else if (strcmp(argv[i], "--no-preprocess") == 0) {
+            preprocess = 0;
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
@@ -415,17 +375,19 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Pre-process the gene expression data for modeling before filtering genes */
-    printf("Pre-processing the gene expression data for modeling...\n");
-    /* Library size normalization per-cell */
-    mat_normalize_rows(gex->X);
-    /* Scale by global factor to counts per 10k */
-    double scale_factor = 10000.0;
-    mat_scale(gex->X, scale_factor);
-    /* Log-transform the data to stabilize variance and approximate Gaussian */
-    mat_log1p(gex->X);
-    /* Transform log-normalized counts into the residuals */
-    mat_center_cols(gex->X);
+    if (preprocess) {
+        /* Pre-process the gene expression data for modeling before filtering genes */
+        printf("Pre-processing the gene expression data for modeling...\n");
+        /* Library size normalization per-cell */
+        mat_normalize_rows(gex->X);
+        /* Scale by global factor to counts per 10k */
+        double scale_factor = 10000.0;
+        mat_scale(gex->X, scale_factor);
+        /* Log-transform the data to stabilize variance and approximate Gaussian */
+        mat_log1p(gex->X);
+        /* Transform log-normalized counts into the residuals */
+        mat_center_cols(gex->X);
+    }
 
 
     if (no_filter) {
@@ -452,7 +414,7 @@ int main(int argc, char *argv[]) {
 
     /* Downsample the input set of trees for fitting the latent model if requested */
     if (n_model_trees > 0 && n_model_trees < n_trees) {
-        model_Sigmas = downsample_model_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u);
+        model_Sigmas = downsample_sigmas(Sigmas, n_trees, n_model_trees, seed + 97u);
         printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
     } else {
         model_Sigmas = Sigmas;

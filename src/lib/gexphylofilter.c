@@ -376,13 +376,7 @@ static double gex_pagels_lambda_negloglik(double lambda, void *data) {
         return -HUGE_VAL;
 
     /* Compute the log determinant of the lambda-transformed covariance matrix */
-    for (i = 0; i < n; i++) {
-        double diag = mat_get(d->L, i, i);
-        if (diag <= 0.0)
-            return -HUGE_VAL;
-        logdet_sigma += log(diag);
-    }
-    logdet_sigma *= 2.0;
+    logdet_sigma = mat_logdet_chol(d->L);
 
     return -gex_loglik_centered_gaussian_chol(d->y, d->L, logdet_sigma);
 }
@@ -498,17 +492,10 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
         /* Compute the Cholesky factor of the covariance matrix */
         Ls[t] = mat_new(n, n);
-        if (mat_cholesky(Ls[t], Sigma_regs[t]) != 0) {
-            fprintf(stderr, "ERROR: failed cholesky decomposition for LRT tree %d\n", t + 1);
-            return NULL;
-        }
+        mat_cholesky(Ls[t], Sigma_regs[t]);
 
-        /* Get the log determinant of the covariance matrix from the Cholesky diagonal elements */
-        for (i = 0; i < n; i++) {
-            double diag = mat_get(Ls[t], i, i);
-            logdet_sigmas[t] += log(diag);
-        }
-        logdet_sigmas[t] *= 2.0;
+        /* Get the log determinant of the covariance matrix from the Cholesky factor */
+        logdet_sigmas[t] = mat_logdet_chol(Ls[t]);
     }
 
     /* Initialize LRT result object */
@@ -802,7 +789,7 @@ GexMatrix *gex_filter_genes(GexMatrix *gex,
         if (gex_keep_gene(morans, lrt, j, mode, max_q)) {
             /* Copy gene name that passed the filter(s) */
             out->gene_names[out_j] = strdup(gex->gene_names[j]);
-            
+
             /* Copy expression values for the passing gene */
             for (i = 0; i < gex->X->nrows; i++)
                 mat_set(out->X, i, out_j, mat_get(gex->X, i, j));
