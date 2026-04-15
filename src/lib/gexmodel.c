@@ -352,38 +352,6 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
-/* Compute the L2 (Euclidean) norm by treating all parameter gradients 
-as a single concatenated vector. */
-static double gex_model_grad_norm(Matrix *grad_Z,
-                                  Matrix *grad_L,
-                                  double *grad_log_sigma_latent,
-                                  double grad_log_sigma_obs,
-                                  int k) {
-    int i, j;
-    double ss = 0.0;
-    double val;
-    /* Add the squared gradients for Z */
-    for (i = 0; i < grad_Z->nrows; i++) {
-        for (j = 0; j < grad_Z->ncols; j++) {
-            val = mat_get(grad_Z, i, j);
-            ss += val * val;
-        }
-    }
-    /* Add the squared gradients for L */
-    for (i = 0; i < grad_L->nrows; i++) {
-        for (j = 0; j < grad_L->ncols; j++) {
-            val = mat_get(grad_L, i, j);
-            ss += val * val;
-        }
-    }
-    /* Add the squared gradients for log(sigma2_latent) for all latent factors */
-    for (i = 0; i < k; i++)
-        ss += grad_log_sigma_latent[i] * grad_log_sigma_latent[i];
-    /* Add the squared gradient for log(sigma2_obs) */
-    ss += grad_log_sigma_obs * grad_log_sigma_obs;
-    return sqrt(ss);
-}
-
 /* Perform one Adam optimization update for a scalar parameter in place.
 Updates the first and second moment estimates using the current gradient,
 applies bias correction to obtain mhat and vhat, and then updates the
@@ -451,6 +419,27 @@ static void adam_step_vector(double *param,
     for (i = 0; i < n; i++) {
         adam_step_scalar(&param[i], grad[i], &m[i], &v[i], pow_beta1, pow_beta2, lr);
     }
+}
+
+static int clip_matrix_by_norm(Matrix *grad, double norm, double clip_norm) {
+    if (clip_norm > 0.0 && norm > clip_norm) {
+        double scale = clip_norm / norm;
+        mat_scale(grad, scale);
+        return 1;
+    }
+    return 0;
+
+}
+
+static int clip_vector_by_norm(double *grad, int n, double norm, double clip_norm) {
+    int i;
+    if (clip_norm > 0.0 && norm > clip_norm) {
+        double scale = clip_norm / norm;
+        for (i = 0; i < n; i++)
+            grad[i] *= scale;
+        return 1;
+    }
+    return 0;
 }
 
 /* Main model entry point. Fit a low-rank factorization of the centered gene
@@ -521,10 +510,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
+    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tZ_grad_norm\tL_grad_norm\tlog_sigma2_obs_norm\tlog_sigma2_latent_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
     for (i = 0; i < k; i++)
-        fprintf(logf, "\tsigma_latent_LF%d", i + 1);
-    fprintf(logf, "\n");
+        fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
+    fprintf(logf, "\tZ_frobenius_norm\tL_frobenius_norm\n");
 
     /* Pre-compute the inverse and log-determinant for each tree */
     n = gex->X->nrows;
@@ -566,11 +555,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
     }
     model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
+    model->log_sigma2_obs = max(model->log_sigma2_obs, log(1e-6));
 
     /* Initialize the latent variance parameters to the desired tip variance implied 
     by the PCA initialization of Z for the given tree scale (assuming an ultrametric tree) */
     model->log_sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
     double tip_var_scale = mat_get(Sigmas[0], 0, 0);
+    double log_sigma2_latent_init;
     for (d = 0; d < k; d++) {
         double mean_z = 0.0;
         double var_z = 0.0;
@@ -585,7 +576,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
         var_z /= (double)n_cells;
 
-        model->log_sigma2_latent[d] = log(var_z / tip_var_scale);
+        log_sigma2_latent_init = log(var_z / tip_var_scale);
+        model->log_sigma2_latent[d] = log_sigma2_latent_init;
+        model->log_sigma2_latent[d] = max(model->log_sigma2_latent[d], log(1e-6));
     }
 
     /* Allocate gradients, moments, and variances for Adam */
@@ -605,11 +598,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     objective_hist_short = scalloc(running_avg_window_short, sizeof(double));
 
     /* Initialize the scheduler (in order): n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
-    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5);
+    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.01, 1, 1, 5);
     sched_state = sched_new_state(sched);
     metrics.grad_norm = 0.0;
+    double grad_Z_norm = 0.0;
+    double grad_L_norm = 0.0;
+    double grad_log_sigma_obs_norm = 0.0;
+    double grad_log_sigma_latent_norm = 0.0;
     double pow_beta1;
     double pow_beta2;
+    double rel_L_lr;
+    double rel_sigma2_lr;
 
     /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
@@ -625,53 +624,63 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
         
-        /* Compute the gradient norm */
-        metrics.grad_norm = gex_model_grad_norm(grad_Z, grad_L,
-                                                grad_log_sigma_latent,
-                                                grad_log_sigma_obs, k);
-
-        /* Compare the short and long running averages of the objective so
-        that convergence is judged using denoised trends at two time scales. */
-        if (objective_hist_size_long > 0)
-            running_objective_avg_long = running_objective_sum_long / (double)objective_hist_size_long;
-        else
-            running_objective_avg_long = HUGE_VAL;
-
-        if (objective_hist_size_short > 0)
-            running_objective_avg_short = running_objective_sum_short / (double)objective_hist_size_short;
-        else
-            running_objective_avg_short = HUGE_VAL;
-
-        if (objective_hist_size_long > 0 && objective_hist_size_short > 0) {
-            rel_objective_change = fabs(running_objective_avg_short - running_objective_avg_long) /
-                                   max(1.0, fabs(running_objective_avg_long));
+        /* Compute the gradient l2 norms */
+        grad_Z_norm = mat_frobenius_norm(grad_Z);
+        grad_L_norm = mat_frobenius_norm(grad_L);
+        grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
+        grad_log_sigma_latent_norm = 0.0;
+        for (d = 0; d < k; d++) {
+            grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
         }
-        else {
-            rel_objective_change = HUGE_VAL;
-        }
+        grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
+        metrics.grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
-        /* Re-scale the gradients if their norm exceeds the clipping threshold. */
-        if (directives.clip_norm > 0.0 && metrics.grad_norm > directives.clip_norm) {
-            double scale = directives.clip_norm / metrics.grad_norm;
-            mat_scale(grad_Z, scale);
-            mat_scale(grad_L, scale);
-            for (d = 0; d < k; d++)
-                grad_log_sigma_latent[d] *= scale;
-            grad_log_sigma_obs *= scale;
-            metrics.grad_norm = directives.clip_norm;
+
+        /* Re-scale the gradients if their norm exceeds the clipping threshold and 
+        recompute the norm for those that were rescales */
+        if (clip_matrix_by_norm(grad_Z, grad_Z_norm, directives.clip_norm)) {
+            grad_Z_norm = mat_frobenius_norm(grad_Z);
         }
+        if (clip_matrix_by_norm(grad_L, grad_L_norm, directives.clip_norm)) {
+            grad_L_norm = mat_frobenius_norm(grad_L);
+        }
+        if (clip_vector_by_norm(grad_log_sigma_latent, k,
+                                       grad_log_sigma_latent_norm, directives.clip_norm)) {
+            grad_log_sigma_latent_norm = 0.0;
+            for (d = 0; d < k; d++) {
+                grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
+            }
+            grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
+        }
+        if (directives.clip_norm > 0.0 && grad_log_sigma_obs_norm > directives.clip_norm) {
+            grad_log_sigma_obs *= directives.clip_norm / grad_log_sigma_obs_norm;
+            grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
+        }
+        
+        metrics.grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
+        
 
         /* Perturb the model parameters */
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->Z, grad_Z, mZ, vZ, pow_beta1, pow_beta2, directives.lr);
-        adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, directives.lr);
+        rel_L_lr = directives.lr * 0.3;
+        adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, rel_L_lr);
+        rel_sigma2_lr = directives.lr * 0.1;
         adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
                                     m_log_sigma_latent, v_log_sigma_latent,
-                                    k, pow_beta1, pow_beta2, directives.lr);
+                                    k, pow_beta1, pow_beta2, rel_sigma2_lr);
         adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
                            &m_log_sigma_obs, &v_log_sigma_obs,
-                           pow_beta1, pow_beta2, directives.lr);
+                           pow_beta1, pow_beta2, rel_sigma2_lr);
+        
+        /* Compare the short and long running averages of the objective so
+        that convergence is judged using denoised trends at two time scales. */
+        if (objective_hist_size_long > 0 && objective_hist_size_short > 0) {
+            running_objective_avg_long = running_objective_sum_long / (double)objective_hist_size_long;
+            running_objective_avg_short = running_objective_sum_short / (double)objective_hist_size_short;
+            rel_objective_change = fabs(running_objective_avg_short - running_objective_avg_long) / fabs(running_objective_avg_long);
+        }
 
         /* Track whether the optimizer has entered a stable regime */
         if (step >= min_steps && rel_objective_change < objective_tol)
@@ -681,7 +690,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Log the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
-        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
                 step,
                 model->objective,
                 running_objective_avg_long,
@@ -689,13 +698,19 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 rel_objective_change,
                 stable_steps,
                 metrics.grad_norm,
+                grad_Z_norm,
+                grad_L_norm,
+                grad_log_sigma_obs_norm,
+                grad_log_sigma_latent_norm,
                 model->observation_objective,
                 model->brownian_prior_objective,
                 model->l2_objective,
                 exp(model->log_sigma2_obs));
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
-        fprintf(logf, "\n");
+        fprintf(logf, "\t%.17g\t%.17g\n", 
+                    mat_frobenius_norm(model->Z), 
+                    mat_frobenius_norm(model->L));
         fflush(logf);
 
         /* Update both moving-average histories. */

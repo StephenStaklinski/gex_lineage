@@ -389,10 +389,13 @@ treated as a single vector. */
 double mat_frobenius_norm(Matrix *M) {
     int i, j;
     double ss = 0.0;
+    double val;
 
     for (i = 0; i < M->nrows; i++) {
-        for (j = 0; j < M->ncols; j++)
-            ss += pow(mat_get(M, i, j), 2.0);
+        for (j = 0; j < M->ncols; j++) {
+            val = mat_get(M, i, j);
+            ss += val * val;
+        }
     }
 
     return sqrt(ss);
