@@ -420,6 +420,38 @@ static void adam_step_vector(double *param,
     }
 }
 
+/* Uses an exponential moving average (EMA) to update the clipping threshold 
+to be clip_factor * normal gradient levels from the EMA */
+static double update_clip_threshold(double grad_norm,
+                                    double *ema_grad_norm,
+                                    int step,
+                                    int clip_warmup,
+                                    double clip_beta,
+                                    double clip_factor,
+                                    double clip_floor) {
+    double clip;
+
+    /* Update EMA from current block norm */
+    if (grad_norm > 0.0) {
+        if (*ema_grad_norm == 0.0)
+            *ema_grad_norm = grad_norm;
+        else
+            *ema_grad_norm = clip_beta * (*ema_grad_norm) +
+                             (1.0 - clip_beta) * grad_norm;
+    }
+
+    /* During warmup, just use the fixed floor */
+    clip = clip_floor;
+
+    /* After warmup, allow adaptive thresholding */
+    if (step >= clip_warmup && *ema_grad_norm > 0.0) {
+        double adaptive_clip = clip_factor * (*ema_grad_norm);
+        clip = fmax(clip_floor, adaptive_clip);
+    }
+
+    return clip;
+}
+
 static int clip_matrix_by_norm(Matrix *grad, double norm, double clip_norm) {
     if (clip_norm > 0.0 && norm > clip_norm) {
         double scale = clip_norm / norm;
@@ -505,7 +537,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tZ_grad_norm\tL_grad_norm\tlog_sigma2_obs_norm\tlog_sigma2_latent_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
+    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tZ_grad_norm\tL_grad_norm\tlog_sigma2_obs_norm\tlog_sigma2_latent_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
     for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_frobenius_norm\tL_frobenius_norm\n");
@@ -596,15 +628,18 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double lr = 0.01;   /* Learning rate for Adam */
     double clip_beta = 0.98;
     double clip_factor = 2.0;
-    double clip_floor = 7.0;
+    double clip_floor = 1.0;
     int clip_warmup = 5;
-    double clip_norm = 0.0;
-    double clip_Z;
-    double clip_L;
-    double clip_sigma_obs;
-    double clip_sigma_latent;
+    double clip_Z = 0.0;
+    double clip_L = 0.0;
+    double clip_sigma_obs = 0.0;
+    double clip_sigma_latent = 0.0;
+    int clipping_on = 0;
     double grad_norm = 0.0;
-    double ema_grad_norm = 0.0;
+    double ema_Z_norm = 0.0;
+    double ema_L_norm = 0.0;
+    double ema_log_sigma_obs_norm = 0.0;
+    double ema_log_sigma_latent_norm = 0.0;
     double grad_Z_norm = 0.0;
     double grad_L_norm = 0.0;
     double grad_log_sigma_obs_norm = 0.0;
@@ -617,6 +652,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
         int d;
+
+        /* Reset clipping flag */
+        clipping_on = 0;
 
         /* Compute the objective function and gradients */
         model->objective = gex_model_objective_and_grad(model, gex->X, Sigma_invs,
@@ -636,38 +674,30 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
         grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
-        /* Update EMA of gradient norm */
-        if (grad_norm > 0.0) {
-            if (ema_grad_norm == 0.0)
-                ema_grad_norm = grad_norm;
-            else
-                ema_grad_norm = clip_beta * ema_grad_norm +
-                                (1.0 - clip_beta) * grad_norm;
-        }
-
-        /* Adaptive base clip after warmup */
-        if (step >= clip_warmup && grad_norm > 0.0) {
-            double adaptive_clip = clip_factor * ema_grad_norm;
-            clip_norm = fmax(clip_floor, adaptive_clip);
-        }
-
-        /* Relative clip for each type of parameter */
-        clip_Z = clip_norm;
-        clip_L = 0.5 * clip_norm;
-        clip_sigma_obs = 0.1 * clip_norm;
-        clip_sigma_latent = 0.1 * clip_norm;
+        /* Update gradient clipping thresholds */
+        clip_Z = update_clip_threshold(grad_Z_norm, &ema_Z_norm, step, clip_warmup,
+                                        clip_beta, clip_factor, clip_floor);
+        clip_L = update_clip_threshold(grad_L_norm, &ema_L_norm, step, clip_warmup,
+                                        clip_beta, clip_factor, clip_floor);
+        clip_sigma_obs = update_clip_threshold(grad_log_sigma_obs_norm, &ema_log_sigma_obs_norm, step,
+                                                clip_warmup, clip_beta, clip_factor, clip_floor);
+        clip_sigma_latent = update_clip_threshold(grad_log_sigma_latent_norm, &ema_log_sigma_latent_norm,
+                                                step, clip_warmup, clip_beta, clip_factor, clip_floor);
 
         /* Re-scale the gradients if their norm exceeds the clipping threshold and 
         recompute the norm for those that were rescales */
         if (clip_matrix_by_norm(grad_Z, grad_Z_norm, clip_Z)) {
             grad_Z_norm = mat_frobenius_norm(grad_Z);
+            clipping_on |= 1;
         }
         if (clip_matrix_by_norm(grad_L, grad_L_norm, clip_L)) {
             grad_L_norm = mat_frobenius_norm(grad_L);
+            clipping_on |= 1;
         }
         if (clip_sigma_obs > 0.0 && grad_log_sigma_obs_norm > clip_sigma_obs) {
             grad_log_sigma_obs *= clip_sigma_obs / grad_log_sigma_obs_norm;
             grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
+            clipping_on |= 1;
         }
         if (clip_vector_by_norm(grad_log_sigma_latent, k,
                                        grad_log_sigma_latent_norm, clip_sigma_latent)) {
@@ -676,6 +706,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
             }
             grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
+            clipping_on |= 1;
         }
         
         grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
@@ -711,13 +742,14 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Log the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
-        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
                 step,
                 model->objective,
                 running_objective_avg_long,
                 running_objective_avg_short,
                 rel_objective_change,
                 stable_steps,
+                clipping_on,
                 grad_norm,
                 grad_Z_norm,
                 grad_L_norm,
