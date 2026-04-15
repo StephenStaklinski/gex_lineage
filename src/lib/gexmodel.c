@@ -3,7 +3,6 @@
 #include "gexpca.h"
 #include "gexmisc.h"
 
-#include <adam_scheduler.h>
 #include <variational.h>
 
 #include <phast/matrix.h>
@@ -466,10 +465,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int running_avg_window_short = 100;   /* Number of recent steps used for the short running objective average */
     int stable_steps = 0;   /* Running count of consecutive near-converged steps */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
-    Scheduler *sched = NULL;    /* Scheduler for managing optimization steps */
-    SchedState *sched_state = NULL; /* State for the scheduler */
-    SchedDirectives directives; /* Directives for each optimization step */
-    SchedMetrics metrics;   /* Metrics for each optimization step */
     double running_objective_avg_long = HUGE_VAL; /* Running average over the long objective window */
     double running_objective_avg_short = HUGE_VAL; /* Running average over the short objective window */
     double rel_objective_change = HUGE_VAL; /* Relative difference between the short and long running averages */
@@ -597,10 +592,19 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     objective_hist_long = scalloc(running_avg_window_long, sizeof(double));
     objective_hist_short = scalloc(running_avg_window_short, sizeof(double));
 
-    /* Initialize the scheduler (in order): n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
-    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.01, 1, 1, 5);
-    sched_state = sched_new_state(sched);
-    metrics.grad_norm = 0.0;
+    /* Adam hyperparameters */
+    double lr = 0.01;   /* Learning rate for Adam */
+    double clip_beta = 0.98;
+    double clip_factor = 2.0;
+    double clip_floor = 7.0;
+    int clip_warmup = 5;
+    double clip_norm = 0.0;
+    double clip_Z;
+    double clip_L;
+    double clip_sigma_obs;
+    double clip_sigma_latent;
+    double grad_norm = 0.0;
+    double ema_grad_norm = 0.0;
     double grad_Z_norm = 0.0;
     double grad_L_norm = 0.0;
     double grad_log_sigma_obs_norm = 0.0;
@@ -613,9 +617,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
         int d;
-
-        /* Update the learning rate and clipping directives for this optimization step. */
-        sched_next(sched, sched_state, (step == 1 ? NULL : &metrics), &directives);
 
         /* Compute the objective function and gradients */
         model->objective = gex_model_objective_and_grad(model, gex->X, Sigma_invs,
@@ -633,40 +634,60 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
         }
         grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
-        metrics.grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
+        grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
+        /* Update EMA of gradient norm */
+        if (grad_norm > 0.0) {
+            if (ema_grad_norm == 0.0)
+                ema_grad_norm = grad_norm;
+            else
+                ema_grad_norm = clip_beta * ema_grad_norm +
+                                (1.0 - clip_beta) * grad_norm;
+        }
+
+        /* Adaptive base clip after warmup */
+        if (step >= clip_warmup && grad_norm > 0.0) {
+            double adaptive_clip = clip_factor * ema_grad_norm;
+            clip_norm = fmax(clip_floor, adaptive_clip);
+        }
+
+        /* Relative clip for each type of parameter */
+        clip_Z = clip_norm;
+        clip_L = 0.5 * clip_norm;
+        clip_sigma_obs = 0.1 * clip_norm;
+        clip_sigma_latent = 0.1 * clip_norm;
 
         /* Re-scale the gradients if their norm exceeds the clipping threshold and 
         recompute the norm for those that were rescales */
-        if (clip_matrix_by_norm(grad_Z, grad_Z_norm, directives.clip_norm)) {
+        if (clip_matrix_by_norm(grad_Z, grad_Z_norm, clip_Z)) {
             grad_Z_norm = mat_frobenius_norm(grad_Z);
         }
-        if (clip_matrix_by_norm(grad_L, grad_L_norm, directives.clip_norm)) {
+        if (clip_matrix_by_norm(grad_L, grad_L_norm, clip_L)) {
             grad_L_norm = mat_frobenius_norm(grad_L);
         }
+        if (clip_sigma_obs > 0.0 && grad_log_sigma_obs_norm > clip_sigma_obs) {
+            grad_log_sigma_obs *= clip_sigma_obs / grad_log_sigma_obs_norm;
+            grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
+        }
         if (clip_vector_by_norm(grad_log_sigma_latent, k,
-                                       grad_log_sigma_latent_norm, directives.clip_norm)) {
+                                       grad_log_sigma_latent_norm, clip_sigma_latent)) {
             grad_log_sigma_latent_norm = 0.0;
             for (d = 0; d < k; d++) {
                 grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
             }
             grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
         }
-        if (directives.clip_norm > 0.0 && grad_log_sigma_obs_norm > directives.clip_norm) {
-            grad_log_sigma_obs *= directives.clip_norm / grad_log_sigma_obs_norm;
-            grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
-        }
         
-        metrics.grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
+        grad_norm = grad_Z_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
         
 
         /* Perturb the model parameters */
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
-        adam_step_matrix(model->Z, grad_Z, mZ, vZ, pow_beta1, pow_beta2, directives.lr);
-        rel_L_lr = directives.lr * 0.3;
+        adam_step_matrix(model->Z, grad_Z, mZ, vZ, pow_beta1, pow_beta2, lr);
+        rel_L_lr = lr * 0.3;
         adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, rel_L_lr);
-        rel_sigma2_lr = directives.lr * 0.1;
+        rel_sigma2_lr = lr * 0.1;
         adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
                                     m_log_sigma_latent, v_log_sigma_latent,
                                     k, pow_beta1, pow_beta2, rel_sigma2_lr);
@@ -697,7 +718,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 running_objective_avg_short,
                 rel_objective_change,
                 stable_steps,
-                metrics.grad_norm,
+                grad_norm,
                 grad_Z_norm,
                 grad_L_norm,
                 grad_log_sigma_obs_norm,
@@ -768,8 +789,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (vZ != NULL) mat_free(vZ);
     if (mL != NULL) mat_free(mL);
     if (vL != NULL) mat_free(vL);
-    if (sched_state != NULL) free(sched_state);
-    if (sched != NULL) free(sched);
     if (logf != NULL) fclose(logf);
     if (Sigma_invs != NULL) {
         for (i = 0; i < n_sigmas; i++) {
