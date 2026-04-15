@@ -403,22 +403,21 @@ int main(int argc, char *argv[]) {
         gex_filtered = gex;
         gex = NULL;
         printf("Skipping phylogenetic signal gene filtering and using all %d gene(s) for modeling.\n", gex_filtered->X->ncols);
-        printf("Running PCA on the input unfiltered gene expression matrix to select the number of latent factor dimensions for the model...\n");
+
     } else {
         /* Filter genes */
         gex_filtered = gex_filter_genes(gex, morans, lrt, filter_mode, max_q);
         printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
-        printf("Running PCA on the filtered gene expression matrix to select the number of latent factor dimensions for the model...\n");
-
     }
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
+    printf("Running PCA to initialize latent factors for the model...\n");
     pca = compute_pca(gex_filtered->X, k, pca_var_threshold);
     if (k == 0) {
-        printf("Retained %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
+        printf("Retaining %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
     } else {
-        printf("Retained the top %d PCA component(s).\n", k);
+        printf("Retaining the top %d PCA component(s).\n", k);
     }
     if (verbose) {
         print_pca_summary(pca);
