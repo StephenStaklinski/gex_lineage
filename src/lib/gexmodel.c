@@ -539,7 +539,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tgrad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma_obs");
     for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma_latent_LF%d", i + 1);
-    fprintf(logf, "\tZ_norm\tL_norm\n");
 
     /* Pre-compute the inverse and log-determinant for each tree */
     n = gex->X->nrows;
@@ -559,12 +558,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->Z = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
     model->l2_strength = l2_strength;
-
-    /* Initialize the latent variance parameters to a desired tip variance on the given tree scale (assuming an ultrametric tree) */
-    model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    double desired_tip_variance = 1.0;
-    for (i = 0; i < k; i++)
-        model->sigma2_latent[i] = desired_tip_variance / mat_get(Sigmas[0], 0, 0);
 
     /* L comes from the PCA */
     mat_copy(model->L, pca->components);
@@ -587,12 +580,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
     }
     model->sigma2_obs = sse / ((double)model->n_cells * model->n_genes);
+    log_sigma_obs = log(model->sigma2_obs); /* Log for optimization stability */
 
-    /* Allocate gradients, moments, and variances that Adam needs for each parameter.
-    Use a log-variance parameterization during optimization for the variance parameters 
-    to enforce positivity and for numerical stability. */
-    log_sigma_obs = log(model->sigma2_obs); /* Log of observation variance, since we optimize in log-space */
-    log_sigma_latent = scalloc(k, sizeof(double)); /* Log of latent variances, since we optimize in log-space */
+    /* Initialize the latent variance parameters to a desired tip variance on the given tree scale (assuming an ultrametric tree) */
+    model->sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
+    log_sigma_latent = scalloc(k, sizeof(double));  /* Log for optimization stability */
+    double desired_tip_variance = 1.0;
+    for (i = 0; i < k; i++)
+        model->sigma2_latent[i] = desired_tip_variance / mat_get(Sigmas[0], 0, 0);
+        log_sigma_latent[i] = log(model->sigma2_latent[i]);
+
+    /* Allocate gradients, moments, and variances for Adam */
     grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
     m_log_sigma_latent = scalloc(k, sizeof(double));   /* First moment of log latent variances */
     v_log_sigma_latent = scalloc(k, sizeof(double));   /* Second moment of log latent variances */
@@ -604,23 +602,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     vL = mat_new(k, model->n_genes);    /* Second moment of factor loadings */
     mat_zero(mZ); mat_zero(vZ); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
 
-    /* Initialize history arrays for running averages of the objective function */
+    /* Initialize running average histories */
     objective_hist_long = scalloc(running_avg_window_long, sizeof(double));
     objective_hist_short = scalloc(running_avg_window_short, sizeof(double));
 
-    /* Initialize the log-variance parameters from the initial variance values. */
-    for (step = 0; step < k; step++)
-        log_sigma_latent[step] = log(model->sigma2_latent[step]);
-
-    /* Initialize the scheduler that controls learning-rate and clipping
-    directives across optimization steps.*/
-    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5); /* Parameter order: n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
+    /* Initialize the scheduler (in order): n_genes, n_genes, max_steps, lr, clip_norm, decay_rate, momentum */
+    sched = sched_new(model->n_genes, model->n_genes, 1000, 0.03, 1, 1, 5);
     sched_state = sched_new_state(sched);
-    metrics.grad_norm = 0.0;    /* Initialize the gradient norm */
+    metrics.grad_norm = 0.0;
 
-    /* Run gradient-based optimization of latent coordinates, gene loadings,
-    and the variance parameters using Adam updates until the objective and
-    gradient norm stabilize, while still enforcing a maximum number of steps. */
+    /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
         int d;
 
@@ -721,9 +712,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 model->sigma2_obs);
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", model->sigma2_latent[d]);
-        fprintf(logf, "\t%.17g\t%.17g\n",
-                mat_frobenius_norm(model->Z),
-                mat_frobenius_norm(model->L));
         fflush(logf);
 
         /* Update both moving-average histories. */
@@ -762,11 +750,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Update the model object with the final variance parameter values from their log-space 
     representations. */
     model->sigma2_obs = exp(log_sigma_obs);
-    if (model->sigma2_obs < 1e-8) model->sigma2_obs = 1e-8;
     for (step = 0; step < k; step++) {
         model->sigma2_latent[step] = exp(log_sigma_latent[step]);
-        if (model->sigma2_latent[step] < 1e-8)
-            model->sigma2_latent[step] = 1e-8;
     }
 
     /* Compute the final state objective and gradients. */
