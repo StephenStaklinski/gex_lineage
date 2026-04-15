@@ -351,6 +351,21 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
+/* Cosine decay of learning rate */
+static double cosine_lr(double base_lr, int step, int max_steps) {
+    if (step <= 1)
+        return base_lr;
+
+    double progress = (double)step / (double)max_steps;
+    if (progress > 1.0) 
+        progress = 1.0;
+
+    double lr = base_lr * 0.5 * (1.0 + cos(M_PI * progress));
+
+    double min_lr = 1e-6;  // floor for learning rate to prevent it from going to zero
+    return fmax(lr, min_lr);
+}
+
 /* Perform one Adam optimization update for a scalar parameter in place.
 Updates the first and second moment estimates using the current gradient,
 applies bias correction to obtain mhat and vhat, and then updates the
@@ -490,7 +505,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       const char *outprefix) {
     /* Optimization related */
     int step;   /* Optimization step */
-    int max_steps = 1000000;   /* Maximum number of optimization steps to prevent infinite run */
+    int max_steps = 100000;   /* Maximum number of optimization steps to prevent infinite run */
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
     int stable_steps_needed = 100;   /* Number of consecutive stable steps required for convergence */
     int running_avg_window_long = 500;   /* Number of recent steps used for the long running objective average */
@@ -625,7 +640,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     objective_hist_short = scalloc(running_avg_window_short, sizeof(double));
 
     /* Adam hyperparameters */
-    double lr = 0.01;   /* Learning rate for Adam */
+    double base_lr = 0.01;   /* Base learning rate for Adam */
+    double lr;
     double clip_beta = 0.98;
     double clip_factor = 2.0;
     double clip_floor = 1.0;
@@ -713,6 +729,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         
 
         /* Perturb the model parameters */
+        lr = cosine_lr(base_lr, step, max_steps);
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->Z, grad_Z, mZ, vZ, pow_beta1, pow_beta2, lr);
