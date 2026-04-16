@@ -247,24 +247,27 @@ static double l2_regularized_L_term(Matrix *L,
     int j, d;
     int p = L->ncols;
     int k = L->nrows;
-    double obj = 0.0;
+    double ss = 0.0;
     double grad;
 
-    /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization. */
+    /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization */
     for (d = 0; d < k; d++) {
         for (j = 0; j < p; j++) {
             
             if (grad_L != NULL) {
-                /* Only add the L2 penalty gradient when regularization is enabled. */
+                /* Only add the L2 penalty gradient when regularization is enabled */
                 grad = mat_get(grad_L, d, j);
                 grad += lambda_L * mat_get(L, d, j);
                 mat_set(grad_L, d, j, grad);
             }
 
-            /* Add L2 penalty to objective: (lambda_L / 2) * L_{d,j}^2 */
-            obj += 0.5 * lambda_L * mat_get(L, d, j) * mat_get(L, d, j);
+            /* Accumulate the sum of squares */
+            ss += mat_get(L, d, j) * mat_get(L, d, j);
         }
     }
+
+    /* Calculate the L2 penalty */
+    double obj = 0.5 * lambda_L * ss;
 
     return obj;
 }
