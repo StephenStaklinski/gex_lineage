@@ -408,6 +408,61 @@ static void adam_step_vector(double *param,
     }
 }
 
+static void normalize_L_rows_and_rescale_Z(Matrix *L,
+                                           Matrix *Z,
+                                           Matrix *mL,
+                                           Matrix *vL,
+                                           Matrix *mZ,
+                                           Matrix *vZ,
+                                           double target_row_norm)
+{
+    int d, i, j;
+    int k = L->nrows;
+    int p = L->ncols;
+    int n = Z->nrows;
+    const double eps = 1e-12;
+
+    for (d = 0; d < k; d++) {
+        double ss = 0.0;
+        double norm, scale_L, scale_Z;
+
+        /* Compute current L2 norm of row d of L */
+        for (j = 0; j < p; j++) {
+            double x = mat_get(L, d, j);
+            ss += x * x;
+        }
+        norm = sqrt(ss);
+
+        /* Skip pathological zero rows */
+        if (norm < eps)
+            continue;
+
+        /* Multiply row d of L by scale_L so that ||L_d|| = target_row_norm */
+        scale_L = target_row_norm / norm;
+
+        /* Multiply column d of Z by scale_Z to preserve ZL exactly */
+        scale_Z = 1.0 / scale_L;
+
+        /* Update row d of L and its Adam states */
+        for (j = 0; j < p; j++) {
+            mat_set(L, d, j, mat_get(L, d, j) * scale_L);
+            if (mL != NULL)
+                mat_set(mL, d, j, mat_get(mL, d, j) * scale_L);
+            if (vL != NULL)
+                mat_set(vL, d, j, mat_get(vL, d, j) * scale_L * scale_L);
+        }
+
+        /* Update column d of Z and its Adam states */
+        for (i = 0; i < n; i++) {
+            mat_set(Z, i, d, mat_get(Z, i, d) * scale_Z);
+            if (mZ != NULL)
+                mat_set(mZ, i, d, mat_get(mZ, i, d) * scale_Z);
+            if (vZ != NULL)
+                mat_set(vZ, i, d, mat_get(vZ, i, d) * scale_Z * scale_Z);
+        }
+    }
+}
+
 /* Uses an exponential moving average (EMA) to update the clipping threshold 
 to be clip_factor * normal gradient levels from the EMA */
 static double update_clip_threshold(double grad_norm,
@@ -474,7 +529,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix **Sigmas,
                                                       int n_sigmas,
                                                       PCA *pca,
-                                                      double l2_strength,
+                                                      int L_row_norm_interval,
+                                                      double L_l2_strength,
                                                       const char *outprefix) {
     /* Optimization related */
     int step;   /* Optimization step */
@@ -528,7 +584,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tZ_grad_norm\tL_grad_norm\tlog_sigma2_obs_norm\tlog_sigma2_latent_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
     for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
-    fprintf(logf, "\tZ_frobenius_norm\tL_frobenius_norm\n");
+    fprintf(logf, "\tZ_frobenius_norm\tL_frobenius_norm\tZL_frobenius_norm\n");
 
     /* Pre-compute the inverse and log-determinant for each tree */
     n = gex->X->nrows;
@@ -547,7 +603,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->k = k;
     model->Z = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
-    model->l2_strength = l2_strength;
+    model->l2_strength = L_l2_strength;
 
     /* L comes from the PCA */
     mat_copy(model->L, pca->components);
@@ -639,6 +695,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double rel_L_lr;
     double rel_sigma2_lr;
 
+    /* For testing, keep track of the reconstructed X to track overall Z*L scale */
+    Matrix *ZL = mat_new(model->n_cells, model->n_genes);
+
     /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
         int d;
@@ -717,6 +776,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                            &m_log_sigma_obs, &v_log_sigma_obs,
                            pow_beta1, pow_beta2, rel_sigma2_lr);
         
+        /* Periodically normalize L rows and update Z columns to retain the overall scale */
+        if (L_row_norm_interval > 0 && step % L_row_norm_interval == 0) {
+            normalize_L_rows_and_rescale_Z(model->L, model->Z,
+                               mL, vL, mZ, vZ, 1.0);
+        }
+        
         /* Compare the short and long running averages of the objective so
         that convergence is judged using denoised trends at two time scales. */
         if (objective_hist_size_long > 0 && objective_hist_size_short > 0) {
@@ -730,6 +795,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             stable_steps++;
         else
             stable_steps = 0;
+        
+        /* For testing, keep track of the reconstructed X to track overall Z*L scale */
+        mat_mult(ZL, model->Z, model->L);   /* Compute predicted values ZL */
 
         /* Log the scalar parameters and compact summaries of Z and L at
         each optimization step without writing the full matrices. */
@@ -752,9 +820,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 exp(model->log_sigma2_obs));
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
-        fprintf(logf, "\t%.17g\t%.17g\n", 
+        fprintf(logf, "\t%.17g\t%.17g\t%.17g\n", 
                     mat_frobenius_norm(model->Z), 
-                    mat_frobenius_norm(model->L));
+                    mat_frobenius_norm(model->L),
+                    mat_frobenius_norm(ZL));
         fflush(logf);
 
         /* Update both moving-average histories. */
@@ -821,6 +890,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         free(Sigma_invs);
     }
     if (logdet_sigmas != NULL) free(logdet_sigmas);
+    if (ZL != NULL) mat_free(ZL);
 
     return model;
 }
