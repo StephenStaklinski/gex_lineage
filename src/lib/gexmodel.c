@@ -19,17 +19,20 @@
 X ~ N(ZL, sigma2_obs). Returns the full contribution to the objective,
 including the Gaussian normalization constant, fills residual matrix,
 and computes gradients w.r.t. Z and log(sigma2_obs). */
-static double gaussian_observation_term(const GexLatentBrownianModel *model,
+double gaussian_observation_term(Matrix *Z,
+                                        Matrix *L,
+                                        double log_sigma2_obs,
                                         Matrix *Xc,
-                                        Matrix *resid,
                                         Matrix *grad_Z,
+                                        Matrix *grad_L,
                                         double *grad_log_sigma_obs) {
     int i, j, d;
     int n = Xc->nrows;
     int p = Xc->ncols;
-    int k = model->Z->ncols;
+    int k = Z->ncols;
     double obj = 0.0;
-    double sigma2_obs = exp(model->log_sigma2_obs);
+    double sigma2_obs = exp(log_sigma2_obs);
+    Matrix *resid = mat_new(n, p);   /* Residual matrix */
 
     /* Initialize gradient accumulator for log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
@@ -45,7 +48,7 @@ static double gaussian_observation_term(const GexLatentBrownianModel *model,
 
             /* Compute predicted value (ZL)_ij */
             for (d = 0; d < k; d++)
-                pred += mat_get(model->Z, i, d) * mat_get(model->L, d, j);
+                pred += mat_get(Z, i, d) * mat_get(L, d, j);
 
             /* Residual is observed minus predicted */
             r = mat_get(Xc, i, j) - pred;
@@ -71,11 +74,7 @@ static double gaussian_observation_term(const GexLatentBrownianModel *model,
     included here to obtain full likelihood values. */
     obj += 0.5 * n_entries * log(2.0 * M_PI);
 
-    /* Gradient w.r.t. log(sigma2_obs) from log(σ²) term */
-    if (grad_log_sigma_obs != NULL)
-        *grad_log_sigma_obs += 0.5 * n_entries;
-
-    /* Compute gradient w.r.t. Z: dL/dZ = -(1/σ²) R L^T */
+    /* Compute gradient w.r.t. Z*/
     if (grad_Z != NULL) {
         for (i = 0; i < n; i++) {
             for (d = 0; d < k; d++) {
@@ -83,12 +82,32 @@ static double gaussian_observation_term(const GexLatentBrownianModel *model,
 
                 /* Accumulate gradient contribution across features */
                 for (j = 0; j < p; j++)
-                    gz += -mat_get(resid, i, j) * mat_get(model->L, d, j) / sigma2_obs;
+                    gz += -mat_get(resid, i, j) * mat_get(L, d, j) / sigma2_obs;
 
                 mat_set(grad_Z, i, d, gz);
             }
         }
     }
+
+    /* Gradient w.r.t. L */
+    if (grad_L != NULL) {
+        for (d = 0; d < k; d++) {
+            for (j = 0; j < p; j++) {
+                double grad = 0.0;
+                for (i = 0; i < n; i++)
+                    grad += -mat_get(Z, i, d) * mat_get(resid, i, j) / sigma2_obs;
+                mat_set(grad_L, d, j, grad);
+            }
+        }
+    }
+
+    /* Gradient w.r.t. log(sigma2_obs) */
+    if (grad_log_sigma_obs != NULL)
+        *grad_log_sigma_obs += 0.5 * n_entries;
+
+
+    /* Free memory */
+    mat_free(resid);
 
     return obj;
 }
@@ -132,15 +151,16 @@ static double log_mvn_vec(const double *z,
 factors Z across all latent dimensions. Returns the contribution to the
 objective, adds the prior gradient to Z, and computes gradients with respect
 to log(sigma2_latent) for each latent factor. */
-static double latent_brownian_prior_term(GexLatentBrownianModel *model,
-                                         Matrix **Sigma_invs,
-                                         double *logdet_sigmas,
-                                         int n_sigmas,
-                                         Matrix *grad_Z,
-                                         double *grad_log_sigma_latent) {
+double latent_brownian_prior_term(Matrix *Z,
+                                        double *log_sigma2_latent,
+                                        Matrix **Sigma_invs,
+                                        double *logdet_sigmas,
+                                        int n_sigmas,
+                                        Matrix *grad_Z,
+                                        double *grad_log_sigma_latent) {
     int i, d, t;
-    int n = model->n_cells;
-    int k = model->k;
+    int n = Z->nrows;   /* Number of cells */
+    int k = Z->ncols;   /* Number of latent factors */
     double obj = 0.0;
     double *prior_log_terms = NULL;
     double *prior_weights = NULL;
@@ -153,39 +173,18 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
     quad_terms = scalloc(n_sigmas, sizeof(double));
     z_d = scalloc(n, sizeof(double));
     sigma_inv_z_cache = scalloc(n_sigmas, sizeof(double *));
-    if (prior_log_terms == NULL || prior_weights == NULL ||
-        quad_terms == NULL || z_d == NULL || sigma_inv_z_cache == NULL) {
-        free(prior_log_terms);
-        free(prior_weights);
-        free(quad_terms);
-        free(z_d);
-        free(sigma_inv_z_cache);
-        return HUGE_VAL;
-    }
-
-    for (t = 0; t < n_sigmas; t++) {
+    for (t = 0; t < n_sigmas; t++)
         sigma_inv_z_cache[t] = scalloc(n, sizeof(double));
-        if (sigma_inv_z_cache[t] == NULL) {
-            for (i = 0; i < t; i++)
-                free(sigma_inv_z_cache[i]);
-            free(prior_log_terms);
-            free(prior_weights);
-            free(quad_terms);
-            free(z_d);
-            free(sigma_inv_z_cache);
-            return HUGE_VAL;
-        }
-    }
 
     /* Add the Brownian motion multivariate Gaussian mixture prior on Z for each
     latent dimension z_d, marginalizing over a set of candidate trees. */
     for (d = 0; d < k; d++) {
-        double sigma2_d = exp(model->log_sigma2_latent[d]);
+        double sigma2_d = exp(log_sigma2_latent[d]);
         double log_mix;
         double expected_quad_over_sigma2 = 0.0;
 
         for (i = 0; i < n; i++)
-            z_d[i] = mat_get(model->Z, i, d);
+            z_d[i] = mat_get(Z, i, d);
 
         /* Compute full per-tree Brownian Gaussian log densities and cache
            Sigma_t^{-1} z_d and z_d^T Sigma_t^{-1} z_d for reuse. */
@@ -211,18 +210,21 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
             double weight = exp(prior_log_terms[t] - log_mix);
             prior_weights[t] = weight;
 
-            for (i = 0; i < n; i++) {
-                double old_grad = mat_get(grad_Z, i, d);
-                mat_set(grad_Z, i, d,
-                        old_grad + weight * sigma_inv_z_cache[t][i] / sigma2_d);
+            if (grad_Z != NULL) {
+                for (i = 0; i < n; i++) {
+                    double old_grad = mat_get(grad_Z, i, d);
+                    mat_set(grad_Z, i, d,
+                            old_grad + weight * sigma_inv_z_cache[t][i] / sigma2_d);
+                }
             }
 
             expected_quad_over_sigma2 += weight * quad_terms[t] / sigma2_d;
         }
 
-        /* Gradient with respect to log(sigma2_d). */
-        grad_log_sigma_latent[d] =
-            0.5 * (double)n - 0.5 * expected_quad_over_sigma2;
+        if (grad_log_sigma_latent != NULL) {
+            /* Gradient with respect to log(sigma2_d). */
+            grad_log_sigma_latent[d] = 0.5 * (double)n - 0.5 * expected_quad_over_sigma2;
+        }
     }
 
     for (t = 0; t < n_sigmas; t++)
@@ -239,41 +241,28 @@ static double latent_brownian_prior_term(GexLatentBrownianModel *model,
 /* Compute the gradient with respect to L under the Gaussian observation model
    and add the L2 regularization penalty on L. Returns the contribution of the
    L2 penalty to the objective and fills grad_L. */
-static double l2_regularized_L_term(GexLatentBrownianModel *model,
-                                    Matrix *resid,
+static double l2_regularized_L_term(Matrix *L,
                                     Matrix *grad_L,
                                     double lambda_L) {
-    int i, j, d;
-    int n = model->n_cells;
-    int p = model->n_genes;
-    int k = model->k;
+    int j, d;
+    int p = L->ncols;
+    int k = L->nrows;
     double obj = 0.0;
-    double sigma2_obs = exp(model->log_sigma2_obs);
+    double grad;
 
     /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization. */
     for (d = 0; d < k; d++) {
         for (j = 0; j < p; j++) {
-            double gl = 0.0;
-
-            /* Accumulate gradient from data likelihood:
-               -(1/sigma2_obs) * sum_i Z_{i,d} * r_{i,j}
-               where r_{i,j} = X_{i,j} - (ZL)_{i,j} */
-            for (i = 0; i < n; i++)
-                gl += -mat_get(model->Z, i, d) *
-                      mat_get(resid, i, j) / sigma2_obs;
-
-            /* Only add the L2 penalty and gradient when regularization is enabled. */
-            if (lambda_L > 0.0)
-                gl += lambda_L * mat_get(model->L, d, j);
-
-            /* Store gradient for L_{d,j} */
-            mat_set(grad_L, d, j, gl);
-
-            if (lambda_L > 0.0) {
-                /* Add L2 penalty to objective: (lambda_L / 2) * L_{d,j}^2 */
-                obj += 0.5 * lambda_L *
-                       mat_get(model->L, d, j) * mat_get(model->L, d, j);
+            
+            if (grad_L != NULL) {
+                /* Only add the L2 penalty gradient when regularization is enabled. */
+                grad = mat_get(grad_L, d, j);
+                grad += lambda_L * mat_get(L, d, j);
+                mat_set(grad_L, d, j, grad);
             }
+
+            /* Add L2 penalty to objective: (lambda_L / 2) * L_{d,j}^2 */
+            obj += 0.5 * lambda_L * mat_get(L, d, j) * mat_get(L, d, j);
         }
     }
 
@@ -284,24 +273,9 @@ static double l2_regularized_L_term(GexLatentBrownianModel *model,
 latent Brownian factor model:
     X ≈ ZL + ε,      ε_ij ~ N(0, sigma2_obs)
     z_d ~ N(0, sigma2_latent[d] * Sigma) independently for each latent factor d
-
 The objective (up to constants) is the sum of three terms for the data likelihood,
-the latent factor Brownian prior, and the L2 regularization on loadings L (latent factors x genes):
-    Matrix factorization data term (Gaussian likelihood):
-    (1 / (2 sigma2_obs)) ||X - ZL||_F^2 + (np/2) log(sigma2_obs)
-
-    Brownian motion prior on latent factors z_d as columns in Z (cells x latent factors),
-    marginalized over a set of trees:
-    sum_d [ (n/2) log(sigma2_d)
-            - log sum_t exp( - (1 / (2 sigma2_d)) z_d^T Sigma_t^{-1} z_d
-                             - (1/2) log|Sigma_t| ) ]
-
-    L2 regularization on loadings to encourage distributed latent factors (prevents 
-    overfitting to few genes):
-    (lambda_L / 2) ||L||_F^2
-
-Returns the total objective value (negative log-posterior) and fills gradients for
-Z, L, log(sigma2_latent), and log(sigma2_obs). */
+the latent factor Brownian prior, and the L2 regularization on loadings L (latent factors x genes).
+*/
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *Xc,
                                            Matrix **Sigma_invs,
@@ -312,12 +286,9 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            double *grad_log_sigma_latent,
                                            double *grad_log_sigma_obs) {
     int d;
-    int n = model->n_cells; /* Number of cells */
-    int p = model->n_genes; /* Number of genes */
     int k = model->k;   /* Number of latent factors */
     double lambda_L = model->l2_strength;   /* L2 regularization strength for L */
     double obj = 0.0;   /* Objective function value */
-    Matrix *resid = mat_new(n, p);   /* Residual matrix */
 
     /* Zero gradients */
     mat_zero(grad_Z);
@@ -329,25 +300,26 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the likelihood from the gaussian observation model X_ij ~ N((ZL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. Z and log(sigma2_obs). */
     model->observation_objective =
-        gaussian_observation_term(model, Xc, resid, grad_Z, grad_log_sigma_obs);
+        gaussian_observation_term(model->Z, model->L, model->log_sigma2_obs, Xc, grad_Z, grad_L, grad_log_sigma_obs);
     obj += model->observation_objective;
 
     /* Add the mixture-of-Brownian prior contribution on Z and accumulate the
     gradients w.r.t. Z and log(sigma2_latent). */
     model->brownian_prior_objective =
-        latent_brownian_prior_term(model, Sigma_invs, logdet_sigmas, n_sigmas,
+        latent_brownian_prior_term(model->Z, model->log_sigma2_latent, Sigma_invs, logdet_sigmas, n_sigmas,
                                     grad_Z, grad_log_sigma_latent);
     obj += model->brownian_prior_objective;
     if (!isfinite(obj)) {
-        mat_free(resid);
         return HUGE_VAL;
     }
 
     /* Add the L2 regularization penalty on L and compute the gradient w.r.t. L. */
-    model->l2_objective = l2_regularized_L_term(model, resid, grad_L, lambda_L);
-    obj += model->l2_objective;
+    model->l2_objective = 0.0;
+    if (lambda_L > 0.0) {
+        model->l2_objective = l2_regularized_L_term(model->L, grad_L, lambda_L);
+        obj += model->l2_objective;
+    }
 
-    mat_free(resid);
     return obj;
 }
 
@@ -853,7 +825,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
     if (model == NULL)
         return;
-        
     if (model->Z != NULL) 
         mat_free(model->Z);
     if (model->L != NULL) 
@@ -862,7 +833,6 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
         free(model->log_sigma2_latent);
     if (model->latent_mvn != NULL) 
         mvn_free(model->latent_mvn);
-
     free(model);
 }
 
@@ -908,6 +878,8 @@ Matrix **downsample_sigmas(Matrix **Sigmas,
 void write_summary_tsv(const char *path,
                         int n_cells,
                         int n_genes,
+                        double brownian_negll,
+                        double observation_negll,
                         double sigma2_obs,
                         double *sigma2_latent,
                         int k,
@@ -920,6 +892,8 @@ void write_summary_tsv(const char *path,
     fprintf(summary_out, "parameter\tvalue\n");
     fprintf(summary_out, "n_cells\t%d\n", n_cells);
     fprintf(summary_out, "n_genes\t%d\n", n_genes);
+    fprintf(summary_out, "brownian_negll\t%.17g\n", brownian_negll);
+    fprintf(summary_out, "observation_negll\t%.17g\n", observation_negll);
     fprintf(summary_out, "k\t%d\n", k);
     fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
     for (j = 0; j < k; j++)
@@ -937,6 +911,8 @@ void write_model(const char *outprefix,
                                 char **gene_names,
                                 char **factor_names,
                                 int k,
+                                double brownian_negll,
+                                double observation_negll,
                                 double sigma2_obs,
                                 double *sigma2_latent) {
     char summary_path[4096];
@@ -949,7 +925,9 @@ void write_model(const char *outprefix,
     snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
     snprintf(x_path, sizeof(x_path), "%s.X.tsv", outprefix);
 
-    write_summary_tsv(summary_path, gex->X->nrows, gex->X->ncols, sigma2_obs, sigma2_latent, k, factor_names);
+    write_summary_tsv(summary_path, gex->X->nrows, gex->X->ncols, 
+                        brownian_negll, observation_negll,
+                        sigma2_obs, sigma2_latent, k, factor_names);
 
     /* Write out the simulated matrices */
     write_labeled_matrix_tsv(x_path, gex->X, cell_names, gex->X->nrows,

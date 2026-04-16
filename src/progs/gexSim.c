@@ -351,9 +351,45 @@ int main(int argc, char *argv[]) {
 
         simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, sigma2_obs, L, gex_obs);
 
+        double brownian_negll = 0.0;
+        if (!identity_cov) {
+            /* Compute the negative log-likelihoods for the Brownian (over all trees to 
+            be comparable to model fitting, for now) and observation models */
+            double *log_sigma2_latent = scalloc(k, sizeof(double));
+            for (i = 0; i < k; i++) {
+                log_sigma2_latent[i] = log(vec_get(sigma2s, i));
+            }
+            Matrix **Sigma_invs = scalloc(n_trees, sizeof(Matrix *));
+            for (i = 0; i < n_trees; i++) {
+                Sigma_invs[i] = mat_new(n_cells, n_cells);
+                mat_invert(Sigma_invs[i], Sigmas[i]);
+            }
+            double *logdet_sigmas = scalloc(n_trees, sizeof(double));
+            for (i = 0; i < n_trees; i++) {
+                logdet_sigmas[i] = mat_logdet(Sigmas[i]);
+            }
+
+            brownian_negll = latent_brownian_prior_term(gex->X, log_sigma2_latent, Sigma_invs, logdet_sigmas, n_trees, NULL, NULL);
+
+            /* Free memory */
+            if (log_sigma2_latent != NULL)
+                free(log_sigma2_latent);
+            if (logdet_sigmas != NULL)
+                free(logdet_sigmas);
+            if (Sigma_invs != NULL) {
+                for (i = 0; i < n_trees; i++) {
+                    if (Sigma_invs[i] != NULL)
+                        mat_free(Sigma_invs[i]);
+                }
+                free(Sigma_invs);
+            }
+        }
+
+        double observation_negll = gaussian_observation_term(gex->X, L, log(sigma2_obs), gex_obs->X, NULL, NULL, NULL);
+
         /* Write out L, Z, X, and summary of simulation parameters */
         write_model(outprefix, gex_obs, L, gex->X, gex_obs->cell_names, gex_obs->gene_names,
-                        gex->gene_names, k, sigma2_obs, sigma2s->data);
+                        gex->gene_names, k, brownian_negll, observation_negll, sigma2_obs, sigma2s->data);
 
         /* Free memory */
         if (L != NULL)
