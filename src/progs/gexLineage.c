@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int L_row_norm_interval = 1;  /* Interval for normalizing rows of L; 0 means no normalization. */
-    double L_l1_strength = 1e-3;  /* L1 regularization strength for loadings; 0 disables the penalty. */
+    double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
