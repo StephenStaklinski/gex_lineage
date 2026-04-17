@@ -328,26 +328,17 @@ int main(int argc, char *argv[]) {
         snprintf(expr_buf, sizeof(expr_buf), "%s.expr.tsv", outprefix);
         write_labeled_matrix_tsv(expr_buf, gex->X, gex->cell_names, gex->X->nrows,
                                     gex->gene_names, gex->X->ncols, "cell");
-    } else {
-        generate_names(gex->gene_names, sim_dim, "factor");
     }
 
 
     if (!expr_only) {
-        /* Use the Brownian result as the latent factors matrix Z (cells x factors) to 
+        /* Use the Brownian result as the latent factors matrix F (cells x factors) to 
         simulate L (factors x genes) and the reconstructed expression matrix X
         with noise for the input parameters. */
         Matrix *L = mat_new(k, n_genes);
-        GexMatrix *gex_obs = scalloc(1, sizeof(GexMatrix));
-        gex_obs->X = mat_new(n_cells, n_genes);
-        gex_obs->cell_names = scalloc(n_cells, sizeof(char *));
-        for (i = 0; i < n_cells; i++) {
-            gex_obs->cell_names[i] = strdup(gex->cell_names[i]);
-        }
-        gex_obs->gene_names = scalloc(n_genes, sizeof(char *));
-        for (i = 0; i < n_genes; i++) {
-            gex_obs->gene_names[i] = strdup(gene_names[i]); /* Use extra copy in case gene names were replaced by factor names */
-        }
+        GexMatrix *gex_obs = gex_mat_copy(gex);
+        generate_names(gex->gene_names, sim_dim, "factor"); /* gex becomes F now */
+        
 
         simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, sigma2_obs, L, gex_obs);
 
@@ -387,7 +378,7 @@ int main(int argc, char *argv[]) {
 
         double observation_negll = gaussian_observation_term(gex->X, L, log(sigma2_obs), gex_obs->X, NULL, NULL, NULL);
 
-        /* Write out L, Z, X, and summary of simulation parameters */
+        /* Write out L, F, X, and summary of simulation parameters */
         write_model(outprefix, gex_obs, L, gex->X, gex_obs->cell_names, gex_obs->gene_names,
                         gex->gene_names, k, brownian_negll, observation_negll, sigma2_obs, sigma2s->data);
 

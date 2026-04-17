@@ -13,7 +13,7 @@ typedef struct {
     int n_cells;
     int n_genes;
     int k;
-    Matrix *Z;              /* n_cells x k latent factors */
+    Matrix *F;              /* n_cells x k latent factors */
     Matrix *L;              /* k latent factors x n_genes */
     double *log_sigma2_latent;  /* length k */
     double log_sigma2_obs;
@@ -35,20 +35,20 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
 
-double gaussian_observation_term(Matrix *Z,
+double gaussian_observation_term(Matrix *F,
                                         Matrix *L,
                                         double log_sigma2_obs,
                                         Matrix *Xc,
-                                        Matrix *grad_Z,
+                                        Matrix *grad_F,
                                         Matrix *grad_L,
                                         double *grad_log_sigma_obs);
 
-double latent_brownian_prior_term(Matrix *Z,
+double latent_brownian_prior_term(Matrix *F,
                                         double *log_sigma2_latent,
                                         Matrix **Sigma_invs,
                                         double *logdet_sigmas,
                                         int n_sigmas,
-                                        Matrix *grad_Z,
+                                        Matrix *grad_F,
                                         double *grad_log_sigma_latent);
 
 Matrix **downsample_sigmas(Matrix **Sigmas,
@@ -68,7 +68,7 @@ void write_summary_tsv(const char *path,
 void write_model(const char *outprefix,
                     GexMatrix *gex,
                     Matrix *L,
-                    Matrix *Z,
+                    Matrix *F,
                     char **cell_names,
                     char **gene_names,
                     char ** factor_names,
@@ -78,7 +78,7 @@ void write_model(const char *outprefix,
                     double sigma2_obs,
                     double *sigma2_latent);
 
-void simulate_factorization_and_reconstruction(Matrix *Z,
+void simulate_factorization_and_reconstruction(Matrix *F,
                                                 char **cell_names,
                                                 int n_cells,
                                                 int k,

@@ -12,6 +12,8 @@ typedef struct {
 
 void gex_free_matrix_data(GexMatrix *gex);
 
+GexMatrix *gex_mat_copy(GexMatrix *gex);
+
 void mat_set_col(Matrix *res, int i, Vector *sim_vec);
 
 void mat_add_mat(Matrix *dest, Matrix *src);

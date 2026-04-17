@@ -9,6 +9,15 @@
 #include <stdlib.h>
 
 
+char **copy_string_array(char **input, int n) {
+    int i;
+    char **copy = scalloc(n, sizeof(char *));
+    for (i = 0; i < n; i++) {
+        copy[i] = strdup(input[i]);
+    }
+    return copy;
+}
+
 /* Expand a vector to a specified size, filling with the first element if necessary. */
 Vector *expand_input_csv(Vector *input, int expected_size) {
     int i;

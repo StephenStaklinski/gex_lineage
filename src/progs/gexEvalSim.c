@@ -887,20 +887,20 @@ int main(int argc, char *argv[]) {
     const char *fit_prefix = NULL;
     const char *outprefix = NULL;
     char sim_summary_path[4096];
-    char sim_z_path[4096];
+    char sim_f_path[4096];
     char sim_l_path[4096];
     char fit_summary_path[4096];
-    char fit_z_path[4096];
+    char fit_f_path[4096];
     char fit_l_path[4096];
     char eval_summary_path[4096];
     GexEvalSummary *sim_summary = NULL;
     GexEvalSummary *fit_summary = NULL;
-    GexMatrix *sim_Z = NULL;
+    GexMatrix *sim_F = NULL;
     GexMatrix *sim_L = NULL;
-    GexMatrix *fit_Z = NULL;
+    GexMatrix *fit_F = NULL;
     GexMatrix *fit_L = NULL;
-    GexMatrix *sim_Z_aligned = NULL;
-    GexMatrix *fit_Z_aligned = NULL;
+    GexMatrix *sim_F_aligned = NULL;
+    GexMatrix *fit_F_aligned = NULL;
     GexMatrix *sim_L_common = NULL;
     GexMatrix *fit_L_common = NULL;
     Matrix *sim_latent_cov = NULL;
@@ -962,30 +962,30 @@ int main(int argc, char *argv[]) {
 
     /* Use relative paths for the comparison based on the input prefixes */
     snprintf(sim_summary_path, sizeof(sim_summary_path), "%s.summary.tsv", sim_prefix);
-    snprintf(sim_z_path, sizeof(sim_z_path), "%s.Z.tsv", sim_prefix);
+    snprintf(sim_f_path, sizeof(sim_f_path), "%s.F.tsv", sim_prefix);
     snprintf(sim_l_path, sizeof(sim_l_path), "%s.L.tsv", sim_prefix);
     snprintf(fit_summary_path, sizeof(fit_summary_path), "%s.summary.tsv", fit_prefix);
-    snprintf(fit_z_path, sizeof(fit_z_path), "%s.Z.tsv", fit_prefix);
+    snprintf(fit_f_path, sizeof(fit_f_path), "%s.F.tsv", fit_prefix);
     snprintf(fit_l_path, sizeof(fit_l_path), "%s.L.tsv", fit_prefix);
     snprintf(eval_summary_path, sizeof(eval_summary_path), "%s.summary.tsv", outprefix);
 
     /* Read in the simulated and fit parameters */
     sim_summary = gexeval_read_summary(sim_summary_path);
     fit_summary = gexeval_read_summary(fit_summary_path);
-    sim_Z = read_gex_matrix(sim_z_path);
+    sim_F = read_gex_matrix(sim_f_path);
     sim_L = read_gex_matrix(sim_l_path);
-    fit_Z = read_gex_matrix(fit_z_path);
+    fit_F = read_gex_matrix(fit_f_path);
     fit_L = read_gex_matrix(fit_l_path);
-    if (sim_summary == NULL || fit_summary == NULL || sim_Z == NULL || sim_L == NULL ||
-        fit_Z == NULL || fit_L == NULL) {
+    if (sim_summary == NULL || fit_summary == NULL || sim_F == NULL || sim_L == NULL ||
+        fit_F == NULL || fit_L == NULL) {
         fprintf(stderr, "ERROR: failed to read required sim/model files.\n");
         return 1;
     }
 
     /* Derive the set of common cells and genes between the sim and fitted outputs 
     so that we are not comparing model fits on the subset of genes simulated. */
-    if (gexeval_collect_common_names(fit_Z->cell_names, fit_Z->X->nrows,
-                                     sim_Z->cell_names, sim_Z->X->nrows,
+    if (gexeval_collect_common_names(fit_F->cell_names, fit_F->X->nrows,
+                                     sim_F->cell_names, sim_F->X->nrows,
                                      &common_cells, &n_common_cells) != 0 ||
         gexeval_collect_common_names(fit_L->gene_names, fit_L->X->ncols,
                                      sim_L->gene_names, sim_L->X->ncols,
@@ -995,22 +995,22 @@ int main(int argc, char *argv[]) {
     }
 
     /* Subset Z and L to the common cells and genes */
-    sim_Z_aligned = gexeval_subset_rows_by_names(sim_Z, common_cells, n_common_cells);
-    fit_Z_aligned = gexeval_subset_rows_by_names(fit_Z, common_cells, n_common_cells);
+    sim_F_aligned = gexeval_subset_rows_by_names(sim_F, common_cells, n_common_cells);
+    fit_F_aligned = gexeval_subset_rows_by_names(fit_F, common_cells, n_common_cells);
     sim_L_common = gexeval_subset_cols_by_names(sim_L, common_genes, n_common_genes);
     fit_L_common = gexeval_subset_cols_by_names(fit_L, common_genes, n_common_genes);
-    if (sim_Z_aligned == NULL || fit_Z_aligned == NULL || sim_L_common == NULL || fit_L_common == NULL) {
+    if (sim_F_aligned == NULL || fit_F_aligned == NULL || sim_L_common == NULL || fit_L_common == NULL) {
         fprintf(stderr, "ERROR: failed to align sim and fitted matrices on shared names.\n");
         return 1;
     }
 
     /* Compute the reconstructed gex matrix X from Z and L for both simulated and fitted models */
-    sim_signal = gexeval_reconstruct_gex_matrix(sim_Z_aligned->X, sim_L_common->X);
-    fit_signal = gexeval_reconstruct_gex_matrix(fit_Z_aligned->X, fit_L_common->X);
+    sim_signal = gexeval_reconstruct_gex_matrix(sim_F_aligned->X, sim_L_common->X);
+    fit_signal = gexeval_reconstruct_gex_matrix(fit_F_aligned->X, fit_L_common->X);
 
     /* Compute covariance between cells implied by their latent factor vectors */
-    sim_latent_cov = gexeval_compute_cell_covariance(sim_Z_aligned->X);
-    fit_latent_cov = gexeval_compute_cell_covariance(fit_Z_aligned->X);
+    sim_latent_cov = gexeval_compute_cell_covariance(sim_F_aligned->X);
+    fit_latent_cov = gexeval_compute_cell_covariance(fit_F_aligned->X);
 
     /* Compute covariance between genes in the reconstructed gene expression matrix */
     sim_gene_cov = gexeval_compute_gene_covariance(sim_signal);
@@ -1022,10 +1022,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* Compute the similarity between the latent subspaces of the sim and fitted models */
-    latent_subspace_similarity = gexeval_latent_subspace_similarity(sim_Z_aligned->X, fit_Z_aligned->X);
+    latent_subspace_similarity = gexeval_latent_subspace_similarity(sim_F_aligned->X, fit_F_aligned->X);
 
     /* Compute factor-level recovery up to permutation and sign flip. */
-    latent_factor_match_score = gexeval_greedy_factor_match_score(sim_Z_aligned->X, fit_Z_aligned->X);
+    latent_factor_match_score = gexeval_greedy_factor_match_score(sim_F_aligned->X, fit_F_aligned->X);
 
     /* Compute pearson correlations between the flattened cell covariance matrices */
     cell_cov_corr = gexeval_matrix_correlation(sim_latent_cov, fit_latent_cov);
@@ -1104,18 +1104,18 @@ int main(int argc, char *argv[]) {
         gexeval_free_summary(sim_summary);
     if (fit_summary != NULL)
         gexeval_free_summary(fit_summary);
-    if (sim_Z != NULL)
-        gex_free_matrix_data(sim_Z);
+    if (sim_F != NULL)
+        gex_free_matrix_data(sim_F);
     if (sim_L != NULL)
         gex_free_matrix_data(sim_L);
-    if (fit_Z != NULL)
-        gex_free_matrix_data(fit_Z);
+    if (fit_F != NULL)
+        gex_free_matrix_data(fit_F);
     if (fit_L != NULL)
         gex_free_matrix_data(fit_L);
-    if (sim_Z_aligned != NULL)
-        gex_free_matrix_data(sim_Z_aligned);
-    if (fit_Z_aligned != NULL)
-        gex_free_matrix_data(fit_Z_aligned);
+    if (sim_F_aligned != NULL)
+        gex_free_matrix_data(sim_F_aligned);
+    if (fit_F_aligned != NULL)
+        gex_free_matrix_data(fit_F_aligned);
     if (sim_L_common != NULL)
         gex_free_matrix_data(sim_L_common);
     if (fit_L_common != NULL)
