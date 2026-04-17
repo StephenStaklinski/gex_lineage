@@ -524,6 +524,146 @@ static int clip_vector_by_norm(double *grad, int n, double norm, double clip_nor
     return 0;
 }
 
+static void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
+    int d, j;
+    int k = L->nrows;
+    int p = L->ncols;
+
+    for (d = 0; d < k; d++) {
+        /* Find the index of the largest loading in absolute value for this factor */
+        double max_val = 0.0;
+        for (j = 0; j < p; j++) {
+            double val = mat_get(L, d, j);
+            if (fabs(val) > fabs(max_val)) {
+                max_val = val;
+            }
+        }
+
+        /* If the largest loading is negative, flip the signs of the factor and loadings */
+        if (max_val < 0.0) {
+            int i;
+            for (i = 0; i < F->nrows; i++) {
+                mat_set(F, i, d, -mat_get(F, i, d));
+            }
+            for (j = 0; j < p; j++) {
+                mat_set(L, d, j, -mat_get(L, d, j));
+            }
+        }
+    }
+}
+
+/* Sorts an array in decreasing order in-place and updates the corresponding indices 
+to match the new order */
+static void selection_sort_decreasing(double *arr, int *indices, int n) {
+    int i, j;
+
+    /* Set the current indices */
+    for (i = 0; i < n; i++)
+        indices[i] = i;
+
+    for (i = 0; i < n - 1; i++) {
+        int best = i;
+        for (j = i + 1; j < n; j++) {
+            if (arr[j] > arr[best])
+                best = j;
+        }
+        if (best != i) {
+            double temp_val = arr[i];
+            arr[i] = arr[best];
+            arr[best] = temp_val;
+
+            int temp_idx = indices[i];
+            indices[i] = indices[best];
+            indices[best] = temp_idx;
+        }
+    }
+}
+
+static void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
+    int d, j, i;
+    int k = L->nrows;
+    int p = L->ncols;
+    int n = F->nrows;
+
+    /* Compute row squared norms of L */
+    double *norms = smalloc(k * sizeof(double));
+    int *order = smalloc(k * sizeof(int));
+
+    for (d = 0; d < k; d++) {
+        double ss = 0.0;
+        for (j = 0; j < p; j++) {
+            double val = mat_get(L, d, j);
+            ss += val * val;
+        }
+        norms[d] = ss;   /* squared norm is sufficient for ranking */
+    }
+
+    /* Sort indices by decreasing norm */
+    selection_sort_decreasing(norms, order, k);
+
+    /* Create reordered copies */
+    Matrix *L_new = mat_new(k, p);
+    Matrix *F_new = mat_new(n, k);
+
+    for (d = 0; d < k; d++) {
+        int old_d = order[d];
+
+        /* Copy row old_d of L into row d */
+        for (j = 0; j < p; j++)
+            mat_set(L_new, d, j, mat_get(L, old_d, j));
+
+        /* Copy column old_d of F into column d */
+        for (i = 0; i < n; i++)
+            mat_set(F_new, i, d, mat_get(F, i, old_d));
+    }
+
+    /* Overwrite originals */
+    mat_copy(L, L_new);
+    mat_copy(F, F_new);
+
+    /* Free memory */
+    mat_free(L_new);
+    mat_free(F_new);
+    free(norms);
+    free(order);
+}
+
+static void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent) {
+    int d, j, i;
+    int k = L->nrows;
+    int p = L->ncols;
+    int n = F->nrows;
+
+    /* Sort indices by decreasing latent noise variance */
+    int *order = smalloc(k * sizeof(int));
+    selection_sort_decreasing(log_sigma2_latent, order, k); /* Sorts log_sigma2_latent in-place */
+
+    /* Create reordered copies */
+    Matrix *L_new = mat_new(k, p);
+    Matrix *F_new = mat_new(n, k);
+
+    for (d = 0; d < k; d++) {
+        int old_d = order[d];
+
+        /* Copy row old_d of L into row d */
+        for (j = 0; j < p; j++)
+            mat_set(L_new, d, j, mat_get(L, old_d, j));
+
+        /* Copy column old_d of F into column d */
+        for (i = 0; i < n; i++)
+            mat_set(F_new, i, d, mat_get(F, i, old_d));
+    }
+
+    /* Overwrite originals */
+    mat_copy(L, L_new);
+    mat_copy(F, F_new);
+
+    /* Free memory */
+    mat_free(L_new);
+    mat_free(F_new);
+    free(order);
+}
+
 /* Main model entry point. Fit a low-rank factorization of the centered gene
 expression matrix that is regularized by a phylogenetic Brownian-motion prior.
 The data are modeled as X ≈ FL + E, where F (cells × latent factors) contains
@@ -891,6 +1031,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     n_sigmas, grad_F, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
+    
+    /* Prevent sign invariance by making the largest loading of L positive */
+    post_hoc_sign_identifiability(model->L, model->F);
+
+    /* Prevent permutation invariance by reordering factors */
+    if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
+        reorder_factors_by_row_norm(model->L, model->F);
+    }
+    else {
+        reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
+    }
 
     /* Write a final footer line describing why optimization terminated. */
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
@@ -982,6 +1133,7 @@ void write_summary_tsv(const char *path,
                         double observation_negll,
                         double sigma2_obs,
                         double *sigma2_latent,
+                        double *L_row_norms,
                         int k,
                         char **factor_names) {
     int j;
@@ -998,6 +1150,8 @@ void write_summary_tsv(const char *path,
     fprintf(summary_out, "sigma2_obs\t%.17g\n", sigma2_obs);
     for (j = 0; j < k; j++)
         fprintf(summary_out, "sigma2_latent_LF%d\t%.17g\n", j + 1, sigma2_latent[j]);
+    for (j = 0; j < k; j++)
+        fprintf(summary_out, "L_LF%d_l2_norm\t%.17g\n", j + 1, L_row_norms[j]);
 
     fclose(summary_out);
     summary_out = NULL;
@@ -1025,9 +1179,15 @@ void write_model(const char *outprefix,
     snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
     snprintf(x_path, sizeof(x_path), "%s.X.tsv", outprefix);
 
+    /* Calculate the row norms of L */
+    double *L_row_norms = mat_row_l2_norms(L);
+
     write_summary_tsv(summary_path, gex->X->nrows, gex->X->ncols, 
                         brownian_negll, observation_negll,
-                        sigma2_obs, sigma2_latent, k, factor_names);
+                        sigma2_obs, sigma2_latent, L_row_norms, k, factor_names);
+    
+    /* Free memory */
+    free(L_row_norms);
 
     /* Write out the simulated matrices */
     write_labeled_matrix_tsv(x_path, gex->X, cell_names, gex->X->nrows,
@@ -1045,6 +1205,7 @@ void simulate_factorization_and_reconstruction(Matrix *F,
                                      int k,
                                      int n_genes,
                                      double sigma2_obs,
+                                     Vector *L_row_norms,
                                      Matrix *L_out,
                                      GexMatrix *gex_out) {
     int i, j, d;    /* Loop indices */
@@ -1054,9 +1215,10 @@ void simulate_factorization_and_reconstruction(Matrix *F,
     sqrt(n_genes / k), ensuring each latent dimension contributes
     equal expected magnitude to the noiseless gene expression data. */
     double row_ss;
-    double target_norm = 1.0; /* Set target norm for each row for stability */
+    double target_norm; /* Set target norm for each row for stability */
     for (d = 0; d < k; d++) {
         row_ss = 0.0;    /* Sum of squares for the current row */
+        target_norm = vec_get(L_row_norms, d); /* Get the target norm for the current row of L */
         for (j = 0; j < n_genes; j++) {
             rng_state = (unsigned int)random();
             double val = rand_normal(&rng_state);

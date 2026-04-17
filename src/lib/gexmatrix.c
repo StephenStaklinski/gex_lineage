@@ -313,6 +313,23 @@ void mat_add_diag(Matrix *X, double val) {
         mat_set(X, i, i, mat_get(X, i, i) + val);
 }
 
+/* Return an array containing the row L2 norms of a matrix */
+double *mat_row_l2_norms(Matrix *L) {
+    int i, j;
+    double *row_norms = malloc(L->nrows * sizeof(double));
+
+    for (i = 0; i < L->nrows; i++) {
+        row_norms[i] = 0.0;
+        for (j = 0; j < L->ncols; j++) {
+            double val = mat_get(L, i, j);
+            row_norms[i] += val * val;
+        }
+        row_norms[i] = sqrt(row_norms[i]);
+    }
+
+    return row_norms;
+}
+
 /* Return a vector containing the diagonal entries of a matrix */
 Vector *mat_get_diag(Matrix *X) {
     int i, n;

@@ -25,6 +25,7 @@ static void usage(const char *progname) {
         "--outprefix <prefix> "
         "[--tree-total-time T] "
         "[--n-genes N] "
+        "[--L-l2-norm <csv>] "
         "[--desired-tip-var <csv> ] "
         "[--sigma2 <csv>] "
         "[--use-n-trees N] "
@@ -45,7 +46,7 @@ int main(int argc, char *argv[]) {
     const char *outprefix = NULL;   /* Prefix for all output files */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int n_genes = 100; /* Number of genes to simulate */
-    double desired_tip_var = 5.0; /* Desired variance for tip nodes */
+    double desired_L_l2_norm = 1.0; /* Default desired L l2 norm for latent factors */
     int use_n_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int k = 5; /* Number of latent factors to simulate */
     double sigma2_obs = 1.0; /* Variance of observation noise */
@@ -60,7 +61,9 @@ int main(int argc, char *argv[]) {
     Matrix **use_Sigmas = NULL; /* Covariance matrices used for filtering */
     int n_trees = 0;    /* Number of input trees */
     Vector *mu;   /* Mean vector for simulations */
+    Vector *L_row_norms; /* Row norms of L, for output */
     Vector *sigma2s = NULL;   /* Vector of Brownian variance parameters for simulations */
+    Vector *input_L_l2_norms = NULL; /* Raw L l2 norms input from CLI */
     Vector *input_tip_vars = NULL; /* Raw desired tip variance input from CLI */
     Vector *input_sigma2s = NULL; /* Raw sigma2 input from CLI */
     GexMatrix *gex = scalloc(1, sizeof(GexMatrix));  /* Simulated expression matrix */
@@ -98,6 +101,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             n_genes = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--L-l2-norm") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            input_L_l2_norms = parse_csv_to_vec(argv[++i]);
         }
         else if (strcmp(argv[i], "--desired-tip-var") == 0) {
             if (i + 1 >= argc) {
@@ -166,8 +176,8 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
         return 1;
     }
-    if (input_tip_vars != NULL && input_sigma2s != NULL) {
-        fprintf(stderr, "ERROR: specify either --desired-tip-var or --sigma2, not both\n");
+    if (input_L_l2_norms != NULL && input_tip_vars != NULL && input_sigma2s != NULL) {
+        fprintf(stderr, "ERROR: specify only one of --L-l2-norm or --desired-tip-var or --sigma2\n");
         return 1;
     }
 
@@ -283,18 +293,28 @@ int main(int argc, char *argv[]) {
     is for genes or latent factors */
     sim_dim = (expr_only ? n_genes : k);
 
-    /* Default to a single desired tip variance if neither option was provided. */
-    if (input_tip_vars == NULL && input_sigma2s == NULL) {
-        input_tip_vars = vec_new(1);
-        vec_set(input_tip_vars, 0, desired_tip_var);
+    /* Default to a single L l2 norm if neither option was provided. */
+    if (input_L_l2_norms == NULL && input_tip_vars == NULL && input_sigma2s == NULL) {
+        input_L_l2_norms = vec_new(1);
+        vec_set(input_L_l2_norms, 0, desired_L_l2_norm);
     }
 
     /* Otherwise read in what what provided for the Brownian sigma2s
     either directly from input or calculated from input desired tip variances */
-    if (input_tip_vars != NULL) {
+    if (input_L_l2_norms != NULL) {
+        /* All sigma2s set to 1.0 */
+        sigma2s = vec_new(sim_dim);
+        for (i = 0; i < sim_dim; i++)
+            vec_set(sigma2s, i, 1.0);
+
+        /* Use the provided L l2 norms */
+        L_row_norms = expand_input_csv(input_L_l2_norms, sim_dim);
+        vec_free(input_L_l2_norms);
+    }
+    else if (input_tip_vars != NULL) {
         Vector *tip_vars = expand_input_csv(input_tip_vars, sim_dim);
 
-        /* Do the calculations to get the desired tip variance(s) */
+        /* Do the calculations to get sigma2s for the desired tip variance(s) */
         double tree_height = mat_get(use_Sigmas[0], 0, 0);
         sigma2s = vec_new(sim_dim);
         for (i = 0; i < sim_dim; i++)
@@ -303,12 +323,22 @@ int main(int argc, char *argv[]) {
         /* Free memory */
         vec_free(input_tip_vars);
         vec_free(tip_vars);
+
+        /* All row norms set to 1.0 */
+        L_row_norms = vec_new(sim_dim);
+        for (i = 0; i < sim_dim; i++)
+            vec_set(L_row_norms, i, 1.0);
     }
     else {
         sigma2s = expand_input_csv(input_sigma2s, sim_dim);
 
         /* Free memory */
         vec_free(input_sigma2s);
+
+        /* All row norms set to 1.0 */
+        L_row_norms = vec_new(sim_dim);
+        for (i = 0; i < sim_dim; i++)
+            vec_set(L_row_norms, i, 1.0);
     }
 
     /* Run simulation */
@@ -338,7 +368,8 @@ int main(int argc, char *argv[]) {
         generate_names(gex->gene_names, sim_dim, "factor"); /* gex becomes F now */
         
 
-        simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, sigma2_obs, L, gex_obs);
+        simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, 
+                                                    sigma2_obs, L_row_norms, L, gex_obs);
 
         double brownian_negll = 0.0;
         if (!identity_cov) {

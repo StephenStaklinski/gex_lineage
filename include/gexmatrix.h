@@ -46,6 +46,8 @@ void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B);
 
 void mat_add_diag(Matrix *X, double val);
 
+double *mat_row_l2_norms(Matrix *L);
+
 Vector *mat_get_diag(Matrix *X);
 
 Vector *mat_row_sums(Matrix *X);

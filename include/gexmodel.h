@@ -67,6 +67,7 @@ void write_summary_tsv(const char *path,
                         double observation_negll,
                         double sigma2_obs,
                         double *sigma2_latent,
+                        double *L_row_norms,
                         int k,
                         char **factor_names);
 
@@ -89,6 +90,7 @@ void simulate_factorization_and_reconstruction(Matrix *F,
                                                 int k,
                                                 int n_genes,
                                                 double sigma2_obs,
+                                                Vector *L_row_norms,
                                                 Matrix *L_out,
                                                 GexMatrix *gex_out);
 
