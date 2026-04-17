@@ -43,6 +43,18 @@ static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
     return -1;
 }
 
+static int parse_scale_invar_constraint(const char *s, GexScaleInvarConstraint *constraint_out) {
+    if (strcmp(s, "sigma2s") == 0) {
+        *constraint_out = GEX_SCALE_INVAR_SIGMA2S;
+        return 0;
+    }
+    if (strcmp(s, "Lrows") == 0) {
+        *constraint_out = GEX_SCALE_INVAR_LROWS;
+        return 0;
+    }
+    return -1;
+}
+
 /* Print command line usage information to stderr. */
 static void usage(const char *progname) {
     fprintf(stderr,
@@ -55,6 +67,7 @@ static void usage(const char *progname) {
         "[--n-model-trees N] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
+        "[--scale-invar-constraint sigma2s|Lrows] "
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
         "[--dim K] "
@@ -83,7 +96,6 @@ int main(int argc, char *argv[]) {
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
-    int L_row_norm_interval = 1;  /* Interval for normalizing rows of L; 0 means no normalization. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
@@ -91,6 +103,7 @@ int main(int argc, char *argv[]) {
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
+    GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_SIGMA2S; /* Which constraint to use for counteracting scale invariance */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -168,12 +181,15 @@ int main(int argc, char *argv[]) {
             }
             pca_var_threshold = atof(argv[++i]);
         }
-        else if (strcmp(argv[i], "--L-row-norm-interval") == 0) {
+        else if (strcmp(argv[i], "--scale-invar-constraint") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
                 return 1;
             }
-            L_row_norm_interval = atoi(argv[++i]);
+            if (parse_scale_invar_constraint(argv[++i], &scale_invar_constraint) != 0) {
+                fprintf(stderr, "ERROR: --scale-invar-constraint must be one of sigma2s or Lrows\n");
+                return 1;
+            }
         }
         else if (strcmp(argv[i], "--L-l1-strength") == 0) {
             if (i + 1 >= argc) {
@@ -444,7 +460,7 @@ int main(int argc, char *argv[]) {
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
     model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees,
-                                          pca, L_row_norm_interval, L_l1_strength, outprefix);
+                                          pca, scale_invar_constraint, L_l1_strength, outprefix);
 
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(pca->K, sizeof(char *));

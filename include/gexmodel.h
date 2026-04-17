@@ -9,6 +9,11 @@
 
 #include <phast/matrix.h>
 
+typedef enum {
+    GEX_SCALE_INVAR_SIGMA2S = 0,
+    GEX_SCALE_INVAR_LROWS = 1
+} GexScaleInvarConstraint;
+
 typedef struct {
     int n_cells;
     int n_genes;
@@ -29,7 +34,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         Matrix **Sigmas,
                                                         int n_sigmas,
                                                         PCA *pca,
-                                                        int L_row_norm_interval,
+                                                        GexScaleInvarConstraint scale_invar_constraint,
                                                         double L_l1_strength,
                                                         const char *outprefix);
 
