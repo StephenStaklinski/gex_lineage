@@ -56,7 +56,7 @@ static void usage(const char *progname) {
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
         "[--L-row-norm-interval N] "
-        "[--L-l2-strength S] "
+        "[--L-l1-strength S] "
         "[--dim K] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int L_row_norm_interval = 1;  /* Interval for normalizing rows of L; 0 means no normalization. */
-    double L_l2_strength = 0;  /* L2 regularization strength for loadings; 0 disables the penalty. */
+    double L_l1_strength = 1e-3;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
@@ -175,12 +175,12 @@ int main(int argc, char *argv[]) {
             }
             L_row_norm_interval = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "--L-l2-strength") == 0) {
+        else if (strcmp(argv[i], "--L-l1-strength") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
                 return 1;
             }
-            L_l2_strength = atof(argv[++i]);
+            L_l1_strength = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--dim") == 0) {
             if (i + 1 >= argc) {
@@ -279,8 +279,8 @@ int main(int argc, char *argv[]) {
                 n_model_trees, n_trees);
         return 1;
     }
-    if (L_l2_strength < 0.0) {
-        fprintf(stderr, "ERROR: --L-l2-strength must be nonnegative (0 disables L2 regularization)\n");
+    if (L_l1_strength < 0.0) {
+        fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
         return 1;
     }
 
@@ -444,7 +444,7 @@ int main(int argc, char *argv[]) {
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
     model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees,
-                                          pca, L_row_norm_interval, L_l2_strength, outprefix);
+                                          pca, L_row_norm_interval, L_l1_strength, outprefix);
 
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(pca->K, sizeof(char *));

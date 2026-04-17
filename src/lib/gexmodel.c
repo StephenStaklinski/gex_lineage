@@ -238,37 +238,44 @@ double latent_brownian_prior_term(Matrix *F,
 }
 
 /* Compute the gradient with respect to L under the Gaussian observation model
-   and add the L2 regularization penalty on L. Returns the contribution of the
-   L2 penalty to the objective and fills grad_L. */
-static double l2_regularized_L_term(Matrix *L,
+   and add the L1 regularization penalty on L. Returns the contribution of the
+   L1 penalty to the objective and fills grad_L. */
+static double l1_regularized_L_term(Matrix *L,
                                     Matrix *grad_L,
-                                    double lambda_L) {
+                                    double L_lambda_l1) {
     int j, d;
     int p = L->ncols;
     int k = L->nrows;
-    double ss = 0.0;
-    double grad;
+    double abs_sum = 0.0;
+    double val, grad, subgrad;
 
-    /* Compute gradient w.r.t. L under Gaussian likelihood with L2 regularization */
     for (d = 0; d < k; d++) {
         for (j = 0; j < p; j++) {
-            
+
+            val = mat_get(L, d, j);
+
+            /* Add |L| to objective */
+            abs_sum += fabs(val);
+
             if (grad_L != NULL) {
-                /* Only add the L2 penalty gradient when regularization is enabled */
                 grad = mat_get(grad_L, d, j);
-                grad += lambda_L * mat_get(L, d, j);
+
+                /* L1 subgradient. The derivative is undefined at zero,
+                so we use a subgradient value of 0 there. */
+                if (val > 0.0)
+                    subgrad = 1.0;
+                else if (val < 0.0)
+                    subgrad = -1.0;
+                else
+                    subgrad = 0.0;
+
+                grad += L_lambda_l1 * subgrad;
                 mat_set(grad_L, d, j, grad);
             }
-
-            /* Accumulate the sum of squares */
-            ss += mat_get(L, d, j) * mat_get(L, d, j);
         }
     }
 
-    /* Calculate the L2 penalty */
-    double obj = 0.5 * lambda_L * ss;
-
-    return obj;
+    return L_lambda_l1 * abs_sum;
 }
 
 /* Compute the negative log-posterior objective and its gradients for the
@@ -276,7 +283,7 @@ latent Brownian factor model:
     X ≈ FL + ε,      ε_ij ~ N(0, sigma2_obs)
     f_d ~ N(0, sigma2_latent[d] * Sigma) independently for each latent factor d
 The objective (up to constants) is the sum of three terms for the data likelihood,
-the latent factor Brownian prior, and the L2 regularization on loadings L (latent factors x genes).
+the latent factor Brownian prior, and the L1 regularization on loadings L (latent factors x genes).
 */
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *Xc,
@@ -289,7 +296,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            double *grad_log_sigma_obs) {
     int d;
     int k = model->k;   /* Number of latent factors */
-    double lambda_L = model->l2_strength;   /* L2 regularization strength for L */
+    double L_lambda_l1 = model->l1_strength;   /* L1 regularization strength for L */
     double obj = 0.0;   /* Objective function value */
 
     /* Zero gradients */
@@ -315,11 +322,11 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
         return HUGE_VAL;
     }
 
-    /* Add the L2 regularization penalty on L and compute the gradient w.r.t. L. */
-    model->l2_objective = 0.0;
-    if (lambda_L > 0.0) {
-        model->l2_objective = l2_regularized_L_term(model->L, grad_L, lambda_L);
-        obj += model->l2_objective;
+    /* Add the L1 regularization penalty on L and compute the gradient w.r.t. L. */
+    model->l1_objective = 0.0;
+    if (L_lambda_l1 > 0.0) {
+        model->l1_objective = l1_regularized_L_term(model->L, grad_L, L_lambda_l1);
+        obj += model->l1_objective;
     }
 
     return obj;
@@ -529,7 +536,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       int n_sigmas,
                                                       PCA *pca,
                                                       int L_row_norm_interval,
-                                                      double L_l2_strength,
+                                                      double L_l1_strength,
                                                       const char *outprefix) {
     /* Optimization related */
     int step;   /* Optimization step */
@@ -580,7 +587,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
+    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
     for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
     fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
@@ -602,7 +609,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->k = k;
     model->F = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
-    model->l2_strength = L_l2_strength;
+    model->l1_strength = L_l1_strength;
 
     /* L comes from the PCA */
     mat_copy(model->L, pca->components);
@@ -822,7 +829,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 grad_log_sigma_latent_norm,
                 model->observation_objective,
                 model->brownian_prior_objective,
-                model->l2_objective,
+                model->l1_objective,
                 exp(model->log_sigma2_obs));
         for (d = 0; d < k; d++)
             fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));

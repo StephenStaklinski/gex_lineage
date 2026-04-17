@@ -17,11 +17,11 @@ typedef struct {
     Matrix *L;              /* k latent factors x n_genes */
     double *log_sigma2_latent;  /* length k */
     double log_sigma2_obs;
-    double l2_strength;
+    double l1_strength;
     double objective;
     double observation_objective;
     double brownian_prior_objective;
-    double l2_objective;
+    double l1_objective;
     MVN *latent_mvn;
 } GexLatentBrownianModel;
 
@@ -30,7 +30,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         int n_sigmas,
                                                         PCA *pca,
                                                         int L_row_norm_interval,
-                                                        double L_l2_strength,
+                                                        double L_l1_strength,
                                                         const char *outprefix);
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
