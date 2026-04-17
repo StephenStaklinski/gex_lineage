@@ -10,6 +10,8 @@ typedef struct {
     char **gene_names;
 } GexMatrix;
 
+GexMatrix *gex_mat_new(int n_cells, int n_genes);
+
 void gex_free_matrix_data(GexMatrix *gex);
 
 GexMatrix *gex_mat_copy(GexMatrix *gex);

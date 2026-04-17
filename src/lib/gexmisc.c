@@ -1,6 +1,7 @@
 #include "gexmisc.h"
 
 #include <phast/vector.h>
+#include <phast/misc.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -16,6 +17,14 @@ char **copy_string_array(char **input, int n) {
         copy[i] = strdup(input[i]);
     }
     return copy;
+}
+
+char **copy_string_array_inplace(char **output, char **input, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        output[i] = strdup(input[i]);
+    }
+    return output;
 }
 
 /* Expand a vector to a specified size, filling with the first element if necessary. */

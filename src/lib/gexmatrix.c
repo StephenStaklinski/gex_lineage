@@ -9,6 +9,15 @@
 #include <math.h>
 #include <stdlib.h>
 
+
+GexMatrix *gex_mat_new(int n_cells, int n_genes) {
+    GexMatrix *gex = scalloc(1, sizeof(GexMatrix));
+    gex->X = mat_new(n_cells, n_genes);
+    gex->cell_names = scalloc(n_cells, sizeof(char *));
+    gex->gene_names = scalloc(n_genes, sizeof(char *));
+    return gex;
+}
+
 void gex_free_matrix_data(GexMatrix *gex) {
     int i;
 

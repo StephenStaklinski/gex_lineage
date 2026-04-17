@@ -5,6 +5,8 @@
 
 char **copy_string_array(char **input, int n);
 
+char **copy_string_array_inplace(char **output, char **input, int n);
+
 Vector *expand_input_csv(Vector *input, int expected_size);
 
 unsigned int rand_u32(unsigned int *state);

@@ -64,7 +64,6 @@ int main(int argc, char *argv[]) {
     Vector *input_tip_vars = NULL; /* Raw desired tip variance input from CLI */
     Vector *input_sigma2s = NULL; /* Raw sigma2 input from CLI */
     GexMatrix *gex = scalloc(1, sizeof(GexMatrix));  /* Simulated expression matrix */
-    char **gene_names = NULL; /* Gene names for the simulated expression matrix */
     int i;
     int n_cells;
     int sim_dim;
@@ -208,7 +207,7 @@ int main(int argc, char *argv[]) {
 
     /* Set the cell names in the gene expression matrix */
     List *leaf_names = tr_leaf_names(trees[0]);
-    gex->cell_names = scalloc(lst_size(leaf_names), sizeof(char *));
+    gex = gex_mat_new(lst_size(leaf_names), n_genes);
     for (i = 0; i < lst_size(leaf_names); i++) {
         String *leaf_name = lst_get_ptr(leaf_names, i);
         gex->cell_names[i] = strdup(leaf_name->chars);
@@ -218,10 +217,7 @@ int main(int argc, char *argv[]) {
     lst_free(leaf_names);
 
     /* Set the gene names in the gene expression matrix */
-    gex->gene_names = scalloc(n_genes, sizeof(char *));
-    gene_names = scalloc(n_genes, sizeof(char *));
     generate_names(gex->gene_names, n_genes, "gene");
-    generate_names(gene_names, n_genes, "gene");   /* Keep an extra copy external to gex matrix */
 
     /* Decide which covariance matrix to use for simulations */
     if (!identity_cov) {
@@ -336,7 +332,9 @@ int main(int argc, char *argv[]) {
         simulate L (factors x genes) and the reconstructed expression matrix X
         with noise for the input parameters. */
         Matrix *L = mat_new(k, n_genes);
-        GexMatrix *gex_obs = gex_mat_copy(gex);
+        GexMatrix *gex_obs = gex_mat_new(n_cells, n_genes);
+        copy_string_array_inplace(gex_obs->cell_names, gex->cell_names, n_cells);
+        copy_string_array_inplace(gex_obs->gene_names, gex->gene_names, n_genes);
         generate_names(gex->gene_names, sim_dim, "factor"); /* gex becomes F now */
         
 
@@ -408,14 +406,6 @@ int main(int argc, char *argv[]) {
     }
     if (avg_Sigma != NULL) {
         mat_free(avg_Sigma);
-    }
-    if (gene_names != NULL) {
-        for (i = 0; i < n_genes; i++) {
-            if (gene_names[i] != NULL) {
-                free(gene_names[i]);
-            }
-        }
-        free(gene_names);
     }
 
     return 0; /* Success */
