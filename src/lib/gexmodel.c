@@ -581,7 +581,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tZ_grad_norm\tL_grad_norm\tlog_sigma2_obs_norm\tlog_sigma2_latent_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
+    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tZ_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl2_penalty\tsigma2_obs");
     for (i = 0; i < k; i++)
         fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
     fprintf(logf, "\tZ_frobenius_norm\tL_frobenius_norm\tZL_frobenius_norm\n");
@@ -651,6 +651,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         model->log_sigma2_latent[d] = log_sigma2_latent_init;
         model->log_sigma2_latent[d] = max(model->log_sigma2_latent[d], log(1e-6));
     }
+
+    // /* Fix log_sigma2_latents to test the identifiability of sigma_latents and Z */
+    // model->log_sigma2_latent[0] = log(0.37037482175350606);
+    // model->log_sigma2_latent[1] = log(0.18518741087675303);
+    // model->log_sigma2_latent[2] = log(0.092593705438376514);
+    // model->log_sigma2_latent[3] = log(0.037037482175350606);
+    // model->log_sigma2_latent[4] = log(0.018518741087675303);
 
     /* Allocate gradients, moments, and variances for Adam */
     grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
@@ -1027,7 +1034,7 @@ void simulate_factorization_and_reconstruction(Matrix *Z,
     sqrt(n_genes / k), ensuring each latent dimension contributes
     equal expected magnitude to the noiseless gene expression data. */
     double row_ss;
-    double target_norm = sqrt((double)n_genes / (double)k); /* Set target norm for each row for stability */
+    double target_norm = 1.0; /* Set target norm for each row for stability */
     for (d = 0; d < k; d++) {
         row_ss = 0.0;    /* Sum of squares for the current row */
         for (j = 0; j < n_genes; j++) {

@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
     /* Data structures to store user inputs and other default parameters */
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *outprefix = NULL;   /* Prefix for all output files */
-    double tree_total_time = -1.0;  /* If positive, rescale all trees uniformly to have this total height. */
+    double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int n_genes = 100; /* Number of genes to simulate */
     double desired_tip_var = 5.0; /* Desired variance for tip nodes */
     int use_n_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
