@@ -9,6 +9,7 @@
 #include <phast/misc.h>
 #include <phast/vector.h>
 
+#include <sys/types.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -107,27 +108,49 @@ static char *gex_extract_newick_from_tree_line(const char *line) {
     return out;
 }
 
-/* Split a line on tabs/newlines only. Sets the fields_out pointer to an array of field strings.
-Returns number of fields if successful, -1 on failure. */
+/* Split a TSV line while preserving empty fields.
+Modifies the input string in place by replacing delimiters with '\0'.
+Returns number of fields on success, -1 on failure. */
 static int gex_split_tab_fields(char *line, char ***fields_out) {
     int count = 0;
     int capacity = 8;
     char **fields = NULL;
-    char *token = NULL;
+    char *p, *field_start;
+
+    if (line == NULL || fields_out == NULL)
+        return -1;
 
     fields = smalloc(capacity * sizeof(char *));
+    if (fields == NULL)
+        return -1;
 
-    token = strtok(line, "\t\r\n");
-    while (token != NULL) {
-        if (count == capacity) {
-            char **tmp;
-            capacity *= 2;
-            tmp = srealloc(fields, capacity * sizeof(char *));
-            fields = tmp;
+    /* Trim trailing newline / carriage return characters only */
+    gex_rstrip_inplace(line);
+
+    p = line;
+    field_start = p;
+
+    while (1) {
+        if (*p == '\t' || *p == '\0') {
+            if (count == capacity) {
+                capacity *= 2;
+                fields = srealloc(fields, capacity * sizeof(char *));
+                if (fields == NULL)
+                    return -1;
+            }
+
+            fields[count++] = field_start;
+
+            if (*p == '\0')
+                break;
+
+            *p = '\0';
+            p++;
+            field_start = p;
         }
-
-        fields[count++] = token;
-        token = strtok(NULL, "\t\r\n");
+        else {
+            p++;
+        }
     }
 
     *fields_out = fields;
@@ -381,12 +404,16 @@ void gex_free_trees(TreeNode **trees, int n_trees) {
 Returns a pointer to the allocated matrix or NULL on failure. */
 GexMatrix *read_gex_matrix(const char *filename) {
     FILE *f;
-    char line[100000];
-    GexMatrix *gex = NULL;  /* Pointer to the allocated gex matrix struct */
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+    GexMatrix *gex = NULL;
     int n_cells = 0;
     int n_genes = 0;
+    int i;
 
-    if (filename == NULL) return NULL;
+    if (filename == NULL)
+        return NULL;
 
     f = fopen(filename, "r");
     if (f == NULL) {
@@ -394,121 +421,183 @@ GexMatrix *read_gex_matrix(const char *filename) {
         return NULL;
     }
 
-    /* First pass: Read header and allocate data structures based on input data dimensions */
-    if (fgets(line, sizeof(line), f) == NULL) {
+    /* First pass: read header */
+    linelen = getline(&line, &linecap, f);
+    if (linelen < 0) {
         fprintf(stderr, "ERROR: matrix file is empty: %s\n", filename);
         fclose(f);
+        free(line);
         return NULL;
     }
 
-    char *line_copy = strdup(line);
-    char **fields = NULL;
-    int nfields, i;
+    {
+        char *line_copy = strdup(line);
+        char **fields = NULL;
+        int nfields;
 
-    if (line_copy == NULL) {
-        fclose(f);
-        return NULL;
-    }
+        if (line_copy == NULL) {
+            fclose(f);
+            free(line);
+            return NULL;
+        }
 
-    nfields = gex_split_tab_fields(line_copy, &fields); /* Split the header line into fields */
-    if (nfields < 2) {
-        fprintf(stderr, "ERROR: header must contain row label column plus at least one gene\n");
-        free(line_copy);
-        fclose(f);
-        return NULL;
-    }
+        nfields = gex_split_tab_fields(line_copy, &fields);
+        if (nfields < 2) {
+            fprintf(stderr, "ERROR: header must contain row label column plus at least one gene\n");
+            free(fields);
+            free(line_copy);
+            fclose(f);
+            free(line);
+            return NULL;
+        }
 
-    n_genes = nfields - 1;  /* Number of genes is the number of fields minus the row label first column */
+        n_genes = nfields - 1;
 
-    gex = scalloc(1, sizeof(GexMatrix));    /* Allocate matrix structure */
+        gex = scalloc(1, sizeof(GexMatrix));
+        if (gex == NULL) {
+            free(fields);
+            free(line_copy);
+            fclose(f);
+            free(line);
+            return NULL;
+        }
 
-    gex->gene_names = scalloc(n_genes, sizeof(char *));    /* Allocate array for gene names */
-    for (i = 0; i < n_genes; i++) {
-        gex->gene_names[i] = strdup(fields[i + 1]); /* Duplicate gene name strings from header fields */
-        if (gex->gene_names[i] == NULL) {
+        gex->gene_names = scalloc(n_genes, sizeof(char *));
+        if (gex->gene_names == NULL) {
             free(fields);
             free(line_copy);
             gex_free_matrix_data(gex);
             fclose(f);
+            free(line);
             return NULL;
         }
+
+        for (i = 0; i < n_genes; i++) {
+            gex->gene_names[i] = strdup(fields[i + 1]);
+            if (gex->gene_names[i] == NULL) {
+                free(fields);
+                free(line_copy);
+                gex_free_matrix_data(gex);
+                fclose(f);
+                free(line);
+                return NULL;
+            }
+        }
+
+        free(fields);
+        free(line_copy);
     }
 
-    free(fields);
-    free(line_copy);
-
-    /* Count the number of cell rows */
-    while (fgets(line, sizeof(line), f) != NULL) {
-        char *trimmed = gex_lstrip(line); /* Strip leading whitespace from the line */
-        if (*trimmed == '\0' || *trimmed == '\n')
+    /* Count the number of non-empty data rows */
+    while ((linelen = getline(&line, &linecap, f)) >= 0) {
+        char *trimmed = gex_lstrip(line);
+        if (*trimmed == '\0' || *trimmed == '\n' || *trimmed == '\r')
             continue;
         n_cells++;
     }
 
     if (n_cells == 0) {
         fprintf(stderr, "ERROR: no data rows found in matrix file: %s\n", filename);
+        gex_free_matrix_data(gex);
         fclose(f);
+        free(line);
         return NULL;
     }
 
-    gex->cell_names = scalloc(n_cells, sizeof(char *));    /* Allocate array for cell names */
-    gex->X = mat_new(n_cells, n_genes);    /* Allocate expression matrix */
+    gex->cell_names = scalloc(n_cells, sizeof(char *));
+    gex->X = mat_new(n_cells, n_genes);
 
-    /* Second pass: Fill data structures */
+    if (gex->cell_names == NULL || gex->X == NULL) {
+        gex_free_matrix_data(gex);
+        fclose(f);
+        free(line);
+        return NULL;
+    }
+
+    /* Second pass: fill data */
     rewind(f);
 
-    /* Skip header */
-    if (fgets(line, sizeof(line), f) == NULL) {
+    linelen = getline(&line, &linecap, f);  /* skip header */
+    if (linelen < 0) {
+        gex_free_matrix_data(gex);
         fclose(f);
+        free(line);
         return NULL;
     }
 
-    int row = 0;
+    {
+        int row = 0;
 
-    while (fgets(line, sizeof(line), f) != NULL) {
-        char *line_copy;
-        char **fields = NULL;
-        int nfields, j;
+        while ((linelen = getline(&line, &linecap, f)) >= 0) {
+            char *trimmed = gex_lstrip(line);
+            char *line_copy;
+            char **fields = NULL;
+            int nfields, j;
 
-        char *trimmed = gex_lstrip(line); /* Strip leading whitespace from the line */
-        if (*trimmed == '\0' || *trimmed == '\n')
-            continue;
+            if (*trimmed == '\0' || *trimmed == '\n' || *trimmed == '\r')
+                continue;
 
-        line_copy = strdup(line);   /* Duplicate the line for tokenization since strtok modifies the string */
-        if (line_copy == NULL) {
-            gex_free_matrix_data(gex);
-            fclose(f);
-            return NULL;
-        }
+            line_copy = strdup(line);
+            if (line_copy == NULL) {
+                gex_free_matrix_data(gex);
+                fclose(f);
+                free(line);
+                return NULL;
+            }
 
-        nfields = gex_split_tab_fields(line_copy, &fields); /* Split the line into fields */
-        if (nfields != n_genes + 1) {
-            fprintf(stderr, "ERROR: row %d has wrong number of columns in %s. Expected %d, found %d\n", row + 1, filename, n_genes + 1, nfields);
-            free(line_copy);
-            gex_free_matrix_data(gex);
-            fclose(f);
-            return NULL;
-        }
+            nfields = gex_split_tab_fields(line_copy, &fields);
+            if (nfields != n_genes + 1) {
+                fprintf(stderr,
+                        "ERROR: row %d has wrong number of columns in %s. Expected %d, found %d\n",
+                        row + 1, filename, n_genes + 1, nfields);
+                free(fields);
+                free(line_copy);
+                gex_free_matrix_data(gex);
+                fclose(f);
+                free(line);
+                return NULL;
+            }
 
-        gex->cell_names[row] = strdup(fields[0]);   /* Duplicate the cell name from the first field of the line */
-        if (gex->cell_names[row] == NULL) {
+            gex->cell_names[row] = strdup(fields[0]);
+            if (gex->cell_names[row] == NULL) {
+                free(fields);
+                free(line_copy);
+                gex_free_matrix_data(gex);
+                fclose(f);
+                free(line);
+                return NULL;
+            }
+
+            for (j = 0; j < n_genes; j++) {
+                char *endptr;
+                double val;
+
+                endptr = NULL;
+                val = strtod(fields[j + 1], &endptr);
+
+                if (endptr == fields[j + 1] || *endptr != '\0') {
+                    fprintf(stderr,
+                            "ERROR: row %d, gene column %d contains a non-numeric value: '%s'\n",
+                            row + 1, j + 2, fields[j + 1]);
+                    free(fields);
+                    free(line_copy);
+                    gex_free_matrix_data(gex);
+                    fclose(f);
+                    free(line);
+                    return NULL;
+                }
+
+                mat_set(gex->X, row, j, val);
+            }
+
             free(fields);
             free(line_copy);
-            gex_free_matrix_data(gex);
-            fclose(f);
-            return NULL;
+            row++;
         }
-
-        for (j = 0; j < n_genes; j++) {
-            mat_set(gex->X, row, j, atof(fields[j + 1]));   /* Convert the expression value from string to double and store in the matrix */
-        }
-
-        free(fields);
-        free(line_copy);
-        row++;
     }
 
     fclose(f);
+    free(line);
 
     return gex;
 }

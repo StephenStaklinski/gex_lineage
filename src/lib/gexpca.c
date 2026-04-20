@@ -126,6 +126,9 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
     Matrix *new_components = NULL;
     double *new_var = NULL;
 
+    if (out == NULL || out->K <= 0)
+        return;
+
     /* If k was not specified, determine how many components to keep based on the variance threshold */
     if (k == 0) {
         keep_K = pca_components_for_variance_threshold_internal(out->var_explained,
@@ -179,6 +182,68 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     return out;
 }
 
+/* Compute a centered matrix using generalized 
+least squares (GLS) to regress out known covariance. */
+static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
+    int i, j, k, m;
+    int n = X->nrows;
+    int p = X->ncols;
+    Matrix *invC = NULL;
+    Matrix *Xc = NULL;
+    Vector *row_sums = NULL;
+    double *a = NULL;
+    double denom = 0.0;
+    Matrix *Cov = NULL;
+
+    /* Get the inverse of the phylogenetic covariance matrix */
+    invC = mat_new(n, n);
+    mat_invert(invC, C);
+
+    /* Compute the GLS means for each column */
+    row_sums = mat_row_sums(invC);
+    for (i = 0; i < n; i++)
+        denom += row_sums->data[i];
+    a = scalloc(p, sizeof(double));
+    for (j = 0; j < p; j++) {
+        double numer = 0.0;
+        for (i = 0; i < n; i++)
+            numer += row_sums->data[i] * mat_get(X, i, j);
+        a[j] = numer / denom;
+    }
+
+    /* Free memory */
+    if (row_sums != NULL) vec_free(row_sums);
+
+    /* Get the centered trait matrix */
+    Xc = mat_new(n, p);
+    for (i = 0; i < n; i++)
+        for (j = 0; j < p; j++)
+            mat_set(Xc, i, j, mat_get(X, i, j) - a[j]);
+
+    /* Compute the GLS covariance matrix */
+    Cov = mat_new(p, p);
+    for (j = 0; j < p; j++) {
+        for (k = j; k < p; k++) {
+            double sum = 0.0;
+            for (i = 0; i < n; i++) {
+                for (m = 0; m < n; m++) {
+                    sum += mat_get(Xc, i, j) * mat_get(invC, i, m) * mat_get(Xc, m, k);
+                }
+            }
+            sum /= (double)(n - 1);
+            mat_set(Cov, j, k, sum);
+            mat_set(Cov, k, j, sum);
+        }
+    }
+
+    /* Free memory */
+    if (a != NULL) free(a);
+    if (invC != NULL) mat_free(invC);
+    if (Xc != NULL) mat_free(Xc);
+
+    return Cov;
+}
+
 /* Compute Revell 2009 phylogenetic PCA to obtain evolutionarily
 independent components of variation among traits where the phylogenetic
 correlation between scores on each axis will be zero.
@@ -186,17 +251,11 @@ X is n x p (rows = taxa, columns = traits).
 C is n x n phylogenetic covariance among rows of X.
 */
 PCA *compute_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
-    Matrix *Xc = NULL;
     Matrix *Cov = NULL;
     PCA *out = NULL;
 
     /* Revell GLS-covariance */
-    Xc = mat_center_cols_gls(X, C);
-    Cov = mat_centered_cov(Xc);
-
-    /* Free memory */
-    if (Xc != NULL)
-        mat_free(Xc);
+    Cov = mat_cov_gls(X, C);
 
     /* Compute the PCA */
     out = pca(Cov);

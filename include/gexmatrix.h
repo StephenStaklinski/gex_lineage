@@ -26,8 +26,6 @@ void mat_log1p(Matrix *X);
 
 void mat_center_cols(Matrix *X);
 
-Matrix *mat_center_cols_gls(Matrix *X, Matrix *C);
-
 Matrix *mat_centered_cov(Matrix *Xc);
 
 void mat_standardize_cols(Matrix *X);
