@@ -179,10 +179,10 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     return out;
 }
 
-/* Compute a centered matrix using generalized 
-least squares (GLS) to regress out known covariance. */
+/* Covariance matrix after GLS centering to regress
+out known phylogenetic covariance. */
 static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
-    int i, j, k, m;
+    int i, j;
     int n = X->nrows;
     int p = X->ncols;
     Matrix *invC = NULL;
@@ -190,6 +190,8 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
     Vector *row_sums = NULL;
     double *a = NULL;
     double denom = 0.0;
+    Matrix *tmp = NULL;
+    Matrix *Xct = NULL;
     Matrix *Cov = NULL;
 
     /* Get the inverse of the phylogenetic covariance matrix */
@@ -198,15 +200,15 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
 
     /* Compute the GLS means for each column */
     row_sums = mat_row_sums(invC);
-    for (i = 0; i < n; i++)
-        denom += row_sums->data[i];
+    denom = vec_sum(row_sums);
+
     a = scalloc(p, sizeof(double));
     for (j = 0; j < p; j++) {
-        double numer = 0.0;
+        a[j] = 0.0;
         for (i = 0; i < n; i++)
-            numer += row_sums->data[i] * mat_get(X, i, j);
-        a[j] = numer / denom;
+            a[j] += row_sums->data[i] * mat_get(X, i, j);
     }
+    vec_scale(row_sums, 1.0 / denom);
 
     /* Free memory */
     if (row_sums != NULL) vec_free(row_sums);
@@ -219,24 +221,18 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
 
     /* Compute the GLS covariance matrix */
     Cov = mat_new(p, p);
-    for (j = 0; j < p; j++) {
-        for (k = j; k < p; k++) {
-            double sum = 0.0;
-            for (i = 0; i < n; i++) {
-                for (m = 0; m < n; m++) {
-                    sum += mat_get(Xc, i, j) * mat_get(invC, i, m) * mat_get(Xc, m, k);
-                }
-            }
-            sum /= (double)(n - 1);
-            mat_set(Cov, j, k, sum);
-            mat_set(Cov, k, j, sum);
-        }
-    }
+    tmp = mat_new(n, p);
+    mat_mult(tmp, invC, Xc);
+    Xct = mat_transpose(Xc);
+    mat_mult(Cov, Xct, tmp);
+    mat_scale(Cov, 1.0 / (n - 1));
 
     /* Free memory */
     if (a != NULL) free(a);
     if (invC != NULL) mat_free(invC);
     if (Xc != NULL) mat_free(Xc);
+    if (Xct != NULL) mat_free(Xct);
+    if (tmp != NULL) mat_free(tmp);
 
     return Cov;
 }
