@@ -460,10 +460,11 @@ int main(int argc, char *argv[]) {
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
-    printf("Running PCA to initialize latent factors for the model...\n");
     if (pca_method == PCA_METHOD_PCA) {
+        printf("Running PCA to initialize latent factors for the model...\n");
         pca = compute_pca(gex_filtered->X, k, pca_var_threshold);
     } else if (pca_method == PCA_METHOD_PHYLOPCA) {
+        printf("Running pPCA to initialize latent factors for the model...\n");
         pca = compute_phylo_pca(gex_filtered->X, filter_avg_Sigma, k, pca_var_threshold);
     }
     if (k == 0) {
