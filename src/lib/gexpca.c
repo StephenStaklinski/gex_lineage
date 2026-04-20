@@ -76,7 +76,7 @@ static PCA *pca(Matrix *Cov) {
     /* Populate the eigenvalue/index pairs */
     for (i = 0; i < p; i++) {
         double val = vec_get(eigvals, i);
-        if (val < 0.0 && fabs(val) < 1e-12)
+        if (val < 0.0 || fabs(val) < 1e-12)
             val = 0.0;
         pairs[i].val = val;
         pairs[i].idx = i;
@@ -125,9 +125,6 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
     int keep_K = k;
     Matrix *new_components = NULL;
     double *new_var = NULL;
-
-    if (out == NULL || out->K <= 0)
-        return;
 
     /* If k was not specified, determine how many components to keep based on the variance threshold */
     if (k == 0) {

@@ -758,7 +758,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
     model->l1_strength = L_l1_strength;
 
-    /* L comes from the PCA */
+    /* L comes from the PCA where the rows of components are the eigenvectors */
     mat_copy(model->L, pca->components);
 
     /* Initialize F = X * L^T */
