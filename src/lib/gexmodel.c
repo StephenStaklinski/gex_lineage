@@ -42,19 +42,21 @@ double gaussian_observation_term(Matrix *F,
        Compute residuals r_ij = X_ij - (FL)_ij and accumulate the
        negative log-likelihood and its gradient w.r.t. log(sigma2_obs). */
     for (i = 0; i < n; i++) {
+        double *F_i = F->data[i];  /* Row of F for cell i */
+        double *Xc_i = Xc->data[i]; /* Row of centered data for cell i */
         for (j = 0; j < p; j++) {
             double pred = 0.0;
             double r;
 
             /* Compute predicted value (FL)_ij */
             for (d = 0; d < k; d++)
-                pred += mat_get(F, i, d) * mat_get(L, d, j);
+                pred += F_i[d] * L->data[d][j];
 
             /* Residual is observed minus predicted */
-            r = mat_get(Xc, i, j) - pred;
+            r = Xc_i[j] - pred;
 
             /* Store residual for later use */
-            mat_set(resid, i, j, r);
+            resid->data[i][j] = r;
 
             /* Quadratic term of Gaussian negative log-likelihood: (1/2σ²) r^2 */
             obj += 0.5 * r * r / sigma2_obs;
@@ -77,14 +79,17 @@ double gaussian_observation_term(Matrix *F,
     /* Compute gradient w.r.t. F */
     if (grad_F != NULL) {
         for (i = 0; i < n; i++) {
+            double *resid_i = resid->data[i]; /* Row of residuals for cell i */
+            double *grad_F_i = grad_F->data[i]; /* Row of gradient for cell i */
             for (d = 0; d < k; d++) {
                 double gz = 0.0;
 
                 /* Accumulate gradient contribution across features */
+                double *L_d = L->data[d]; /* Row of L for latent factor d */
                 for (j = 0; j < p; j++)
-                    gz += -mat_get(resid, i, j) * mat_get(L, d, j) / sigma2_obs;
+                    gz += -resid_i[j] * L_d[j] / sigma2_obs;
 
-                mat_set(grad_F, i, d, gz);
+                grad_F_i[d] = gz;
             }
         }
     }
@@ -92,11 +97,12 @@ double gaussian_observation_term(Matrix *F,
     /* Gradient w.r.t. L */
     if (grad_L != NULL) {
         for (d = 0; d < k; d++) {
+            double *grad_L_d = grad_L->data[d]; /* Row of gradient for latent factor d */
             for (j = 0; j < p; j++) {
                 double grad = 0.0;
                 for (i = 0; i < n; i++)
-                    grad += -mat_get(F, i, d) * mat_get(resid, i, j) / sigma2_obs;
-                mat_set(grad_L, d, j, grad);
+                    grad += -F->data[i][d] * resid->data[i][j] / sigma2_obs;
+                grad_L_d[j] = grad;
             }
         }
     }
