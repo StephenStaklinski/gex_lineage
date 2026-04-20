@@ -51,7 +51,7 @@ static int pca_components_for_variance_threshold_internal(double *var_explained,
     return K;
 }
 
-static PCA *pca(Matrix *Cov) {
+static PCA *pca_eigen(Matrix *Cov) {
     int i, j;
     int p = Cov->nrows;
     Vector *eigvals = NULL;
@@ -167,7 +167,7 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
         mat_free(Xc);
 
     /* Compute the PCA */
-    out = pca(Cov);
+    out = pca_eigen(Cov);
 
     /* Free memory */
     if (Cov != NULL)
@@ -200,14 +200,14 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
 
     /* Compute the GLS means for each column */
     row_sums = mat_row_sums(invC);
+    denom = vec_sum(row_sums);
     a = scalloc(p, sizeof(double));
     for (j = 0; j < p; j++) {
         a[j] = 0.0;
         for (i = 0; i < n; i++)
             a[j] += row_sums->data[i] * mat_get(X, i, j);
+        a[j] /= denom;
     }
-    denom = vec_sum(row_sums);
-    vec_scale(row_sums, 1.0 / denom);
 
     /* Free memory */
     if (row_sums != NULL) vec_free(row_sums);
@@ -250,7 +250,7 @@ PCA *compute_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
     Cov = mat_cov_gls(X, C);
 
     /* Compute the PCA */
-    out = pca(Cov);
+    out = pca_eigen(Cov);
 
     /* Free memory */
     if (Cov != NULL)
