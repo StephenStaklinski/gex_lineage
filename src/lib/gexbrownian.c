@@ -98,90 +98,51 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     TreeNode **tips = NULL;
     double *depth_by_id = NULL;
 
-    if (tree == NULL || names == NULL || n <= 0) {
-        fprintf(stderr, "ERROR: covariance_from_tree got invalid input\n");
+    /* Check that the leading origin to root node branch exists */
+    if (tree->dparent < 0.0) {
+        fprintf(stderr, "ERROR: origin to root has invalid or no branch length.\n");
         return NULL;
     }
 
-    Sigma = mat_new(n, n);  /* Allocate the covariance matrix based on the input n tips */
-    mat_zero(Sigma);
-
-    /* Allocate an array to hold pointers to the tree tips in the order of the input names */
-    tips = scalloc(n, sizeof(TreeNode *));
-
     /* Fill the tip mapping from the input names to tips in the tree */
+    tips = scalloc(n, sizeof(TreeNode *));
     fill_tip_map(tree, names, n, tips);
     for (i = 0; i < n; i++) {
         if (tips[i] == NULL) {
             fprintf(stderr,
-                    "ERROR: could not find tip '%s' in tree while building phylogenetic covariance\n",
+                    "ERROR: could not find tip '%s' in tree.\n",
                     names[i]);
-            free(tips);
-            mat_free(Sigma);
             return NULL;
         }
     }
 
-    /* Check that the leading origin to root node branch exists */
-    if (tree->dparent < 0.0) {
-        fprintf(stderr, "ERROR: origin node has invalid branch length or does not exist, so depths are incorrect\n");
-        free(tips);
-        mat_free(Sigma);
-        return NULL;
-    }
-
-    /* Set the number of nodes in the tree */
-    tr_set_nnodes(tree);
-    if (tree->nnodes <= 0) {
-        fprintf(stderr, "ERROR: tree has invalid node count\n");
-        free(tips);
-        mat_free(Sigma);
-        return NULL;
-    }
-
-    /* Allocate an array to hold the depths from the origin to each node in the tree */
-    depth_by_id = smalloc(tree->nnodes * sizeof(double));
-
     /* Fill the node depth array with the depth from the origin to each node in the tree. 
     This allows for fast lookup of MRCA depths when building the covariance matrix. */
+    tr_set_nnodes(tree);
+    depth_by_id = smalloc(tree->nnodes * sizeof(double));
     if (fill_node_depths(tree, depth_by_id, tree->nnodes, tree->dparent) != 0) {
-        fprintf(stderr, "ERROR: failed to compute node depths for phylogenetic covariance\n");
-        free(depth_by_id);
-        free(tips);
-        mat_free(Sigma);
+        fprintf(stderr, "ERROR: failed to compute node depths.\n");
         return NULL;
     }
 
     /* Fill the covariance matrix based on the depth to MRCA for each pair of tips.
     The covariance between two tips is the depth from the origin to their MRCA. */
+    Sigma = mat_new(n, n);
+    mat_zero(Sigma);
     for (i = 0; i < n; i++) {
+        mat_set(Sigma, i, i, depth_by_id[tips[i]->id]); /* Diagonal compares with self */
         for (j = i + 1; j < n; j++) {
             TreeNode *mrca = find_mrca(tips[i], tips[j]);
 
             if (mrca == NULL || mrca->id < 0 || mrca->id >= tree->nnodes) {
-                fprintf(stderr,
-                        "ERROR: failed to compute MRCA for '%s' and '%s'\n",
+                fprintf(stderr, "ERROR: failed MRCA for '%s' and '%s'\n",
                         tips[i]->name, tips[j]->name);
-                free(depth_by_id);
-                free(tips);
-                mat_free(Sigma);
                 return NULL;
             }
 
             mat_set(Sigma, i, j, depth_by_id[mrca->id]);
+            mat_set(Sigma, j, i, mat_get(Sigma, i, j)); /* Make the covariance matrix symmetric */
         }
-    }
-
-    /* Make the covariance matrix symmetric */
-    for (i = 0; i < n; i++) {
-        for (j = i + 1; j < n; j++) {
-            mat_set(Sigma, j, i, mat_get(Sigma, i, j));
-        }
-    }
-
-    /* Fill the diagonal elements for each tip paired with itself */
-    for (i = 0; i < n; i++) {
-        mat_set(Sigma, i, i, depth_by_id[tips[i]->id]);
     }
 
     free(depth_by_id);

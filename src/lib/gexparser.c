@@ -483,7 +483,7 @@ GexMatrix *read_gex_matrix(const char *filename) {
 
         nfields = gex_split_tab_fields(line_copy, &fields); /* Split the line into fields */
         if (nfields != n_genes + 1) {
-            fprintf(stderr, "ERROR: row %d has wrong number of columns in %s\n", row + 1, filename);
+            fprintf(stderr, "ERROR: row %d has wrong number of columns in %s. Expected %d, found %d\n", row + 1, filename, n_genes + 1, nfields);
             free(line_copy);
             gex_free_matrix_data(gex);
             fclose(f);
