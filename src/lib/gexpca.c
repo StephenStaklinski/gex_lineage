@@ -200,14 +200,13 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
 
     /* Compute the GLS means for each column */
     row_sums = mat_row_sums(invC);
-    denom = vec_sum(row_sums);
-
     a = scalloc(p, sizeof(double));
     for (j = 0; j < p; j++) {
         a[j] = 0.0;
         for (i = 0; i < n; i++)
             a[j] += row_sums->data[i] * mat_get(X, i, j);
     }
+    denom = vec_sum(row_sums);
     vec_scale(row_sums, 1.0 / denom);
 
     /* Free memory */
