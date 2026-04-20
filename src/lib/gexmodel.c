@@ -44,6 +44,7 @@ double gaussian_observation_term(Matrix *F,
     for (i = 0; i < n; i++) {
         double *F_i = F->data[i];  /* Row of F for cell i */
         double *Xc_i = Xc->data[i]; /* Row of centered data for cell i */
+        double *resid_i = resid->data[i]; /* Row of residuals for cell i */
         for (j = 0; j < p; j++) {
             double pred = 0.0;
             double r;
@@ -54,9 +55,7 @@ double gaussian_observation_term(Matrix *F,
 
             /* Residual is observed minus predicted */
             r = Xc_i[j] - pred;
-
-            /* Store residual for later use */
-            resid->data[i][j] = r;
+            resid_i[j] = r;
 
             /* Quadratic term of Gaussian negative log-likelihood: (1/2σ²) r^2 */
             obj += 0.5 * r * r / sigma2_obs;
@@ -65,21 +64,9 @@ double gaussian_observation_term(Matrix *F,
             if (grad_log_sigma_obs != NULL)
                 *grad_log_sigma_obs += -0.5 * r * r / sigma2_obs;
         }
-    }
 
-    /* Log-determinant term of Gaussian likelihood: (np/2) log(σ²) */
-    double n_entries = (double)(n * p);
-    obj += 0.5 * n_entries * log(sigma2_obs);
-
-    /* Gaussian normalization constant: (np/2) log(2π). This is not
-    dependent on parameters so it does not matter for optimization but is
-    included here to obtain full likelihood values. */
-    obj += 0.5 * n_entries * log(2.0 * M_PI);
-
-    /* Compute gradient w.r.t. F */
-    if (grad_F != NULL) {
-        for (i = 0; i < n; i++) {
-            double *resid_i = resid->data[i]; /* Row of residuals for cell i */
+        /* Compute gradient w.r.t. F */
+        if (grad_F != NULL) {
             double *grad_F_i = grad_F->data[i]; /* Row of gradient for cell i */
             for (d = 0; d < k; d++) {
                 double gz = 0.0;
@@ -93,6 +80,15 @@ double gaussian_observation_term(Matrix *F,
             }
         }
     }
+
+    /* Log-determinant term of Gaussian likelihood: (np/2) log(σ²) */
+    double n_entries = (double)(n * p);
+    obj += 0.5 * n_entries * log(sigma2_obs);
+
+    /* Gaussian normalization constant: (np/2) log(2π). This is not
+    dependent on parameters so it does not matter for optimization but is
+    included here to obtain full likelihood values. */
+    obj += 0.5 * n_entries * log(2.0 * M_PI);
 
     /* Gradient w.r.t. L */
     if (grad_L != NULL) {
