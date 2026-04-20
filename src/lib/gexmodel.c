@@ -115,22 +115,25 @@ double gaussian_observation_term(Matrix *F,
 /* Compute the full MVN log density for one vector z, including
 normalization constants. Optionally stores intermediate values for reuse.*/
 static double log_mvn_vec(const double *z,
-                            Matrix *Sigma_inv,
-                            double logdet_sigma,
-                            int n,
-                            double sigma2,
-                            double *sigma_inv_z,
-                            double *quad_out) {
-    int i, ii;
+                          Matrix *Sigma_inv,
+                          double logdet_sigma,
+                          int n,
+                          double sigma2,
+                          double *sigma_inv_z,
+                          double *quad_out) {
+    int i, j;
     double quad = 0.0;
+    double **S = Sigma_inv->data;
 
     if (sigma2 <= 0.0)
         return -HUGE_VAL;
 
     for (i = 0; i < n; i++) {
+        double *row = S[i];
         double val = 0.0;
-        for (ii = 0; ii < n; ii++)
-            val += mat_get(Sigma_inv, i, ii) * z[ii];
+
+        for (j = 0; j < n; j++)
+            val += row[j] * z[j];
 
         if (sigma_inv_z != NULL)
             sigma_inv_z[i] = val;
@@ -142,9 +145,9 @@ static double log_mvn_vec(const double *z,
         *quad_out = quad;
 
     return -0.5 * (double)n * log(2.0 * M_PI)
-           -0.5 * (double)n * log(sigma2)
-           -0.5 * logdet_sigma
-           -0.5 * quad / sigma2;
+         - 0.5 * (double)n * log(sigma2)
+         - 0.5 * logdet_sigma
+         - 0.5 * quad / sigma2;
 }
 
 /* Compute the mixture-of-Brownian Gaussian prior contribution for the latent
