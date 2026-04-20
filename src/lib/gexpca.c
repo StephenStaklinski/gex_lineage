@@ -51,27 +51,14 @@ static int pca_components_for_variance_threshold_internal(double *var_explained,
     return K;
 }
 
-/* Compute PCA for a gene expression matrix. 
-Return a pointer to the result or NULL on failure. */
-PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
-    int i, j;   /* Loop indices */
-    int p = X->ncols;;  /* Number of genes */
-    int keep_K = k; /* Number of components to keep */
-    Matrix *Xc = mat_create_copy(X); /* Centered gene expression matrix */
-    Matrix *Cov = NULL; /* Covariance matrix of the centered data */
-    Matrix *eigvecs = NULL; /* Matrix of eigenvectors (columns) from eigendecomposition of covariance matrix */
-    Vector *eigvals = NULL; /* Vector of eigenvalues from eigendecomposition of covariance matrix */
-    EigPair *pairs = NULL;   /* Array of eigenvalue/index pairs for sorting eigenvalues in descending order */
-    PCA *out = NULL; /* Output PCA result */
-    double total_var = 0.0; /* Total variance (sum of eigenvalues) for computing variance explained */
-    Matrix *new_components = NULL; /* Reduced components matrix */
-    double *new_var = NULL;    /* Reduced variance explained array */
-
-    /* Center the gene expression matrix by subtracting the mean of each column */
-    mat_center_cols(Xc);
-
-    /* Compute the covariance matrix of the centered data */
-    Cov = mat_centered_cov(Xc);
+static PCA *pca(Matrix *Cov) {
+    int i, j;
+    int p = Cov->nrows;
+    Vector *eigvals = NULL;
+    Matrix *eigvecs = NULL;
+    EigPair *pairs = NULL;
+    PCA *out = NULL;
+    double total_var = 0.0;
 
     /* Allocate memory for eigenvectors and eigenvalues */
     eigvals = vec_new(p);
@@ -108,29 +95,36 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     out->var_explained = scalloc(p, sizeof(double));
     out->K = p;
 
-    if (total_var <= 0.0) {
-        fprintf(stderr, "WARNING: total PCA variance is non-positive; reporting zeros\n");
-        for (i = 0; i < p; i++) {
-            out->var_explained[i] = 0.0;
-            for (j = 0; j < p; j++)
-                mat_set(out->components, i, j, mat_get(eigvecs, j, pairs[i].idx));
+    /* Fill the output PCA result with eigenvectors and variance explained in sorted order */
+    for (i = 0; i < p; i++) {
+        int idx = pairs[i].idx;
+        double lambda = pairs[i].val;
+
+        /* Normalize variance explained by this component */
+        out->var_explained[i] = lambda / total_var;
+
+        for (j = 0; j < p; j++) {
+            /* eigenvectors are columns of eigvecs */
+            mat_set(out->components, i, j, mat_get(eigvecs, j, idx));
         }
     }
-    else {
-        /* Fill the output PCA result with eigenvectors and variance explained in sorted order */
-        for (i = 0; i < p; i++) {
-            int idx = pairs[i].idx;
-            double lambda = pairs[i].val;
 
-            /* Normalize variance explained by this component */
-            out->var_explained[i] = lambda / total_var;
+    /* Free memory */
+    if (pairs != NULL)
+        free(pairs);
+    if (eigvals != NULL)
+        vec_free(eigvals);
+    if (eigvecs != NULL)
+        mat_free(eigvecs);
 
-            for (j = 0; j < p; j++) {
-                /* eigenvectors are columns of eigvecs */
-                mat_set(out->components, i, j, mat_get(eigvecs, j, idx));
-            }
-        }
-    }
+    return out;
+}
+
+static void filter_pca_components(PCA *out, int k, double variance_threshold) {
+    int i, j;
+    int keep_K = k;
+    Matrix *new_components = NULL;
+    double *new_var = NULL;
 
     /* If k was not specified, determine how many components to keep based on the variance threshold */
     if (k == 0) {
@@ -156,18 +150,63 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     out->components = new_components;
     out->var_explained = new_var;
     out->K = keep_K;
+}
+
+/* Compute PCA for a matrix. */
+PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
+    Matrix *Xc = mat_create_copy(X);
+    Matrix *Cov = NULL;
+    PCA *out = NULL;
+
+    /* Compute the covariance matrix of the centered data */
+    mat_center_cols(Xc);
+    Cov = mat_centered_cov(Xc);
 
     /* Free memory */
-    if (pairs != NULL)
-        free(pairs);
     if (Xc != NULL)
         mat_free(Xc);
+
+    /* Compute the PCA */
+    out = pca(Cov);
+
+    /* Free memory */
     if (Cov != NULL)
         mat_free(Cov);
-    if (eigvals != NULL)
-        vec_free(eigvals);
-    if (eigvecs != NULL)
-        mat_free(eigvecs);
+
+    /* Filter the PCA components based on the specified number of components or variance threshold */
+    filter_pca_components(out, k, variance_threshold);
+
+    return out;
+}
+
+/* Compute Revell 2009 phylogenetic PCA to obtain evolutionarily
+independent components of variation among traits where the phylogenetic
+correlation between scores on each axis will be zero.
+X is n x p (rows = taxa, columns = traits).
+C is n x n phylogenetic covariance among rows of X.
+*/
+PCA *compute_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
+    Matrix *Xc = NULL;
+    Matrix *Cov = NULL;
+    PCA *out = NULL;
+
+    /* Revell GLS-covariance */
+    Xc = mat_center_cols_gls(X, C);
+    Cov = mat_centered_cov(Xc);
+
+    /* Free memory */
+    if (Xc != NULL)
+        mat_free(Xc);
+
+    /* Compute the PCA */
+    out = pca(Cov);
+
+    /* Free memory */
+    if (Cov != NULL)
+        mat_free(Cov);
+
+    /* Filter the PCA components based on the specified number of components or variance threshold */
+    filter_pca_components(out, k, variance_threshold);
 
     return out;
 }

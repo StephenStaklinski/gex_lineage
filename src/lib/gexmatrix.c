@@ -132,6 +132,47 @@ void mat_center_cols(Matrix *X) {
     }
 }
 
+/* Compute a centered covariance matrix using generalized 
+least squares (GLS) to regress out known covariance. */
+Matrix *mat_center_cols_gls(Matrix *X, Matrix *C) {
+    int i, j;
+    int n = X->nrows;
+    int p = X->ncols;
+    Matrix *invC = NULL;
+    Matrix *Xc = NULL;
+    Vector *row_sums = NULL;
+    double *a = NULL;
+    double denom = 0.0;
+
+    /* Get the inverse of the phylogenetic covariance matrix */
+    invC = mat_new(n, n);
+    mat_invert(invC, C);
+
+    /* Compute the GLS means for each column */
+    row_sums = mat_row_sums(invC);
+    for (i = 0; i < n; i++)
+        denom += row_sums->data[i];
+    a = scalloc(p, sizeof(double));
+    for (j = 0; j < p; j++) {
+        double numer = 0.0;
+        for (i = 0; i < n; i++)
+            numer += row_sums->data[i] * mat_get(X, i, j);
+        a[j] = numer / denom;
+    }
+
+    /* Free memory */
+    if (a != NULL) free(a);
+    if (row_sums != NULL) vec_free(row_sums);
+
+    /* Get the centered trait matrix */
+    Xc = mat_new(n, p);
+    for (i = 0; i < n; i++)
+        for (j = 0; j < p; j++)
+            mat_set(Xc, i, j, mat_get(X, i, j) - a[j]);
+
+    return Xc;
+}
+
 /* Compute the covariance matrix of a centered matrix. */
 Matrix *mat_centered_cov(Matrix *Xc) {
     int i, j, k;

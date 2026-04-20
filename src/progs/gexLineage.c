@@ -55,6 +55,18 @@ static int parse_scale_invar_constraint(const char *s, GexScaleInvarConstraint *
     return -1;
 }
 
+static int parse_pca_method(const char *s, PcaMethod *method_out) {
+    if (strcmp(s, "pca") == 0) {
+        *method_out = PCA_METHOD_PCA;
+        return 0;
+    }
+    if (strcmp(s, "phylopca") == 0) {
+        *method_out = PCA_METHOD_PHYLOPCA;
+        return 0;
+    }
+    return -1;
+}
+
 /* Print command line usage information to stderr. */
 static void usage(const char *progname) {
     fprintf(stderr,
@@ -71,6 +83,7 @@ static void usage(const char *progname) {
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
         "[--dim K] "
+        "[--pca-method phylopca|pca]"
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -94,6 +107,7 @@ int main(int argc, char *argv[]) {
     int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
+    PcaMethod pca_method = PCA_METHOD_PHYLOPCA;  /* Method for performing PCA to initialize latent model fitting */
     double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
@@ -171,6 +185,16 @@ int main(int argc, char *argv[]) {
             }
             if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
                 fprintf(stderr, "ERROR: --filter-test must be one of moran or lrt\n");
+                return 1;
+            }
+        }
+        else if (strcmp(argv[i], "--pca-method") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            if (parse_pca_method(argv[++i], &pca_method) != 0) {
+                fprintf(stderr, "ERROR: --pca-method must be one of pca or phylopca\n");
                 return 1;
             }
         }
@@ -346,13 +370,12 @@ int main(int argc, char *argv[]) {
     }
 
     /* Compute average covariance matrix over input trees if needed */
-    if (n_filter_trees == -1) {
+    if (n_filter_trees == -1 || pca_method == PCA_METHOD_PHYLOPCA) {
         filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
                                                        gex->cell_names, gex->X->nrows);
-        if (filter_avg_Sigma == NULL) {
-            fprintf(stderr, "ERROR: failed to compute average covariance for filtering.\n");
-            return 1;
-        }
+    }
+
+    if (n_filter_trees == -1) {
         filter_Sigmas = scalloc(1, sizeof(Matrix *));
         filter_Sigmas[0] = filter_avg_Sigma;
     }
@@ -438,7 +461,11 @@ int main(int argc, char *argv[]) {
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
     printf("Running PCA to initialize latent factors for the model...\n");
-    pca = compute_pca(gex_filtered->X, k, pca_var_threshold);
+    if (pca_method == PCA_METHOD_PCA) {
+        pca = compute_pca(gex_filtered->X, k, pca_var_threshold);
+    } else if (pca_method == PCA_METHOD_PHYLOPCA) {
+        pca = compute_phylo_pca(gex_filtered->X, filter_avg_Sigma, k, pca_var_threshold);
+    }
     if (k == 0) {
         printf("Retaining %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
     } else {
