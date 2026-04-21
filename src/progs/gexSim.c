@@ -383,6 +383,10 @@ int main(int argc, char *argv[]) {
         }
         else {
             reorder_factors_by_sigma2_latent(L, gex->X, log_sigma2_latent);
+
+            /* Reset sigma2s to the re-ordered values */
+            for (i = 0; i < k; i++)
+                vec_set(sigma2s, i, exp(log_sigma2_latent[i]));
         }
 
         double brownian_negll = 0.0;
