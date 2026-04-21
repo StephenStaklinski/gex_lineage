@@ -145,13 +145,16 @@ int main(int argc, char *argv[]) {
     Matrix *sim_cell_cov = NULL;
     GexMatrix *sim_L = NULL;
     Matrix *sim_Z = NULL;
+    GexMatrix *sim_X = NULL;
     GexMatrix *fit_F = NULL;
     Matrix *fit_Fc = NULL;
     Matrix *fit_cell_cov = NULL;
     GexMatrix *fit_L = NULL;
     Matrix *fit_Z = NULL;
+    GexMatrix *fit_X = NULL;
 
     double z_rmse = -1.0;
+    double x_rmse = -1.0;
     double cell_cov_corr = -2.0;
     double L_factor_match_score = -1.0;
 
@@ -201,8 +204,10 @@ int main(int argc, char *argv[]) {
 
     sim_F = read_gex_matrix(sim_f_path);
     sim_L = read_gex_matrix(sim_l_path);
+    sim_X = read_gex_matrix(sim_x_path);
     fit_F = read_gex_matrix(fit_f_path);
     fit_L = read_gex_matrix(fit_l_path);
+    fit_X = read_gex_matrix(fit_x_path);
 
     /* RMSE of Z = F * L */
     sim_Z = mat_new(sim_F->X->nrows, sim_L->X->ncols);
@@ -210,6 +215,9 @@ int main(int argc, char *argv[]) {
     mat_mult(sim_Z, sim_F->X, sim_L->X);
     mat_mult(fit_Z, fit_F->X, fit_L->X);
     z_rmse = mat_rmse(sim_Z, fit_Z);
+
+    /* RMSE of X */
+    x_rmse = mat_rmse(sim_X->X, fit_X->X);
 
     /* Cell-cell covariance induced by F */
     sim_Fc = mat_create_copy(sim_F->X);
@@ -228,6 +236,7 @@ int main(int argc, char *argv[]) {
     out = fopen(eval_summary_path, "w");
     fprintf(out, "metric\tvalue\n");
     fprintf(out, "z_rmse\t%.17g\n", z_rmse);
+    fprintf(out, "x_rmse\t%.17g\n", x_rmse);
     fprintf(out, "cell_cov_correlation\t%.17g\n", cell_cov_corr);
     fprintf(out, "L_factor_match_score\t%.17g\n", L_factor_match_score);
     fclose(out);
@@ -249,6 +258,10 @@ int main(int argc, char *argv[]) {
         gex_free_matrix_data(fit_F);
     if (fit_L != NULL)
         gex_free_matrix_data(fit_L);
+    if (sim_X != NULL)
+        gex_free_matrix_data(sim_X);
+    if (fit_X != NULL)
+        gex_free_matrix_data(fit_X);
 
     return 0;
 }
