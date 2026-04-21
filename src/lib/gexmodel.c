@@ -838,7 +838,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double clip_beta = 0.98;
     double clip_factor = 2.0;
     double clip_floor = 1.0;
-    int clip_warmup = 5;
+    int clip_warmup = 10;
     double clip_F = 0.0;
     double clip_L = 0.0;
     double clip_sigma_obs = 0.0;
