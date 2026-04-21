@@ -498,6 +498,12 @@ int main(int argc, char *argv[]) {
         sigma2_latent[i] = exp(model->log_sigma2_latent[i]);
     }
     double sigma2_obs = exp(model->log_sigma2_obs);
+
+    /* Reset the gex_filtered matrix to be the fit Z = F * L and then X ~N(Z, sigma2_obs) */
+    mat_mult(gex_filtered->X, model->F, model->L);
+    double stddev_obs = sqrt(sigma2_obs);
+    mat_add_gaussian_noise(gex_filtered->X, stddev_obs);
+
     write_model(outprefix, gex_filtered, model->L, model->F, 
                         gex_filtered->cell_names, gex_filtered->gene_names, factor_names, 
                         pca->K, model->brownian_prior_objective, model->observation_objective,

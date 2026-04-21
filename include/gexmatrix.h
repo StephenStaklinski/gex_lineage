@@ -26,7 +26,9 @@ void mat_log1p(Matrix *X);
 
 void mat_center_cols(Matrix *X);
 
-Matrix *mat_centered_cov(Matrix *Xc);
+Matrix *mat_centered_col_cov(Matrix *Xc);
+
+Matrix *mat_centered_row_cov(Matrix *Xc);
 
 void mat_standardize_cols(Matrix *X);
 
@@ -66,8 +68,14 @@ void write_labeled_matrix_tsv(const char *filename,
 
 double mat_frobenius_norm(Matrix *M);
 
+double mat_rmse(Matrix *A, Matrix *B);
+
+double mat_pearson_correlation(Matrix *A, Matrix *B);
+
 double mat_logdet_chol(Matrix *L);
 
 double mat_logdet(Matrix *Sigma);
+
+void mat_add_gaussian_noise(Matrix *X, double sigma2);
 
 #endif

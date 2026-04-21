@@ -132,26 +132,39 @@ void mat_center_cols(Matrix *X) {
     }
 }
 
-/* Compute the covariance matrix of a centered matrix. */
-Matrix *mat_centered_cov(Matrix *Xc) {
-    int i, j, k;
+/* Compute the col-col covariance matrix of a centered matrix. */
+Matrix *mat_centered_col_cov(Matrix *Xc) {
     int n = Xc->nrows;
     int p = Xc->ncols;
-    Matrix *Cov = NULL;
+    double denom = (double)(n - 1);
+    Matrix *Xct = mat_transpose(Xc);
+    Matrix *Cov = mat_new(p, p);
 
-    Cov = mat_new(p, p);
+    mat_mult(Cov, Xct, Xc);
+    mat_scale(Cov, 1.0 / denom);
 
-    for (j = 0; j < p; j++) {
-        for (k = j; k < p; k++) {
-            double sum = 0.0;
-            for (i = 0; i < n; i++) {
-                sum += mat_get(Xc, i, j) * mat_get(Xc, i, k);
-            }
-            sum /= (double)(n - 1);
-            mat_set(Cov, j, k, sum);
-            mat_set(Cov, k, j, sum);
-        }
-    }
+    /* Free memory */
+    if (Xct != NULL)
+        mat_free(Xct);
+    
+    return Cov;
+}
+
+/* Compute the row-row covariance matrix of a centered matrix. */
+Matrix *mat_centered_row_cov(Matrix *Xc) {
+    int n = Xc->nrows;
+    int p = Xc->ncols;
+    double denom = (double)(p - 1);
+    Matrix *Xct = mat_transpose(Xc);
+    Matrix *Cov = mat_new(n, n);
+
+    mat_mult(Cov, Xc, Xct);
+    mat_scale(Cov, 1.0 / denom);
+
+    /* Free memory */
+    if (Xct != NULL)
+        mat_free(Xct);
+
     return Cov;
 }
 
@@ -442,6 +455,67 @@ double mat_frobenius_norm(Matrix *M) {
     return sqrt(ss);
 }
 
+/* RMSE between two matrices */
+double mat_rmse(Matrix *A, Matrix *B) {
+    int i, j;
+    int n = A->nrows;
+    int p = A->ncols;
+    double ss = 0.0;
+    double denom = (double)n * p;
+
+    if (A == NULL || B == NULL || A->nrows != B->nrows || A->ncols != B->ncols)
+        return -1.0;
+
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < p; j++) {
+            double d = mat_get(A, i, j) - mat_get(B, i, j);
+            ss += d * d;
+        }
+    }
+
+    return sqrt(ss / denom);
+}
+
+/* Pearson correlation between all entries of two same-shaped matrices,
+treating them as flattened vectors */
+double mat_pearson_correlation(Matrix *A, Matrix *B) {
+    int i, j;
+    int n = A->nrows;
+    int p = A->ncols;
+    double denom = (double)n * p;
+    double mean_a = 0.0;
+    double mean_b = 0.0;
+    double num = 0.0;
+    double den_a = 0.0;
+    double den_b = 0.0;
+
+    if (A == NULL || B == NULL || A->nrows != B->nrows || A->ncols != B->ncols)
+        return -2.0;
+
+    /* Compute means */
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < p; j++) {
+            mean_a += mat_get(A, i, j);
+            mean_b += mat_get(B, i, j);
+        }
+    }
+    mean_a /= denom;
+    mean_b /= denom;
+
+    /* Compute numerator and denominator of Pearson */
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < p; j++) {
+            double da = mat_get(A, i, j) - mean_a;
+            double db = mat_get(B, i, j) - mean_b;
+            num += da * db;
+            den_a += da * da;
+            den_b += db * db;
+        }
+    }
+
+    return num / sqrt(den_a * den_b);
+}
+
 /* Compute the log-determinant of a matrix given its Cholesky factor L. */
 double mat_logdet_chol(Matrix *L) {
     int j;
@@ -466,4 +540,18 @@ double mat_logdet(Matrix *Sigma) {
     mat_free(L);
 
     return logdet_sigma;
+}
+
+/* Add gaussian noise element-wise to a matrix */
+void mat_add_gaussian_noise(Matrix *X, double stddev) {
+    int i, j;
+    double val;
+    double noisy_val;
+    for (i = 0; i < X->nrows; i++) {
+        for (j = 0; j < X->ncols; j++) {
+            val = mat_get(X, i, j);
+            noisy_val = norm_draw(val, stddev);
+            mat_set(X, i, j, noisy_val);
+        }
+    }
 }

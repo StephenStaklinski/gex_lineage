@@ -407,7 +407,7 @@ int main(int argc, char *argv[]) {
 
         double observation_negll = gaussian_observation_term(gex->X, L, log(sigma2_obs), gex_obs->X, NULL, NULL, NULL);
 
-        /* Write out L, F, X, and summary of simulation parameters */
+        /* Write out results */
         write_model(outprefix, gex_obs, L, gex->X, gex_obs->cell_names, gex_obs->gene_names,
                         gex->gene_names, k, brownian_negll, observation_negll, sigma2_obs, sigma2s->data);
 

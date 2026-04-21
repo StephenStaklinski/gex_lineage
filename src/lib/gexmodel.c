@@ -1175,14 +1175,14 @@ void write_model(const char *outprefix,
                                 double sigma2_obs,
                                 double *sigma2_latent) {
     char summary_path[4096];
-    char z_path[4096];
-    char l_path[4096];
     char x_path[4096];
+    char l_path[4096];
+    char f_path[4096];
 
     snprintf(summary_path, sizeof(summary_path), "%s.summary.tsv", outprefix);
-    snprintf(z_path, sizeof(z_path), "%s.F.tsv", outprefix);
-    snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
     snprintf(x_path, sizeof(x_path), "%s.X.tsv", outprefix);
+    snprintf(l_path, sizeof(l_path), "%s.L.tsv", outprefix);
+    snprintf(f_path, sizeof(f_path), "%s.F.tsv", outprefix);
 
     /* Calculate the row norms of L */
     double *L_row_norms = mat_row_l2_norms(L);
@@ -1197,10 +1197,10 @@ void write_model(const char *outprefix,
     /* Write out the simulated matrices */
     write_labeled_matrix_tsv(x_path, gex->X, cell_names, gex->X->nrows,
                                      gene_names, gex->X->ncols, "cell");
-    write_labeled_matrix_tsv(z_path, F, cell_names, gex->X->nrows,
-                                     factor_names, k, "cell");
     write_labeled_matrix_tsv(l_path, L, factor_names, k,
                                      gene_names, gex->X->ncols, "factor");
+    write_labeled_matrix_tsv(f_path, F, cell_names, gex->X->nrows,
+                                     factor_names, k, "cell");
 }
 
 /* Simulate L and X from the input F and sigma_obs */

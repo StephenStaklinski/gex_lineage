@@ -160,7 +160,7 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
 
     /* Compute the covariance matrix of the centered data */
     mat_center_cols(Xc);
-    Cov = mat_centered_cov(Xc);
+    Cov = mat_centered_col_cov(Xc);
 
     /* Free memory */
     if (Xc != NULL)
