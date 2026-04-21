@@ -309,7 +309,6 @@ int main(int argc, char *argv[]) {
 
         /* Use the provided L l2 norms */
         L_row_norms = expand_input_csv(input_L_l2_norms, sim_dim);
-        vec_free(input_L_l2_norms);
     }
     else if (input_tip_vars != NULL) {
         Vector *tip_vars = expand_input_csv(input_tip_vars, sim_dim);
@@ -371,14 +370,25 @@ int main(int argc, char *argv[]) {
         simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, 
                                                     sigma2_obs, L_row_norms, L, gex_obs);
 
+        /* Deterministic transformation to prevent sign invariance */
+        post_hoc_sign_identifiability(L, gex->X);
+
+        /* Deterministic transformation to prevent permutation invariance */
+        double *log_sigma2_latent = scalloc(k, sizeof(double));
+        for (i = 0; i < k; i++)
+            log_sigma2_latent[i] = log(vec_get(sigma2s, i));
+
+        if (input_L_l2_norms != NULL) {
+            reorder_factors_by_row_norm(L, gex->X);
+        }
+        else {
+            reorder_factors_by_sigma2_latent(L, gex->X, log_sigma2_latent);
+        }
+
         double brownian_negll = 0.0;
         if (!identity_cov) {
             /* Compute the negative log-likelihoods for the Brownian (over all trees to 
             be comparable to model fitting, for now) and observation models */
-            double *log_sigma2_latent = scalloc(k, sizeof(double));
-            for (i = 0; i < k; i++) {
-                log_sigma2_latent[i] = log(vec_get(sigma2s, i));
-            }
             Matrix **Sigma_invs = scalloc(n_trees, sizeof(Matrix *));
             for (i = 0; i < n_trees; i++) {
                 Sigma_invs[i] = mat_new(n_cells, n_cells);
@@ -392,8 +402,6 @@ int main(int argc, char *argv[]) {
             brownian_negll = latent_brownian_prior_term(gex->X, log_sigma2_latent, Sigma_invs, logdet_sigmas, n_trees, NULL, NULL);
 
             /* Free memory */
-            if (log_sigma2_latent != NULL)
-                free(log_sigma2_latent);
             if (logdet_sigmas != NULL)
                 free(logdet_sigmas);
             if (Sigma_invs != NULL) {
@@ -412,6 +420,8 @@ int main(int argc, char *argv[]) {
                         gex->gene_names, k, brownian_negll, observation_negll, sigma2_obs, sigma2s->data);
 
         /* Free memory */
+        if (log_sigma2_latent != NULL)
+            free(log_sigma2_latent);
         if (L != NULL)
             mat_free(L);
         if (gex_obs != NULL)
@@ -421,6 +431,7 @@ int main(int argc, char *argv[]) {
     printf("Wrote output to %s\n", outprefix);
 
     /* Free memory */
+    vec_free(input_L_l2_norms);
     vec_free(mu);
     vec_free(sigma2s);
     gex_free_trees(trees, n_trees);

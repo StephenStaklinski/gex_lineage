@@ -529,7 +529,7 @@ static int clip_vector_by_norm(double *grad, int n, double norm, double clip_nor
     return 0;
 }
 
-static void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
+void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
     int d, j;
     int k = L->nrows;
     int p = L->ncols;
@@ -584,7 +584,7 @@ static void selection_sort_decreasing(double *arr, int *indices, int n) {
     }
 }
 
-static void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
+void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
     int d, j, i;
     int k = L->nrows;
     int p = L->ncols;
@@ -633,7 +633,7 @@ static void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
     free(order);
 }
 
-static void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent) {
+void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent) {
     int d, j, i;
     int k = L->nrows;
     int p = L->ncols;

@@ -40,6 +40,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
 
+void post_hoc_sign_identifiability(Matrix *L, Matrix *F);
+
+void reorder_factors_by_row_norm(Matrix *L, Matrix *F);
+
+void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent);
+
 double gaussian_observation_term(Matrix *F,
                                         Matrix *L,
                                         double log_sigma2_obs,
