@@ -180,58 +180,77 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
 }
 
 /* Covariance matrix after GLS centering to regress
-out known phylogenetic covariance. */
+out known phylogenetic covariance */
 static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
     int i, j;
     int n = X->nrows;
     int p = X->ncols;
-    Matrix *invC = NULL;
-    Matrix *Xc = NULL;
-    Vector *row_sums = NULL;
-    double *a = NULL;
-    double denom = 0.0;
-    Matrix *tmp = NULL;
-    Matrix *Xct = NULL;
+    Matrix *L = NULL;
+    Matrix *W = NULL;
+    Matrix *Wt = NULL;
     Matrix *Cov = NULL;
+    Vector *ones = NULL;
+    Vector *tmp = NULL;
+    Vector *u = NULL;
+    Vector *rhs = NULL;
+    Vector *sol = NULL;
+    double *a = NULL;
+    double denom;
 
-    /* Get the inverse of the phylogenetic covariance matrix */
-    invC = mat_new(n, n);
-    mat_invert(invC, C);
+    L = mat_new(n, n);
+    mat_cholesky(L, C);
 
-    /* Compute the GLS means for each column */
-    row_sums = mat_row_sums(invC);
-    denom = vec_sum(row_sums);
+    ones = vec_new(n);
+    tmp  = vec_new(n);
+    u    = vec_new(n);
+    vec_set_all(ones, 1.0);
+    mat_forward_subst(L, ones, tmp);
+    mat_backward_subst(L, tmp, u);
+
+    denom = vec_sum(u);
+
+    /* Compute GLS column means */
     a = scalloc(p, sizeof(double));
-    for (j = 0; j < p; j++) {
-        a[j] = 0.0;
-        for (i = 0; i < n; i++)
-            a[j] += row_sums->data[i] * mat_get(X, i, j);
-        a[j] /= denom;
+    for (i = 0; i < n; i++) {
+        double w = u->data[i];
+        double *Xi = X->data[i];
+        for (j = 0; j < p; j++)
+            a[j] += w * Xi[j];
     }
 
-    /* Free memory */
-    if (row_sums != NULL) vec_free(row_sums);
+    for (j = 0; j < p; j++)
+        a[j] /= denom;
 
-    /* Get the centered trait matrix */
-    Xc = mat_new(n, p);
-    for (i = 0; i < n; i++)
-        for (j = 0; j < p; j++)
-            mat_set(Xc, i, j, mat_get(X, i, j) - a[j]);
+    /* Build whitened centered matrix */
+    W   = mat_new(n, p);
+    rhs = vec_new(n);
+    sol = vec_new(n);
 
-    /* Compute the GLS covariance matrix */
+    for (j = 0; j < p; j++) {
+        double aj = a[j];
+        for (i = 0; i < n; i++)
+            rhs->data[i] = X->data[i][j] - aj;
+        mat_forward_subst(L, rhs, sol);
+        for (i = 0; i < n; i++)
+            W->data[i][j] = sol->data[i];
+    }
+
+    /* Cov = W^T W / (n - 1) */
+    Wt  = mat_transpose(W);
     Cov = mat_new(p, p);
-    tmp = mat_new(n, p);
-    mat_mult(tmp, invC, Xc);
-    Xct = mat_transpose(Xc);
-    mat_mult(Cov, Xct, tmp);
-    mat_scale(Cov, 1.0 / (n - 1));
+    mat_mult(Cov, Wt, W);
+    mat_scale(Cov, 1.0 / (double)(n - 1));
 
     /* Free memory */
+    if (L   != NULL) mat_free(L);
+    if (W   != NULL) mat_free(W);
+    if (Wt  != NULL) mat_free(Wt);
+    if (ones != NULL) vec_free(ones);
+    if (tmp  != NULL) vec_free(tmp);
+    if (u    != NULL) vec_free(u);
+    if (rhs  != NULL) vec_free(rhs);
+    if (sol  != NULL) vec_free(sol);
     if (a != NULL) free(a);
-    if (invC != NULL) mat_free(invC);
-    if (Xc != NULL) mat_free(Xc);
-    if (Xct != NULL) mat_free(Xct);
-    if (tmp != NULL) mat_free(tmp);
 
     return Cov;
 }
