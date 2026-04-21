@@ -832,7 +832,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     objective_hist_short = scalloc(running_avg_window_short, sizeof(double));
 
     /* Adam hyperparameters */
-    double base_lr = 0.01;   /* Base learning rate for Adam */
+    double base_lr = 0.1;   /* Base learning rate for Adam */
     double lr = base_lr;
     int lr_decay_max_steps = max_steps / 2; /* Decay lr to try to finish in half the total max time */
     double clip_beta = 0.98;
@@ -935,7 +935,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
-        rel_L_lr = lr * 0.3;
+        rel_L_lr = lr;
         adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, rel_L_lr);
         rel_sigma2_lr = lr * 0.1;
         if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {

@@ -441,9 +441,10 @@ int main(int argc, char *argv[]) {
         mat_scale(gex->X, scale_factor);
         /* Log-transform the data to stabilize variance and approximate Gaussian */
         mat_log1p(gex->X);
-        /* Transform log-normalized counts into the residuals */
-        mat_center_cols(gex->X);
     }
+
+    /* Transform data into the residuals */
+    mat_center_cols(gex->X);
 
 
     if (no_filter) {
