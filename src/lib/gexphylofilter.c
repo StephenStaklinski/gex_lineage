@@ -339,6 +339,8 @@ static double gex_loglik_centered_gaussian_chol(double *y,
 typedef struct {
     double *y;
     Matrix *Sigma;
+    double logdet_sigma;
+    double logdet_sigma_lambda;
     Matrix *Sigma_lambda;
     Matrix *L;
 } GexPagelsLambdaOptData;
@@ -346,39 +348,27 @@ typedef struct {
 /* Calculate the lambda adjusted covariance matrix to fit the model with */
 static double gex_pagels_lambda_negloglik(double lambda, void *data) {
     GexPagelsLambdaOptData *d = (GexPagelsLambdaOptData *)data;
+    int i, j;
+    int n = d->Sigma->nrows;
 
-    int i, j;    /* Loop indices */
-    int n = d->Sigma->nrows;  /* Number of cells */
-    double logdet_sigma = 0.0;  /* Log determinant of the lambda-transformed covariance matrix */
-    double eps = 1e-12;
-
-    /* Check that lambda is in the valid range [0, 1] */
     if (lambda < 0.0 || lambda > 1.0)
         return -HUGE_VAL;
     
-    mat_copy(d->Sigma_lambda, d->Sigma);  /* Start with the original covariance matrix */
-
-    /* Diagonal elements are the same, adjusted for numerical stability */
-    for (i = 0; i < n; i++)
-        mat_set(d->Sigma_lambda, i, i, mat_get(d->Sigma, i, i) + eps);
-    
     double lambda_scaled;
     for (i = 0; i < n; i++) {
+        double *Sigma_row = d->Sigma->data[i];
+        double *Sigma_lambda_row = d->Sigma_lambda->data[i];
         for (j = i + 1; j < n; j++) {
-            lambda_scaled = lambda * mat_get(d->Sigma, i, j);  /* Off-diagonal elements are scaled by lambda */
-            mat_set(d->Sigma_lambda, i, j, lambda_scaled);
-            mat_set(d->Sigma_lambda, j, i, lambda_scaled);
+            lambda_scaled = lambda * Sigma_row[j];  /* Off-diagonal elements are scaled by lambda */
+            Sigma_lambda_row[j] = lambda_scaled;
+            d->Sigma_lambda->data[j][i] = lambda_scaled;
         }
     }
 
     /* Compute the Cholesky decomposition of the lambda-transformed covariance matrix */
-    if (mat_cholesky(d->L, d->Sigma_lambda) != 0)
-        return -HUGE_VAL;
+    mat_cholesky(d->L, d->Sigma_lambda);
 
-    /* Compute the log determinant of the lambda-transformed covariance matrix */
-    logdet_sigma = mat_logdet_chol(d->L);
-
-    return -gex_loglik_centered_gaussian_chol(d->y, d->L, logdet_sigma);
+    return -gex_loglik_centered_gaussian_chol(d->y, d->L, mat_logdet_chol(d->L));
 }
 
 /* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
@@ -386,6 +376,8 @@ Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
 static double gex_fit_pagels_lambda_loglik(double *y,
                                            Matrix *Sigma,
                                            double *lambda_hat) {
+    int i;
+    int n = Sigma->nrows;
     double fx;  /* Objective function value */
     double fx0; /* Objective function value at lambda = 0 (null model) */
     double fx1; /* Objective function value at lambda = 1 (full model) */
@@ -397,6 +389,9 @@ static double gex_fit_pagels_lambda_loglik(double *y,
     data.y = y;
     data.Sigma = Sigma;
     data.Sigma_lambda = mat_new(Sigma->nrows, Sigma->ncols);  /* Lambda-transformed covariance matrix for optimization */
+    /* Diagonal never changes, so we set it here */
+    for (i = 0; i < n; i++)
+        data.Sigma_lambda->data[i][i] = Sigma->data[i][i];
     data.L = mat_new(Sigma->nrows, Sigma->ncols);  /* Cholesky factor for optimization */
 
     /* Explicitly evaluate both boundaries */
