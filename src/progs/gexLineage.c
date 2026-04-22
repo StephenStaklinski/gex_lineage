@@ -472,7 +472,7 @@ int main(int argc, char *argv[]) {
     /* pPCA is only for <=1000 cells */
     if (pca_method == PCA_METHOD_PHYLOPCA && (gex_filtered->X->nrows > 1000 || gex_filtered->X->ncols > 1000)) {
         pca_method = PCA_METHOD_PCA;
-        fprintf(stderr, "WARNING: pPCA is only for <=1000 cells. Switching to standard PCA instead.\n");
+        fprintf(stderr, "WARNING: pPCA is only for <=1000 cells or <=1000 genes. Switching to standard PCA instead.\n");
     }
 
     /* Run PCA on the filtered matrix and retain the smallest number of
