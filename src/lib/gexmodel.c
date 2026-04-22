@@ -19,13 +19,14 @@
 X ~ N(FL, sigma2_obs). Returns the full contribution to the objective,
 including the Gaussian normalization constant, fills residual matrix,
 and computes gradients w.r.t. F and log(sigma2_obs). */
-double gaussian_observation_term(Matrix *F,
-                                        Matrix *L,
-                                        double log_sigma2_obs,
-                                        Matrix *Xc,
-                                        Matrix *grad_F,
-                                        Matrix *grad_L,
-                                        double *grad_log_sigma_obs) {
+double gaussian_observation_term(Matrix *FL,
+                                    Matrix *F,
+                                    Matrix *L,
+                                    double log_sigma2_obs,
+                                    Matrix *Xc,
+                                    Matrix *grad_F,
+                                    Matrix *grad_L,
+                                    double *grad_log_sigma_obs) {
     int i, j, d;
     int n = Xc->nrows;
     int p = Xc->ncols;
@@ -42,22 +43,15 @@ double gaussian_observation_term(Matrix *F,
        Compute residuals r_ij = X_ij - (FL)_ij and accumulate the
        negative log-likelihood and its gradient w.r.t. log(sigma2_obs). */
     for (i = 0; i < n; i++) {
-        double *F_i = F->data[i];  /* Row of F for cell i */
         double *Xc_i = Xc->data[i]; /* Row of centered data for cell i */
         double *resid_i = resid->data[i]; /* Row of residuals for cell i */
+        double r;
         for (j = 0; j < p; j++) {
-            double pred = 0.0;
-            double r;
-
-            /* Compute predicted value (FL)_ij */
-            for (d = 0; d < k; d++)
-                pred += F_i[d] * L->data[d][j];
-
             /* Residual is observed minus predicted */
-            r = Xc_i[j] - pred;
+            r = Xc_i[j] - FL->data[i][j];
             resid_i[j] = r;
 
-            /* Quadratic term of Gaussian negative log-likelihood: (1/2σ²) r^2 */
+            /* Quadratic term of Gaussian negative log-likelihood */
             obj += 0.5 * r * r / sigma2_obs;
 
             /* Gradient w.r.t. log(sigma2_obs) from quadratic term */
@@ -106,7 +100,6 @@ double gaussian_observation_term(Matrix *F,
     /* Gradient w.r.t. log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
         *grad_log_sigma_obs += 0.5 * n_entries;
-
 
     /* Free memory */
     mat_free(resid);
@@ -316,7 +309,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the likelihood from the gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. F and log(sigma2_obs). */
     model->observation_objective =
-        gaussian_observation_term(model->F, model->L, model->log_sigma2_obs, Xc, grad_F, grad_L, grad_log_sigma_obs);
+        gaussian_observation_term(model->FL, model->F, model->L, model->log_sigma2_obs, Xc, grad_F, grad_L, grad_log_sigma_obs);
     obj += model->observation_objective;
 
     /* Add the mixture-of-Brownian prior contribution on F and accumulate the
@@ -727,7 +720,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     Matrix *grad_F = NULL, *grad_L = NULL, *mF = NULL, *vF = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
 
     /* Other */
-    int i, j, d, n;    /* Loop indices */
+    int i, d, n;    /* Loop indices */
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
 
@@ -756,6 +749,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->k = k;
     model->F = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
+    model->FL = mat_new(n_cells, n_genes); /* Allocate the product FL for efficient likelihood computation */
     model->l1_strength = L_l1_strength;
 
     if (pca != NULL) {
@@ -773,17 +767,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     mat_free(Lt);
 
     /* Initialize sigma2_obs from the residual sum of squares */
-    double sse = 0.0;
-    double pred, diff;
-    for (i = 0; i < model->n_cells; i++) {
-        for (j = 0; j < model->n_genes; j++) {
-            pred = 0.0;
-            for (d = 0; d < model->k; d++)
-                pred += mat_get(model->F, i, d) * mat_get(model->L, d, j);
-            diff = mat_get(gex->X, i, j) - pred;
-            sse += diff * diff;
-        }
-    }
+    mat_mult_lapack(model->FL, model->F, model->L);
+    double sse = mat_sum_squared_entries(model->FL);
+
     model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
     model->log_sigma2_obs = max(model->log_sigma2_obs, log(1e-6));
 
@@ -863,9 +849,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double pow_beta2;
     double rel_L_lr;
     double rel_sigma2_lr;
-
-    /* For testing, keep track of the reconstructed X to track overall F*L scale */
-    Matrix *FL = mat_new(model->n_cells, model->n_genes);
 
     /* Run Adam */
     for (step = 1; step <= max_steps; step++) {
@@ -974,8 +957,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         else
             stable_steps = 0;
         
-        /* For testing, keep track of the reconstructed X to track overall F*L scale */
-        mat_mult_lapack(FL, model->F, model->L);   /* Compute predicted values FL */
+        /* Reconstruct F*L */
+        mat_mult_lapack(model->FL, model->F, model->L);   /* Compute predicted values FL */
 
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
@@ -1001,7 +984,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "\t%.17g\t%.17g\t%.17g\n", 
                     mat_frobenius_norm(model->F), 
                     mat_frobenius_norm(model->L),
-                    mat_frobenius_norm(FL));
+                    mat_frobenius_norm(model->FL));
         fflush(logf);
 
         /* Update both moving-average histories. */
@@ -1079,7 +1062,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         free(Sigma_invs);
     }
     if (logdet_sigmas != NULL) free(logdet_sigmas);
-    if (FL != NULL) mat_free(FL);
 
     return model;
 }
@@ -1091,6 +1073,8 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
         mat_free(model->F);
     if (model->L != NULL) 
         mat_free(model->L);
+    if (model->FL != NULL) 
+        mat_free(model->FL);
     if (model->log_sigma2_latent != NULL) 
         free(model->log_sigma2_latent);
     if (model->latent_mvn != NULL) 

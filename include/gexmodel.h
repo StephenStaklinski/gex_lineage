@@ -20,6 +20,7 @@ typedef struct {
     int k;
     Matrix *F;              /* n_cells x k latent factors */
     Matrix *L;              /* k latent factors x n_genes */
+    Matrix *FL;             /* n_cells x n_genes reconstructed expression (F*L) */
     double *log_sigma2_latent;  /* length k */
     double log_sigma2_obs;
     double l1_strength;
@@ -47,7 +48,8 @@ void reorder_factors_by_row_norm(Matrix *L, Matrix *F);
 
 void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent);
 
-double gaussian_observation_term(Matrix *F,
+double gaussian_observation_term(Matrix *FL,
+                                        Matrix *F,
                                         Matrix *L,
                                         double log_sigma2_obs,
                                         Matrix *Xc,

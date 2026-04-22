@@ -525,7 +525,7 @@ int main(int argc, char *argv[]) {
     double sigma2_obs = exp(model->log_sigma2_obs);
 
     /* Reset the gex_filtered matrix to be the fit Z = F * L and then X ~N(Z, sigma2_obs) */
-    mat_mult(gex_filtered->X, model->F, model->L);
+    mat_copy(gex_filtered->X, model->FL);
     double stddev_obs = sqrt(sigma2_obs);
     mat_add_gaussian_noise(gex_filtered->X, stddev_obs);
 
