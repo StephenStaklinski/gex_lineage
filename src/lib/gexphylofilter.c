@@ -363,35 +363,17 @@ static double gex_pagels_lambda_negloglik(double lambda, void *data) {
 
 /* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
 Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
-static double gex_fit_pagels_lambda_loglik(Vector *y,
-                                           Matrix *Sigma,
+static double gex_fit_pagels_lambda_loglik(GexPagelsLambdaOptData *data,
                                            double *lambda_hat) {
-    int i;
-    int n = Sigma->nrows;
     double fx;  /* Objective function value */
     double fx0; /* Objective function value at lambda = 0 (null model) */
     double fx1; /* Objective function value at lambda = 1 (full model) */
     double best_lambda; /* Best lambda value found among boundary and interior evaluations */
     double best_fx; /* Best objective function value found among boundary and interior evaluations */
-    GexPagelsLambdaOptData data;    /* Data structure to pass to the objective function for optimization */
-
-    /* Set up the data structure for optimization */
-    data.y = y;
-    data.Sigma = Sigma;
-    data.Sigma_lambda = mat_new(Sigma->nrows, Sigma->ncols);  /* Lambda-transformed covariance matrix for optimization */
-    /* Diagonal never changes, so we set it here */
-    for (i = 0; i < n; i++)
-        data.Sigma_lambda->data[i][i] = Sigma->data[i][i];
-    data.L = mat_new(Sigma->nrows, Sigma->ncols);  /* Cholesky factor for optimization */
-    data.ones = vec_new(n);
-    vec_set_all(data.ones, 1.0);
-    data.tmp = vec_new(n);
-    data.Sinv1 = vec_new(n);
-    data.Sinvy = vec_new(n);
 
     /* Explicitly evaluate both boundaries */
-    fx0 = gex_pagels_lambda_negloglik(0.0, &data);
-    fx1 = gex_pagels_lambda_negloglik(1.0, &data);
+    fx0 = gex_pagels_lambda_negloglik(0.0, data);
+    fx1 = gex_pagels_lambda_negloglik(1.0, data);
     if (fx0 <= fx1) {
         best_fx = fx0;
         best_lambda = 0.0;
@@ -402,7 +384,7 @@ static double gex_fit_pagels_lambda_loglik(Vector *y,
 
     /* Only run Brent if the midpoint is lower than both boundaries,
     which is required for a valid bracket */
-    double fx_mid = gex_pagels_lambda_negloglik(0.5, &data);
+    double fx_mid = gex_pagels_lambda_negloglik(0.5, data);
     if (fx_mid < fx0 && fx_mid < fx1) {
         double tol = 1e-4;
         double xmin = 0.5;
@@ -410,7 +392,7 @@ static double gex_fit_pagels_lambda_loglik(Vector *y,
                        gex_pagels_lambda_negloglik,
                        tol,
                        &xmin,
-                       &data,
+                       data,
                        NULL);
         if (isfinite(fx) && fx < best_fx) {
             best_fx = fx;
@@ -422,20 +404,6 @@ static double gex_fit_pagels_lambda_loglik(Vector *y,
         return -HUGE_VAL;
 
     *lambda_hat = best_lambda;
-
-    /* Free memory */
-    if (data.Sigma_lambda != NULL)
-        mat_free(data.Sigma_lambda);
-    if (data.L != NULL)
-        mat_free(data.L);
-    if (data.ones != NULL)
-        vec_free(data.ones);
-    if (data.tmp != NULL)
-        vec_free(data.tmp);
-    if (data.Sinv1 != NULL)
-        vec_free(data.Sinv1);
-    if (data.Sinvy != NULL)
-        vec_free(data.Sinvy);
 
     return -best_fx;
 }
@@ -523,6 +491,17 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     Vector *Sinv1 = vec_new(n);  /* Temporary vector for computations in the alternative model */
     Vector *Sinvy = vec_new(n);  /* Temporary vector for computations in the alternative model */
 
+    GexPagelsLambdaOptData data;    /* Data structure to pass to the objective function for optimization */
+
+    /* Set up the data structure for optimization */
+    data.y = y;
+    data.Sigma_lambda = mat_new(n, n);  /* Lambda-transformed covariance matrix for optimization */
+    data.L = mat_new(n, n);  /* Cholesky factor for optimization */
+    data.ones = ones;
+    data.tmp = tmp;
+    data.Sinv1 = Sinv1;
+    data.Sinvy = Sinvy;
+
     for (j = 0; j < n_genes; j++) {
 
         /* Extract gene expression data for the current gene across all cells */
@@ -554,9 +533,12 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         else {
             double lambda_hat_sum = 0.0;
             for (t = 0; t < n_sigmas; t++) {
+                data.Sigma = Sigma_regs[t];
+                /* Diagonal never changes, so we set it here */
+                for (i = 0; i < n; i++)
+                    data.Sigma_lambda->data[i][i] = data.Sigma->data[i][i];
                 double lambda_hat = 0.0;
-                ll_alts[t] = gex_fit_pagels_lambda_loglik(y,
-                                                    Sigmas[t],
+                ll_alts[t] = gex_fit_pagels_lambda_loglik(&data,
                                                     &lambda_hat);
                 lambda_hat_sum += lambda_hat;
             }
@@ -655,6 +637,10 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         vec_free(Sinv1);
     if (Sinvy != NULL)
         vec_free(Sinvy);
+    if (data.Sigma_lambda != NULL)
+        mat_free(data.Sigma_lambda);
+    if (data.L != NULL)
+        mat_free(data.L);
 
     return res;
 }
