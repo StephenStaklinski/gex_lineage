@@ -98,8 +98,11 @@ double gaussian_observation_term(Matrix *FL,
     }
 
     /* Gradient w.r.t. log(sigma2_obs) */
-    if (grad_log_sigma_obs != NULL)
+    if (grad_log_sigma_obs != NULL) {
         *grad_log_sigma_obs += 0.5 * n_entries;
+        /* Normalize the gradient to be per observation (only for stability with Adam steps) */
+        *grad_log_sigma_obs /= n_entries;
+    }
 
     /* Free memory */
     mat_free(resid);
@@ -489,14 +492,14 @@ static double update_clip_threshold(double grad_norm,
                              (1.0 - clip_beta) * grad_norm;
     }
 
-    /* During warmup, just use the fixed floor */
-    clip = clip_floor;
+    /* Skip clipping during warmup */
+    if (step < clip_warmup) {
+        return HUGE_VAL;
+    }
 
     /* After warmup, allow adaptive thresholding */
-    if (step >= clip_warmup && *ema_grad_norm > 0.0) {
-        double adaptive_clip = clip_factor * (*ema_grad_norm);
-        clip = fmax(clip_floor, adaptive_clip);
-    }
+    double adaptive_clip = clip_factor * (*ema_grad_norm);
+    clip = fmax(clip_floor, adaptive_clip);
 
     return clip;
 }
@@ -830,7 +833,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double clip_beta = 0.98;
     double clip_factor = 2.0;
     double clip_floor = 1.0;
-    int clip_warmup = 10;
+    int clip_warmup = 100;
     double clip_F = 0.0;
     double clip_L = 0.0;
     double clip_sigma_obs = 0.0;
@@ -926,7 +929,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
         rel_L_lr = lr;
         adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, rel_L_lr);
-        rel_sigma2_lr = lr * 0.1;
+        rel_sigma2_lr = lr * 0.01;
         if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
             /* Step Brownian variance parameters if they are not fixed for scale invariance */
             adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
