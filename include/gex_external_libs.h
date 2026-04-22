@@ -20,4 +20,14 @@ void dtrtrs_(const char *uplo, const char *trans, const char *diag,
             LAPACK_DOUBLE *b, const LAPACK_INT *ldb,
             LAPACK_INT *info);
 
+void dgesdd_(const char *jobz,
+             const LAPACK_INT *m, const LAPACK_INT *n,
+             LAPACK_DOUBLE *a, const LAPACK_INT *lda,
+             LAPACK_DOUBLE *s,
+             LAPACK_DOUBLE *u, const LAPACK_INT *ldu,
+             LAPACK_DOUBLE *vt, const LAPACK_INT *ldvt,
+             LAPACK_DOUBLE *work, const LAPACK_INT *lwork,
+             LAPACK_INT *iwork,
+             LAPACK_INT *info);
+
 #endif

@@ -86,4 +86,6 @@ void mat_forward_subst_lapack(Matrix *L, Vector *z, Vector *y);
 
 void mat_backward_subst_lapack(Matrix *L, Vector *z, Vector *y);
 
+void mat_svd_lapack(Matrix *X, Matrix **U_out, Vector **S_out, Matrix **VT_out);
+
 #endif

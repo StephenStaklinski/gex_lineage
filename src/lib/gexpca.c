@@ -120,6 +120,41 @@ static PCA *pca_eigen(Matrix *Cov) {
     return out;
 }
 
+PCA *pca_lapack(Matrix *Xc) {
+    Matrix *VT = NULL;
+    Vector *S = NULL;
+    PCA *out = NULL;
+    int i, j, r;
+    double total_var = 0.0;
+
+    mat_svd_lapack(Xc, NULL, &S, &VT);
+
+    r = S->size;
+    out = scalloc(1, sizeof(PCA));
+    out->components = mat_new(r, VT->ncols);
+    out->var_explained = scalloc(r, sizeof(double));
+    out->K = r;
+
+    for (i = 0; i < r; i++) {
+        double lambda = S->data[i] * S->data[i] / (double)(Xc->nrows - 1);
+        out->var_explained[i] = lambda;
+        total_var += lambda;
+    }
+
+    if (total_var > 0.0) {
+        for (i = 0; i < r; i++)
+            out->var_explained[i] /= total_var;
+    }
+
+    for (i = 0; i < r; i++)
+        for (j = 0; j < VT->ncols; j++)
+            mat_set(out->components, i, j, mat_get(VT, i, j));
+
+    vec_free(S);
+    mat_free(VT);
+    return out;
+}
+
 static void filter_pca_components(PCA *out, int k, double variance_threshold) {
     int i, j;
     int keep_K = k;
@@ -155,23 +190,17 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
 /* Compute PCA for a matrix. */
 PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     Matrix *Xc = mat_create_copy(X);
-    Matrix *Cov = NULL;
     PCA *out = NULL;
 
     /* Compute the covariance matrix of the centered data */
     mat_center_cols(Xc);
-    Cov = mat_centered_col_cov(Xc);
+
+    /* LAPACK SVD approach to PCA */
+    out = pca_lapack(Xc);
 
     /* Free memory */
-    if (Xc != NULL)
+    if (Xc != NULL) 
         mat_free(Xc);
-
-    /* Compute the PCA */
-    out = pca_eigen(Cov);
-
-    /* Free memory */
-    if (Cov != NULL)
-        mat_free(Cov);
 
     /* Filter the PCA components based on the specified number of components or variance threshold */
     filter_pca_components(out, k, variance_threshold);

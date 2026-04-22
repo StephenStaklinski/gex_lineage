@@ -6,6 +6,7 @@
 typedef enum {
     PCA_METHOD_PCA = 0,
     PCA_METHOD_PHYLOPCA = 1,
+    PCA_METHOD_NONE = 2,
 } PcaMethod;
 
 typedef struct {

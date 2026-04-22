@@ -681,6 +681,7 @@ pointer to the fitted model or NULL on failure. */
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       Matrix **Sigmas,
                                                       int n_sigmas,
+                                                      int k,
                                                       PCA *pca,
                                                       GexScaleInvarConstraint scale_invar_constraint,
                                                       double L_l1_strength,
@@ -708,7 +709,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     const double objective_tol = 1e-4;  /* Relative objective tolerance used for convergence */
 
     /* Model related */
-    int k = pca->K;   /* Number of latent dimensions comes from the number of input PCA components */
     int n_cells = gex->X->nrows;
     int n_genes = gex->X->ncols;
     GexLatentBrownianModel *model = NULL;   /* Fitted model */
@@ -758,11 +758,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
     model->l1_strength = L_l1_strength;
 
-    /* L comes from the PCA where the rows of components are the eigenvectors */
-    mat_copy(model->L, pca->components);
+    if (pca != NULL) {
+        /* L comes from the PCA where the rows of components are the eigenvectors */
+        mat_copy(model->L, pca->components);
+    } else {
+        /* Initialize L with random values */
+        mat_set_all(model->L, 0.0);
+        mat_add_gaussian_noise(model->L, 1);
+    }
 
     /* Initialize F = X * L^T */
-    Matrix *Lt = mat_transpose(pca->components);
+    Matrix *Lt = mat_transpose(model->L);
     mat_mult_lapack(model->F, gex->X, Lt);
     mat_free(Lt);
 

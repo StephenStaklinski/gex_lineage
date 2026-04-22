@@ -64,6 +64,10 @@ static int parse_pca_method(const char *s, PcaMethod *method_out) {
         *method_out = PCA_METHOD_PHYLOPCA;
         return 0;
     }
+    if (strcmp(s, "none") == 0) {
+        *method_out = PCA_METHOD_NONE;
+        return 0;
+    }
     return -1;
 }
 
@@ -83,7 +87,7 @@ static void usage(const char *progname) {
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
         "[--dim K] "
-        "[--pca-method phylopca|pca]"
+        "[--pca-method phylopca|pca|none]"
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -283,13 +287,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Check that all required inputs are specified */
     if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
         return 1;
     }
     if (filter_only && no_filter) {
         fprintf(stderr, "ERROR: --no-filter cannot be used together with --filter-only.\n");
+        return 1;
+    }
+    if (pca_method == PCA_METHOD_NONE && k == 0) {
+        fprintf(stderr, "ERROR: --dim must be specified when --pca-method is none.\n");
         return 1;
     }
 
@@ -485,7 +492,8 @@ int main(int argc, char *argv[]) {
         pca = compute_phylo_pca(gex_filtered->X, filter_avg_Sigma, k, pca_var_threshold);
     }
     if (k == 0) {
-        printf("Retaining %d PCA component(s) to explain at least %.2f%% of variance.\n", pca->K, 100.0 * pca_var_threshold);
+        k = pca->K;
+        printf("Retaining %d PCA component(s) to explain at least %.2f%% of variance.\n", k, 100.0 * pca_var_threshold);
     } else {
         printf("Retaining the top %d PCA component(s).\n", k);
     }
@@ -503,15 +511,15 @@ int main(int argc, char *argv[]) {
     }
 
     /* Fit the latent Brownian model */
-    printf("Fitting model to the filtered data with k=%d latent dimensions...\n", pca->K);
-    model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees,
+    printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
+    model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees, k,
                                           pca, scale_invar_constraint, L_l1_strength, outprefix);
 
     /* Write the fitted latent Brownian model parameters to files */
-    char **factor_names = scalloc(pca->K, sizeof(char *));
-    generate_names(factor_names, pca->K, "factor");
-    double *sigma2_latent = scalloc(pca->K, sizeof(double));
-    for (i = 0; i < pca->K; i++) {
+    char **factor_names = scalloc(k, sizeof(char *));
+    generate_names(factor_names, k, "factor");
+    double *sigma2_latent = scalloc(k, sizeof(double));
+    for (i = 0; i < k; i++) {
         sigma2_latent[i] = exp(model->log_sigma2_latent[i]);
     }
     double sigma2_obs = exp(model->log_sigma2_obs);
@@ -523,14 +531,14 @@ int main(int argc, char *argv[]) {
 
     write_model(outprefix, gex_filtered, model->L, model->F, 
                         gex_filtered->cell_names, gex_filtered->gene_names, factor_names, 
-                        pca->K, model->brownian_prior_objective, model->observation_objective,
+                        k, model->brownian_prior_objective, model->observation_objective,
                         sigma2_obs, sigma2_latent);
 
     printf("Wrote resulting model parameters to outprefix %s\n", outprefix);
 
     /* Free memory */
     if (factor_names != NULL) {
-        for (i = 0; i < pca->K; i++) {
+        for (i = 0; i < k; i++) {
             if (factor_names[i] != NULL)
                 free(factor_names[i]);
         }

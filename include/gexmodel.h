@@ -33,6 +33,7 @@ typedef struct {
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         Matrix **Sigmas,
                                                         int n_sigmas,
+                                                        int k,
                                                         PCA *pca,
                                                         GexScaleInvarConstraint scale_invar_constraint,
                                                         double L_l1_strength,

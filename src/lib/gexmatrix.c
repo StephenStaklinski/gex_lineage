@@ -609,15 +609,6 @@ void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
     mat_to_lapack(m1, A);
     mat_to_lapack(m2, B);
 
-    #ifdef R_LAPACK
-    F77_CALL(dgemm)(&transa, &transb,
-                    &m, &n, &k,
-                    &alpha,
-                    A, &lda,
-                    B, &ldb,
-                    &beta,
-                    C, &ldc);
-    #else
     dgemm_(&transa, &transb,
             &m, &n, &k,
             &alpha,
@@ -625,7 +616,6 @@ void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
             B, &ldb,
             &beta,
             C, &ldc);
-    #endif
 
     mat_from_lapack(prod, C);
 
@@ -662,11 +652,7 @@ void mat_forward_subst_lapack(Matrix *L, Vector *z, Vector *y) {
     for (i = 0; i < n; i++)
         b[i] = (LAPACK_DOUBLE)z->data[i];
 
-    #ifdef R_LAPACK
-    F77_CALL(dtrtrs)(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
-    #else
     dtrtrs_(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
-    #endif
 
     if (info != 0) {
         sfree(a);
@@ -712,11 +698,7 @@ void mat_backward_subst_lapack(Matrix *L, Vector *z, Vector *y) {
     for (i = 0; i < n; i++)
         b[i] = (LAPACK_DOUBLE)z->data[i];
 
-    #ifdef R_LAPACK
-    F77_CALL(dtrtrs)(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
-    #else
     dtrtrs_(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
-    #endif
 
     if (info != 0) {
         sfree(a);
@@ -733,4 +715,97 @@ void mat_backward_subst_lapack(Matrix *L, Vector *z, Vector *y) {
     sfree(a);
     sfree(b);
     #endif
+}
+
+void mat_svd_lapack(Matrix *X, Matrix **U_out, Vector **S_out, Matrix **VT_out) {
+#ifdef SKIP_LAPACK
+    die("ERROR: LAPACK required for SVD.\n");
+#else
+    int m0, n0, r, i;
+    LAPACK_INT m, n, lda, ldu, ldvt, lwork, info;
+    LAPACK_DOUBLE *a = NULL;
+    LAPACK_DOUBLE *s = NULL;
+    LAPACK_DOUBLE *u = NULL;
+    LAPACK_DOUBLE *vt = NULL;
+    LAPACK_DOUBLE *work = NULL;
+    LAPACK_INT *iwork = NULL;
+    LAPACK_DOUBLE wkopt;
+    char jobz = 'S';
+
+    Matrix *U = NULL;
+    Matrix *VT = NULL;
+    Vector *S = NULL;
+
+    if (X == NULL || S_out == NULL)
+        die("ERROR in mat_svd_lapack: X and S_out must be non-NULL.\n");
+
+    m0 = X->nrows;
+    n0 = X->ncols;
+    r = (m0 < n0 ? m0 : n0);
+
+    m = (LAPACK_INT)m0;
+    n = (LAPACK_INT)n0;
+    lda = m;
+    ldu = m;
+    ldvt = (LAPACK_INT)r;
+
+    a = smalloc((size_t)m * (size_t)n * sizeof(*a));
+    s = smalloc((size_t)r * sizeof(*s));
+    u = smalloc((size_t)ldu * (size_t)r * sizeof(*u));
+    vt = smalloc((size_t)ldvt * (size_t)n * sizeof(*vt));
+    iwork = smalloc((size_t)(8 * r) * sizeof(*iwork));
+
+    mat_to_lapack(X, a);
+
+    /* workspace query */
+    lwork = -1;
+    dgesdd_(&jobz, &m, &n, a, &lda, s, u, &ldu, vt, &ldvt,
+            &wkopt, &lwork, iwork, &info);
+    if (info != 0)
+        die("ERROR in mat_svd_lapack: LAPACK dgesdd failed.\n");
+
+    lwork = (LAPACK_INT)wkopt;
+    work = smalloc((size_t)lwork * sizeof(*work));
+
+    /* actual SVD */
+    dgesdd_(&jobz, &m, &n, a, &lda, s, u, &ldu, vt, &ldvt,
+            work, &lwork, iwork, &info);
+    if (info != 0)
+        die("ERROR in mat_svd_lapack: LAPACK dgesdd failed.\n");
+
+    S = vec_new(r);
+    for (i = 0; i < r; i++)
+        S->data[i] = (double)s[i];
+
+    if (U_out != NULL) {
+        int row, col;
+        U = mat_new(m0, r);
+        for (col = 0; col < r; col++) {
+            for (row = 0; row < m0; row++) {
+                mat_set(U, row, col, u[row + (size_t)col * ldu]);
+            }
+        }
+        *U_out = U;
+    }
+
+    if (VT_out != NULL) {
+        int row, col;
+        VT = mat_new(r, n0);
+        for (col = 0; col < n0; col++) {
+            for (row = 0; row < r; row++) {
+                mat_set(VT, row, col, vt[row + (size_t)col * ldvt]);
+            }
+        }
+        *VT_out = VT;
+    }
+
+    *S_out = S;
+
+    sfree(a);
+    sfree(s);
+    sfree(u);
+    sfree(vt);
+    sfree(work);
+    sfree(iwork);
+#endif
 }
