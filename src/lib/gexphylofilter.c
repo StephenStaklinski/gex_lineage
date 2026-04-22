@@ -284,14 +284,13 @@ static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
 where mu and sigma2 are estimated by MLE, using the Cholesky factor L of Sigma. */
 static double gex_loglik_centered_gaussian_chol(Vector *yvec,
                                                 Matrix *L,
-                                                double logdet_sigma) {
+                                                double logdet_sigma,
+                                                Vector *ones,
+                                                Vector *tmp,
+                                                Vector *Sinv1,
+                                                Vector *Sinvy) {
     int i;
     int n = L->nrows;
-    Vector *ones = vec_new(n);
-    vec_set_all(ones, 1.0);
-    Vector *tmp = vec_new(n);
-    Vector *Sinv1 = vec_new(n);
-    Vector *Sinvy = vec_new(n);
 
     /* GLS estimate of the mean */
     mat_forward_subst(L, ones, tmp);
@@ -307,38 +306,32 @@ static double gex_loglik_centered_gaussian_chol(Vector *yvec,
     double muhat = sum_Sinvy / sum_Sinv1;
 
     double quad = 0.0;
+    double *ydata = yvec->data;
+    double *s1 = Sinv1->data;
+    double *sy = Sinvy->data;
     for (i = 0; i < n; i++) {
-        double ri = vec_get(yvec, i) - muhat;
-        double sinv_ri = vec_get(Sinvy, i) - muhat * vec_get(Sinv1, i);
+        double ri = ydata[i] - muhat;
+        double sinv_ri = sy[i] - muhat * s1[i];
         quad += ri * sinv_ri;
     }
 
     double sigma2 = quad / (double)n;
-    if (sigma2 < 1e-12)
-        sigma2 = 1e-12;
 
     /* Compute the log-likelihood */
-    double ll = -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
+    return -0.5 * ((double)n * log(2.0 * M_PI * sigma2) +
                  logdet_sigma +
                  (double)n);
-    
-    if (!isfinite(ll))
-        ll = -HUGE_VAL;
-
-    vec_free(ones);
-    vec_free(tmp);
-    vec_free(Sinv1);
-    vec_free(Sinvy);
-    return ll;
 }
 
 typedef struct {
     Vector *y;
     Matrix *Sigma;
-    double logdet_sigma;
-    double logdet_sigma_lambda;
     Matrix *Sigma_lambda;
     Matrix *L;
+    Vector *ones;
+    Vector *tmp;
+    Vector *Sinv1;
+    Vector *Sinvy;
 } GexPagelsLambdaOptData;
 
 /* Calculate the lambda adjusted covariance matrix to fit the model with */
@@ -363,8 +356,9 @@ static double gex_pagels_lambda_negloglik(double lambda, void *data) {
 
     /* Compute the Cholesky decomposition of the lambda-transformed covariance matrix */
     mat_cholesky(d->L, d->Sigma_lambda);
+    double log_det = mat_logdet_chol(d->L);
 
-    return -gex_loglik_centered_gaussian_chol(d->y, d->L, mat_logdet_chol(d->L));
+    return -gex_loglik_centered_gaussian_chol(d->y, d->L, log_det, d->ones, d->tmp, d->Sinv1, d->Sinvy);
 }
 
 /* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
@@ -389,6 +383,11 @@ static double gex_fit_pagels_lambda_loglik(Vector *y,
     for (i = 0; i < n; i++)
         data.Sigma_lambda->data[i][i] = Sigma->data[i][i];
     data.L = mat_new(Sigma->nrows, Sigma->ncols);  /* Cholesky factor for optimization */
+    data.ones = vec_new(n);
+    vec_set_all(data.ones, 1.0);
+    data.tmp = vec_new(n);
+    data.Sinv1 = vec_new(n);
+    data.Sinvy = vec_new(n);
 
     /* Explicitly evaluate both boundaries */
     fx0 = gex_pagels_lambda_negloglik(0.0, &data);
@@ -429,6 +428,14 @@ static double gex_fit_pagels_lambda_loglik(Vector *y,
         mat_free(data.Sigma_lambda);
     if (data.L != NULL)
         mat_free(data.L);
+    if (data.ones != NULL)
+        vec_free(data.ones);
+    if (data.tmp != NULL)
+        vec_free(data.tmp);
+    if (data.Sinv1 != NULL)
+        vec_free(data.Sinv1);
+    if (data.Sinvy != NULL)
+        vec_free(data.Sinvy);
 
     return -best_fx;
 }
@@ -510,6 +517,11 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     double ll_alt;  /* Log-likelihood under the alternative model */
     double *ll_alts = smalloc(n_sigmas * sizeof(double)); /* Log-likelihoods under the alternative model for each tree */
     double sigma20; /* Variance under the null model (estimated from the data) */
+    Vector *ones = vec_new(n);  /* Vector of ones for mean estimation in the alternative model */
+    vec_set_all(ones, 1.0);
+    Vector *tmp = vec_new(n);  /* Temporary vector for computations in the alternative model */
+    Vector *Sinv1 = vec_new(n);  /* Temporary vector for computations in the alternative model */
+    Vector *Sinvy = vec_new(n);  /* Temporary vector for computations in the alternative model */
 
     for (j = 0; j < n_genes; j++) {
 
@@ -531,7 +543,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         ll_alt = 0.0;
         if (alt_mode == GEX_LRT_ALT_FULL) {
             for (t = 0; t < n_sigmas; t++) {
-                ll_alts[t] = gex_loglik_centered_gaussian_chol(y, Ls[t], logdet_sigmas[t]);
+                ll_alts[t] = gex_loglik_centered_gaussian_chol(y, Ls[t], logdet_sigmas[t], ones, tmp, Sinv1, Sinvy);
             }
             if (n_sigmas > 1) {
                 ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
@@ -586,7 +598,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
                 /* Compute the expected log-likelihood under the alternative model */
                 for (t = 0; t < n_sigmas; t++) {
-                    ll_alts[t] = gex_loglik_centered_gaussian_chol(y_sim, Ls[t], logdet_sigmas[t]);
+                    ll_alts[t] = gex_loglik_centered_gaussian_chol(y_sim, Ls[t], logdet_sigmas[t], ones, tmp, Sinv1, Sinvy);
                 }
                 if (n_sigmas > 1) {
                     ll_alt = logsumexp(ll_alts, n_sigmas) - log((double)n_sigmas);
@@ -635,6 +647,14 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     }
     if (logdet_sigmas != NULL)
         free(logdet_sigmas);
+    if (ones != NULL)
+        vec_free(ones);
+    if (tmp != NULL)
+        vec_free(tmp);
+    if (Sinv1 != NULL)
+        vec_free(Sinv1);
+    if (Sinvy != NULL)
+        vec_free(Sinvy);
 
     return res;
 }
