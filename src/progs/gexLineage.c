@@ -470,7 +470,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* pPCA is only for <=1000 cells */
-    if (pca_method == PCA_METHOD_PHYLOPCA && gex_filtered->X->nrows > 1000) {
+    if (pca_method == PCA_METHOD_PHYLOPCA && (gex_filtered->X->nrows > 1000 || gex_filtered->X->ncols > 1000)) {
         pca_method = PCA_METHOD_PCA;
         fprintf(stderr, "WARNING: pPCA is only for <=1000 cells. Switching to standard PCA instead.\n");
     }
