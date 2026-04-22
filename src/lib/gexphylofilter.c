@@ -117,7 +117,7 @@ that I fixed, so the code is not an exact match.
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
                                       int n_sigmas) {
-    int j, t, k;
+    int j, t;
     int n = X->nrows;
     int n_genes = X->ncols;
     double w;
@@ -144,6 +144,10 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     Matrix *d0 = mat_new(n, n_genes);
     mat_copy(d0, X);
     mat_center_cols(d0);
+
+    /* Precompute B = W * d0 */
+    Matrix *B = mat_new(n, n_genes);
+    mat_mult_lapack(B, W, d0);
 
     /* Row sums */
     Vector *WrowSums = mat_row_sums(W);
@@ -195,13 +199,9 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         double d1j, d2j;
 
         for (t = 0; t < n; t++) {
-            double zi = mat_get(d0, t, j);
+            double zi = d0->data[t][j];
             double z2 = zi * zi;
-            double bi = 0.0;
-
-            for (k = 0; k < n; k++)
-                bi += mat_get(W, t, k) * mat_get(d0, k, j);
-
+            double bi = B->data[t][j];
             numerator += zi * bi;
             ss2 += z2;
             ss4 += z2 * z2;

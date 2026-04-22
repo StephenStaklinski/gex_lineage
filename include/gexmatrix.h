@@ -78,4 +78,6 @@ double mat_logdet(Matrix *Sigma);
 
 void mat_add_gaussian_noise(Matrix *X, double sigma2);
 
+void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2);
+
 #endif

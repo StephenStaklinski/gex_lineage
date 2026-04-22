@@ -238,7 +238,7 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
     /* Cov = W^T W / (n - 1) */
     Wt  = mat_transpose(W);
     Cov = mat_new(p, p);
-    mat_mult(Cov, Wt, W);
+    mat_mult_lapack(Cov, Wt, W);
     mat_scale(Cov, 1.0 / (double)(n - 1));
 
     /* Free memory */

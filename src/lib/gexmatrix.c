@@ -1,6 +1,7 @@
 #include "gexmatrix.h"
 
 #include "gexmisc.h"
+#include "gex_external_libs.h"
 
 #include <phast/matrix.h>
 #include <phast/misc.h>
@@ -140,7 +141,7 @@ Matrix *mat_centered_col_cov(Matrix *Xc) {
     Matrix *Xct = mat_transpose(Xc);
     Matrix *Cov = mat_new(p, p);
 
-    mat_mult(Cov, Xct, Xc);
+    mat_mult_lapack(Cov, Xct, Xc);
     mat_scale(Cov, 1.0 / denom);
 
     /* Free memory */
@@ -158,7 +159,7 @@ Matrix *mat_centered_row_cov(Matrix *Xc) {
     Matrix *Xct = mat_transpose(Xc);
     Matrix *Cov = mat_new(n, n);
 
-    mat_mult(Cov, Xc, Xct);
+    mat_mult_lapack(Cov, Xc, Xct);
     mat_scale(Cov, 1.0 / denom);
 
     /* Free memory */
@@ -554,4 +555,60 @@ void mat_add_gaussian_noise(Matrix *X, double stddev) {
             mat_set(X, i, j, noisy_val);
         }
     }
+}
+
+/* Multiply two matrices using LAPACK */
+void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
+    #ifdef SKIP_LAPACK
+    die("ERROR: BLAS/LAPACK required for matrix multiplication.\n");
+    #else
+    LAPACK_INT m, n, k;
+    LAPACK_INT lda, ldb, ldc;
+    LAPACK_DOUBLE alpha = 1.0, beta = 0.0;
+    LAPACK_DOUBLE *A = NULL, *B = NULL, *C = NULL;
+    char transa = 'N', transb = 'N';
+
+    if (!(m1->ncols == m2->nrows &&
+            prod->nrows == m1->nrows && prod->ncols == m2->ncols))
+        die("ERROR mat_mult: bad matrix dimensions\n");
+
+    m = (LAPACK_INT)prod->nrows;
+    n = (LAPACK_INT)prod->ncols;
+    k = (LAPACK_INT)m1->ncols;
+
+    lda = m;
+    ldb = k;
+    ldc = m;
+
+    A = smalloc((size_t)m * (size_t)k * sizeof(*A));
+    B = smalloc((size_t)k * (size_t)n * sizeof(*B));
+    C = smalloc((size_t)m * (size_t)n * sizeof(*C));
+
+    mat_to_lapack(m1, A);
+    mat_to_lapack(m2, B);
+
+    #ifdef R_LAPACK
+    F77_CALL(dgemm)(&transa, &transb,
+                    &m, &n, &k,
+                    &alpha,
+                    A, &lda,
+                    B, &ldb,
+                    &beta,
+                    C, &ldc);
+    #else
+    dgemm_(&transa, &transb,
+            &m, &n, &k,
+            &alpha,
+            A, &lda,
+            B, &ldb,
+            &beta,
+            C, &ldc);
+    #endif
+
+    mat_from_lapack(prod, C);
+
+    sfree(A);
+    sfree(B);
+    sfree(C);
+    #endif
 }

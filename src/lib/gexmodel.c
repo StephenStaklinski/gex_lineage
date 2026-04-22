@@ -763,7 +763,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Initialize F = X * L^T */
     Matrix *Lt = mat_transpose(pca->components);
-    mat_mult(model->F, gex->X, Lt);
+    mat_mult_lapack(model->F, gex->X, Lt);
     mat_free(Lt);
 
     /* Initialize sigma2_obs from the residual sum of squares */
@@ -969,7 +969,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             stable_steps = 0;
         
         /* For testing, keep track of the reconstructed X to track overall F*L scale */
-        mat_mult(FL, model->F, model->L);   /* Compute predicted values FL */
+        mat_mult_lapack(FL, model->F, model->L);   /* Compute predicted values FL */
 
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
@@ -1239,7 +1239,7 @@ void simulate_factorization_and_reconstruction(Matrix *F,
 
     /* Compute the noiseless expression matrix from the 
     simulated F and L matrix factorization. */
-    mat_mult(gex_out->X, F, L_out);
+    mat_mult_lapack(gex_out->X, F, L_out);
 
     /* Add noise to the noiseless expression matrix based on 
     the sigma2_obs parameter input as new_val ~N(curr_val, sigma2_obs). */
