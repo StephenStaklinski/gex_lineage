@@ -469,11 +469,11 @@ int main(int argc, char *argv[]) {
         printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
     }
 
-    // /* pPCA is only for <=1000 cells */
-    // if (pca_method == PCA_METHOD_PHYLOPCA && gex_filtered->X->nrows > 1000) {
-    //     pca_method = PCA_METHOD_PCA;
-    //     fprintf(stderr, "WARNING: pPCA is only for <=1000 cells. Switching to standard PCA instead.\n");
-    // }
+    /* pPCA is only for <=1000 cells */
+    if (pca_method == PCA_METHOD_PHYLOPCA && gex_filtered->X->nrows > 1000) {
+        pca_method = PCA_METHOD_PCA;
+        fprintf(stderr, "WARNING: pPCA is only for <=1000 cells. Switching to standard PCA instead.\n");
+    }
 
     /* Run PCA on the filtered matrix and retain the smallest number of
     components needed to explain at least the requested variance. */
