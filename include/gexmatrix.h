@@ -26,6 +26,8 @@ void mat_log1p(Matrix *X);
 
 void mat_center_cols(Matrix *X);
 
+void mat_center_rows(Matrix *X);
+
 Matrix *mat_centered_col_cov(Matrix *Xc);
 
 Matrix *mat_centered_row_cov(Matrix *Xc);

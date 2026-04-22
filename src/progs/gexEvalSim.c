@@ -20,111 +20,60 @@ static void usage(const char *progname) {
 
 /* Absolute Pearson correlation between row r1 of A and row r2 of B.
    Used to compare rows of L across genes. */
-static double gexeval_row_abs_correlation(Matrix *A, int r1, Matrix *B, int r2) {
+static double vec_abs_pearson_correlation(Vector *A, Vector *B) {
     int j;
-    int n;
+    int n = A->size;
     double mean_a = 0.0;
     double mean_b = 0.0;
     double num = 0.0;
     double den_a = 0.0;
     double den_b = 0.0;
 
-    if (A == NULL || B == NULL || A->ncols != B->ncols ||
-        r1 < 0 || r1 >= A->nrows || r2 < 0 || r2 >= B->nrows)
-        return -2.0;
-
-    n = A->ncols;
-    if (n <= 1)
-        return -2.0;
-
+    /* Compute row means */
     for (j = 0; j < n; j++) {
-        mean_a += mat_get(A, r1, j);
-        mean_b += mat_get(B, r2, j);
+        mean_a += vec_get(A, j);
+        mean_b += vec_get(B, j);
     }
     mean_a /= (double)n;
     mean_b /= (double)n;
 
+    /* Compute Pearson correlation numerator and denominator */
     for (j = 0; j < n; j++) {
-        double da = mat_get(A, r1, j) - mean_a;
-        double db = mat_get(B, r2, j) - mean_b;
+        double da = vec_get(A, j) - mean_a;
+        double db = vec_get(B, j) - mean_b;
         num += da * db;
         den_a += da * da;
         den_b += db * db;
     }
-
-    if (den_a <= 0.0 || den_b <= 0.0)
-        return -2.0;
-
     num /= sqrt(den_a * den_b);
-    if (num < 0.0)
-        num = -num;
 
-    return num;
+    return fabs(num);
 }
 
-/* Greedy matching score for rows of L.
-Matches each true factor to one fitted factor using max absolute row correlation.
-Returns mean matched abs correlation in [0,1]. */
-static double greedy_L_match_score(Matrix *L_true, Matrix *L_fit) {
-    int i, j, k;
-    int n_match;
-    int *used_true = NULL;
-    int *used_fit = NULL;
-    double score = -1.0;
+/* Mean Pearson correlation between cols of F_true and F_fit. */
+static double F_col_mean_correlation(Matrix *F_true, Matrix *F_fit) {
+    int i;
+    int n = F_true->ncols;
+    double score = 0.0;
 
-    if (L_true == NULL || L_fit == NULL || L_true->ncols != L_fit->ncols)
-        return -1.0;
-
-    n_match = (L_true->nrows < L_fit->nrows ? L_true->nrows : L_fit->nrows);
-    if (n_match <= 0)
-        return -1.0;
-
-    used_true = scalloc(L_true->nrows, sizeof(int));
-    used_fit = scalloc(L_fit->nrows, sizeof(int));
-    if (used_true == NULL || used_fit == NULL) {
-        if (used_true != NULL) free(used_true);
-        if (used_fit != NULL) free(used_fit);
-        return -1.0;
+    for (i = 0; i < n; i++) {
+        score += vec_abs_pearson_correlation(mat_get_col(F_true, i), mat_get_col(F_fit, i));
     }
 
-    score = 0.0;
+    return score / (double)n;
+}
 
-    for (i = 0; i < n_match; i++) {
-        int best_true = -1;
-        int best_fit = -1;
-        double best_corr = -1.0;
+/* Mean Pearson correlation between rows of L_true and L_fit. */
+static double L_row_mean_correlation(Matrix *L_true, Matrix *L_fit) {
+    int i;
+    int n = L_true->nrows;
+    double score = 0.0;
 
-        for (j = 0; j < L_true->nrows; j++) {
-            if (used_true[j])
-                continue;
-            for (k = 0; k < L_fit->nrows; k++) {
-                double corr;
-                if (used_fit[k])
-                    continue;
-                corr = gexeval_row_abs_correlation(L_true, j, L_fit, k);
-                if (corr > best_corr) {
-                    best_corr = corr;
-                    best_true = j;
-                    best_fit = k;
-                }
-            }
-        }
-
-        if (best_true < 0 || best_fit < 0 || best_corr < 0.0) {
-            free(used_true);
-            free(used_fit);
-            return -1.0;
-        }
-
-        used_true[best_true] = 1;
-        used_fit[best_fit] = 1;
-        score += best_corr;
+    for (i = 0; i < n; i++) {
+        score += vec_abs_pearson_correlation(mat_get_row(L_true, i), mat_get_row(L_fit, i));
     }
 
-    free(used_true);
-    free(used_fit);
-
-    return score / (double)n_match;
+    return score / (double)n;
 }
 
 int main(int argc, char *argv[]) {
@@ -156,7 +105,9 @@ int main(int argc, char *argv[]) {
     double z_rmse = -1.0;
     double x_rmse = -1.0;
     double cell_cov_corr = -2.0;
-    double L_factor_match_score = -1.0;
+    double gene_cov_corr = -2.0;
+    double F_col_mean_abs_corr = -1.0;
+    double L_row_mean_abs_corr = -1.0;
 
     FILE *out = NULL;
     int i;
@@ -221,24 +172,40 @@ int main(int argc, char *argv[]) {
 
     /* Cell-cell covariance induced by F */
     sim_Fc = mat_create_copy(sim_F->X);
-    mat_center_cols(sim_Fc);
+    mat_center_rows(sim_Fc);
     sim_cell_cov = mat_centered_row_cov(sim_Fc);
 
     fit_Fc = mat_create_copy(fit_F->X);
-    mat_center_cols(fit_Fc);
+    mat_center_rows(fit_Fc);
     fit_cell_cov = mat_centered_row_cov(fit_Fc);
 
     cell_cov_corr = mat_pearson_correlation(sim_cell_cov, fit_cell_cov);
 
+    /* Gene-gene covariance induced by L */
+    sim_cell_cov = mat_create_copy(sim_L->X);
+    mat_center_cols(sim_cell_cov);
+    sim_cell_cov = mat_centered_col_cov(sim_cell_cov);
+
+    fit_cell_cov = mat_create_copy(fit_L->X);
+    mat_center_cols(fit_cell_cov);
+    fit_cell_cov = mat_centered_col_cov(fit_cell_cov);
+
+    gene_cov_corr = mat_pearson_correlation(sim_cell_cov, fit_cell_cov);
+
+    /* Compare learned factors in F */
+    F_col_mean_abs_corr = F_col_mean_correlation(sim_F->X, fit_F->X);
+
     /* Compare learned factors in L */
-    L_factor_match_score = greedy_L_match_score(sim_L->X, fit_L->X);
+    L_row_mean_abs_corr = L_row_mean_correlation(sim_L->X, fit_L->X);
 
     out = fopen(eval_summary_path, "w");
     fprintf(out, "metric\tvalue\n");
     fprintf(out, "z_rmse\t%.17g\n", z_rmse);
     fprintf(out, "x_rmse\t%.17g\n", x_rmse);
     fprintf(out, "cell_cov_correlation\t%.17g\n", cell_cov_corr);
-    fprintf(out, "L_factor_match_score\t%.17g\n", L_factor_match_score);
+    fprintf(out, "gene_cov_correlation\t%.17g\n", gene_cov_corr);
+    fprintf(out, "F_col_mean_abs_corr\t%.17g\n", F_col_mean_abs_corr);
+    fprintf(out, "L_row_mean_abs_corr\t%.17g\n", L_row_mean_abs_corr);
     fclose(out);
     out = NULL;
 

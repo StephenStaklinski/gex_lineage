@@ -133,6 +133,28 @@ void mat_center_cols(Matrix *X) {
     }
 }
 
+/* Center the rows of a matrix by subtracting the mean of each row
+to get the residuals in-place. */
+void mat_center_rows(Matrix *X) {
+    int i, j;
+
+    for (i = 0; i < X->nrows; i++) {
+
+        /* Get the mean of the row */
+        double mean = 0.0;
+        for (j = 0; j < X->ncols; j++)
+            mean += mat_get(X, i, j);
+        mean /= X->ncols;
+
+        /* Center the row */
+        for (j = 0; j < X->ncols; j++) {
+            double val = mat_get(X, i, j);
+            val -= mean;
+            mat_set(X, i, j, val);
+        }
+    }
+}
+
 /* Compute the col-col covariance matrix of a centered matrix. */
 Matrix *mat_centered_col_cov(Matrix *Xc) {
     int n = Xc->nrows;
