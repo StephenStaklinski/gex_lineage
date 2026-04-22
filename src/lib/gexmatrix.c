@@ -612,3 +612,103 @@ void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
     sfree(C);
     #endif
 }
+
+/* Solve Ly = z for y, where L is lower-triangular, using LAPACK dtrtrs */
+void mat_forward_subst_lapack(Matrix *L, Vector *z, Vector *y) {
+    #ifdef SKIP_LAPACK
+    die("ERROR: LAPACK required for triangular solve.\n");
+    #else
+    int i;
+    LAPACK_INT n, nrhs, lda, ldb, info;
+    LAPACK_DOUBLE *a = NULL, *b = NULL;
+    char uplo = 'L';
+    char trans = 'N';
+    char diag = 'N';
+
+    if (L->nrows != L->ncols || L->nrows != z->size || z->size != y->size)
+        die("ERROR in mat_forward_subst_lapack: bad dimensions.\n");
+
+    n = (LAPACK_INT)L->nrows;
+    nrhs = 1;
+    lda = n;
+    ldb = n;
+
+    a = smalloc((size_t)n * (size_t)n * sizeof(*a));
+    b = smalloc((size_t)n * sizeof(*b));
+
+    mat_to_lapack(L, a);
+    for (i = 0; i < n; i++)
+        b[i] = (LAPACK_DOUBLE)z->data[i];
+
+    #ifdef R_LAPACK
+    F77_CALL(dtrtrs)(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
+    #else
+    dtrtrs_(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
+    #endif
+
+    if (info != 0) {
+        sfree(a);
+        sfree(b);
+        if (info > 0)
+        die("ERROR in mat_forward_subst_lapack: triangular matrix is singular.\n");
+        else
+        die("ERROR in mat_forward_subst_lapack: LAPACK dtrtrs illegal argument.\n");
+    }
+
+    for (i = 0; i < n; i++)
+        y->data[i] = (double)b[i];
+
+    sfree(a);
+    sfree(b);
+    #endif
+}
+
+/* Solve L^T y = z for y, where L is lower-triangular, using LAPACK dtrtrs */
+void mat_backward_subst_lapack(Matrix *L, Vector *z, Vector *y) {
+    #ifdef SKIP_LAPACK
+    die("ERROR: LAPACK required for triangular solve.\n");
+    #else
+    int i;
+    LAPACK_INT n, nrhs, lda, ldb, info;
+    LAPACK_DOUBLE *a = NULL, *b = NULL;
+    char uplo = 'L';
+    char trans = 'T';
+    char diag = 'N';
+
+    if (L->nrows != L->ncols || L->nrows != z->size || z->size != y->size)
+        die("ERROR in mat_backward_subst_lapack: bad dimensions.\n");
+
+    n = (LAPACK_INT)L->nrows;
+    nrhs = 1;
+    lda = n;
+    ldb = n;
+
+    a = smalloc((size_t)n * (size_t)n * sizeof(*a));
+    b = smalloc((size_t)n * sizeof(*b));
+
+    mat_to_lapack(L, a);
+    for (i = 0; i < n; i++)
+        b[i] = (LAPACK_DOUBLE)z->data[i];
+
+    #ifdef R_LAPACK
+    F77_CALL(dtrtrs)(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
+    #else
+    dtrtrs_(&uplo, &trans, &diag, &n, &nrhs, a, &lda, b, &ldb, &info);
+    #endif
+
+    if (info != 0) {
+        sfree(a);
+        sfree(b);
+        if (info > 0)
+        die("ERROR in mat_backward_subst_lapack: triangular matrix is singular.\n");
+        else
+        die("ERROR in mat_backward_subst_lapack: LAPACK dtrtrs illegal argument.\n");
+    }
+
+    for (i = 0; i < n; i++)
+        y->data[i] = (double)b[i];
+
+    sfree(a);
+    sfree(b);
+    #endif
+}

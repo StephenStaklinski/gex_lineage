@@ -293,10 +293,10 @@ static double gex_loglik_centered_gaussian_chol(Vector *yvec,
     int n = L->nrows;
 
     /* GLS estimate of the mean */
-    mat_forward_subst(L, ones, tmp);
-    mat_backward_subst(L, tmp, Sinv1);
-    mat_forward_subst(L, yvec, tmp);
-    mat_backward_subst(L, tmp, Sinvy);
+    mat_forward_subst_lapack(L, ones, tmp);
+    mat_backward_subst_lapack(L, tmp, Sinv1);
+    mat_forward_subst_lapack(L, yvec, tmp);
+    mat_backward_subst_lapack(L, tmp, Sinvy);
     double sum_Sinv1 = 0.0;
     double sum_Sinvy = 0.0;
     for (i = 0; i < n; i++) {

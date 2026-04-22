@@ -14,4 +14,10 @@ void dgemm_(const char *transa, const char *transb,
             const LAPACK_DOUBLE *beta,
             LAPACK_DOUBLE *c, const LAPACK_INT *ldc);
 
+void dtrtrs_(const char *uplo, const char *trans, const char *diag,
+            const LAPACK_INT *n, const LAPACK_INT *nrhs,
+            const LAPACK_DOUBLE *a, const LAPACK_INT *lda,
+            LAPACK_DOUBLE *b, const LAPACK_INT *ldb,
+            LAPACK_INT *info);
+
 #endif

@@ -204,8 +204,8 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
     tmp  = vec_new(n);
     u    = vec_new(n);
     vec_set_all(ones, 1.0);
-    mat_forward_subst(L, ones, tmp);
-    mat_backward_subst(L, tmp, u);
+    mat_forward_subst_lapack(L, ones, tmp);
+    mat_backward_subst_lapack(L, tmp, u);
 
     denom = vec_sum(u);
 
@@ -230,7 +230,7 @@ static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
         double aj = a[j];
         for (i = 0; i < n; i++)
             rhs->data[i] = X->data[i][j] - aj;
-        mat_forward_subst(L, rhs, sol);
+        mat_forward_subst_lapack(L, rhs, sol);
         for (i = 0; i < n; i++)
             W->data[i][j] = sol->data[i];
     }
