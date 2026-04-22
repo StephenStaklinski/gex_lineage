@@ -282,37 +282,36 @@ static double gex_loglik_centered_gaussian_identity(int n, double sigma2) {
 
 /* Compute the profiled log-likelihood of y under y ~ N(mu * 1, sigma2 * Sigma),
 where mu and sigma2 are estimated by MLE, using the Cholesky factor L of Sigma. */
-static double gex_loglik_centered_gaussian_chol(double *y,
+static double gex_loglik_centered_gaussian_chol(Vector *yvec,
                                                 Matrix *L,
                                                 double logdet_sigma) {
     int i;
     int n = L->nrows;
     Vector *ones = vec_new(n);
     vec_set_all(ones, 1.0);
-    Vector *yvec = vec_new_from_array(y, n);
     Vector *tmp = vec_new(n);
     Vector *Sinv1 = vec_new(n);
     Vector *Sinvy = vec_new(n);
-    Vector *resid = vec_new(n);
-    Vector *Sinv_resid = vec_new(n);
 
     /* GLS estimate of the mean */
     mat_forward_subst(L, ones, tmp);
     mat_backward_subst(L, tmp, Sinv1);
     mat_forward_subst(L, yvec, tmp);
     mat_backward_subst(L, tmp, Sinvy);
-    double muhat = vec_sum(Sinvy) / vec_sum(Sinv1);
-
-    /* Compute residuals and solve for sigma2 */
-    for (i = 0; i < n; i++)
-        vec_set(resid, i, y[i] - muhat);
-
-    mat_forward_subst(L, resid, tmp);
-    mat_backward_subst(L, tmp, Sinv_resid);
+    double sum_Sinv1 = 0.0;
+    double sum_Sinvy = 0.0;
+    for (i = 0; i < n; i++) {
+        sum_Sinv1 += Sinv1->data[i];
+        sum_Sinvy += Sinvy->data[i];
+    }
+    double muhat = sum_Sinvy / sum_Sinv1;
 
     double quad = 0.0;
-    for (i = 0; i < n; i++)
-        quad += vec_get(resid, i) * vec_get(Sinv_resid, i);
+    for (i = 0; i < n; i++) {
+        double ri = vec_get(yvec, i) - muhat;
+        double sinv_ri = vec_get(Sinvy, i) - muhat * vec_get(Sinv1, i);
+        quad += ri * sinv_ri;
+    }
 
     double sigma2 = quad / (double)n;
     if (sigma2 < 1e-12)
@@ -327,17 +326,14 @@ static double gex_loglik_centered_gaussian_chol(double *y,
         ll = -HUGE_VAL;
 
     vec_free(ones);
-    vec_free(yvec);
     vec_free(tmp);
     vec_free(Sinv1);
     vec_free(Sinvy);
-    vec_free(resid);
-    vec_free(Sinv_resid);
     return ll;
 }
 
 typedef struct {
-    double *y;
+    Vector *y;
     Matrix *Sigma;
     double logdet_sigma;
     double logdet_sigma_lambda;
@@ -373,7 +369,7 @@ static double gex_pagels_lambda_negloglik(double lambda, void *data) {
 
 /* Fit Pagel's lambda using PHAST's bounded one-dimensional optimizer.
 Returns the optimized log-likelihood and sets lambda_hat to the MLE. */
-static double gex_fit_pagels_lambda_loglik(double *y,
+static double gex_fit_pagels_lambda_loglik(Vector *y,
                                            Matrix *Sigma,
                                            double *lambda_hat) {
     int i;
@@ -469,14 +465,14 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     Matrix **Ls = NULL;   /* Cholesky factors of regularized covariance matrices */
     GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
     double *logdet_sigmas = NULL;   /* Log determinants of the regularized covariance matrices */
-    double *y = NULL;   /* Vector for storing the expression values */
+    Vector *y = vec_new(n);   /* Vector for storing the expression values */
     unsigned int rng_state; /* Random number generator state */
 
     Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
     Ls = scalloc(n_sigmas, sizeof(Matrix *));
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
 
-    double *y_sim = smalloc(n * sizeof(double));
+    Vector *y_sim = vec_new(n);  /* Vector for simulating data under the null model for p-value estimation */
 
     /* Pre-compute reused terms from the covariance matrices */
     for (t = 0; t < n_sigmas; t++) {
@@ -494,7 +490,6 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
     /* Initialize LRT result object */
     res = scalloc(1, sizeof(GexLRTResult));
-    y = smalloc(n * sizeof(double));
     res->ll_null = scalloc(n_genes, sizeof(double));
     res->ll_alt = scalloc(n_genes, sizeof(double));
     if (alt_mode == GEX_LRT_ALT_LAMBDA)
@@ -520,12 +515,12 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
         /* Extract gene expression data for the current gene across all cells */
         for (i = 0; i < n; i++)
-            y[i] = mat_get(X_centered, i, j);
+            vec_set(y, i, mat_get(X_centered, i, j));
 
         /* Calculate the variance of the gene expression data */
         sigma20 = 0.0;
         for (i = 0; i < n; i++)            
-            sigma20 += y[i] * y[i];
+            sigma20 += vec_get(y, i) * vec_get(y, i);
         sigma20 /= (double)n;
 
         /* Compute the log-likelihood under the null model */
@@ -577,13 +572,13 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
                 for (i = 0; i < n; i++) {
                     /* Draw simulated data independently from the null model N(μ0, σ20) */
                     rng_state = (unsigned int)random();
-                    y_sim[i] = 0 + sqrt_sigma20 * rand_normal(&rng_state);
+                    vec_set(y_sim, i, 0 + sqrt_sigma20 * rand_normal(&rng_state));
                 }
                 
                 /* Recalculate the variance of the simulated data */
                 sigma20_sim = 0.0;
                 for (i = 0; i < n; i++)
-                    sigma20_sim += y_sim[i] * y_sim[i];
+                    sigma20_sim += vec_get(y_sim, i) * vec_get(y_sim, i);
                 sigma20_sim /= (double)n;
 
                 /* Compute the log-likelihood under the null model */
@@ -617,9 +612,9 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
     /* Free memory */
     if (y != NULL)
-        free(y);
+        vec_free(y);
     if (y_sim != NULL)
-        free(y_sim);
+        vec_free(y_sim);
     if (ll_alts != NULL)
         free(ll_alts);
     if (X_centered != NULL)
