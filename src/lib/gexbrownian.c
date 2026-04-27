@@ -129,6 +129,7 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
     The covariance between two tips is the depth from the origin to their MRCA. */
     Sigma = mat_new(n, n);
     mat_zero(Sigma);
+    double depth;
     for (i = 0; i < n; i++) {
         mat_set(Sigma, i, i, depth_by_id[tips[i]->id]); /* Diagonal compares with self */
         for (j = i + 1; j < n; j++) {
@@ -140,8 +141,9 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
                 return NULL;
             }
 
-            mat_set(Sigma, i, j, depth_by_id[mrca->id]);
-            mat_set(Sigma, j, i, mat_get(Sigma, i, j)); /* Make the covariance matrix symmetric */
+            depth = depth_by_id[mrca->id];
+            mat_set(Sigma, i, j, depth);
+            mat_set(Sigma, j, i, depth); /* Make the covariance matrix symmetric */
         }
     }
 

@@ -80,6 +80,7 @@ void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma) {
         Sii = mat_get(Sigma, i, i);
         for (j = i + 1; j < n; j++) {
             dij = Sii + mat_get(Sigma, j, j) - (2.0 * mat_get(Sigma, i, j));
+            dij = fmax(dij, 1e-12); /* Avoid numerical issues with near-zero distances */
             wij = 1.0 / dij; /* Set the weight as the inverse pairwise distance */
             mat_set(W, i, j, wij);
             mat_set(W, j, i, wij);
