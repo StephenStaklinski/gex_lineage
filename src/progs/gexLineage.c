@@ -382,6 +382,23 @@ int main(int argc, char *argv[]) {
                                                        gex->cell_names, gex->X->nrows);
     }
 
+    /* Pre-process the gene expression data */
+    if (preprocess) {
+        printf("Pre-processing the gene expression data...\n");
+        /* Library size normalization per-cell */
+        mat_normalize_rows(gex->X);
+        /* Scale by global factor to counts per 10k */
+        double scale_factor = 10000.0;
+        mat_scale(gex->X, scale_factor);
+        /* Log-transform the data to stabilize variance and approximate Gaussian */
+        mat_log1p(gex->X);
+    }
+
+    /* Transform data into the residuals */
+    mat_center_cols(gex->X);
+
+
+    /* Select which covariance matrix or matrices to use for the phylogenetic signal filtering */
     if (n_filter_trees == -1) {
         filter_Sigmas = scalloc(1, sizeof(Matrix *));
         filter_Sigmas[0] = filter_avg_Sigma;
@@ -392,6 +409,7 @@ int main(int argc, char *argv[]) {
             n_filter_trees = n_trees;
     }
 
+    /* Run the phylogenetic signal filter(s). */
     if (!no_filter) {
         const char *tree_msg;
         int tree_count = n_filter_trees;
@@ -447,21 +465,6 @@ int main(int argc, char *argv[]) {
             return 0;
         }
     }
-
-    if (preprocess) {
-        /* Pre-process the gene expression data for modeling before filtering genes */
-        printf("Pre-processing the gene expression data for modeling...\n");
-        /* Library size normalization per-cell */
-        mat_normalize_rows(gex->X);
-        /* Scale by global factor to counts per 10k */
-        double scale_factor = 10000.0;
-        mat_scale(gex->X, scale_factor);
-        /* Log-transform the data to stabilize variance and approximate Gaussian */
-        mat_log1p(gex->X);
-    }
-
-    /* Transform data into the residuals */
-    mat_center_cols(gex->X);
 
 
     if (no_filter) {

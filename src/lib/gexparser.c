@@ -665,6 +665,27 @@ static void gex_free_string_ptr_list(List *l) {
     lst_free(l);
 }
 
+static List *gex_copy_string_ptr_list(List *l) {
+    int i;
+    List *copy;
+
+    if (l == NULL)
+        return NULL;
+
+    copy = lst_new_ptr(lst_size(l) > 0 ? lst_size(l) : 1);
+    for (i = 0; i < lst_size(l); i++) {
+        String *s = lst_get_ptr(l, i);
+        String *s_copy = str_new_charstr(s->chars);
+        if (s_copy == NULL) {
+            gex_free_string_ptr_list(copy);
+            return NULL;
+        }
+        lst_push_ptr(copy, s_copy);
+    }
+
+    return copy;
+}
+
 /* Reconcile the tree tip names with the expression matrix cell names.
 Prune trees and subset matrix to the shared names. Updates the gex_ptr 
 to point to the new subsetted matrix. Returns 0 on success, -1 on failure. */
@@ -672,11 +693,10 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
                                       int n_trees,
                                       GexMatrix **gex_ptr) {
     int i, j;
-    int prune_needed = 0; /* Whether any tree or expression names require pruning/subsetting */
     int tree_missing_from_expr = 0; /* Total number of tree tips, across all trees, missing from the expression matrix */
     int expr_missing_from_tree = 0; /* Number of expression matrix cells missing from at least one tree */
     int n_keep = 0; /* Number of names shared between the expression matrix and all trees */
-    List **tree_name_lists = NULL;
+    List *tree_names = NULL;
     List *keep_names = NULL;
     GexMatrix *gex;
     GexMatrix *subset = NULL;
@@ -689,60 +709,39 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     }
 
     gex = *gex_ptr; /* Get the expression matrix pointer */
-    tree_name_lists = scalloc(n_trees, sizeof(List *));
 
-    /* Get the leaf names from each tree */
-    for (i = 0; i < n_trees; i++) {
-        if (trees[i] == NULL) {
-            fprintf(stderr, "ERROR: tree %d is NULL during reconciliation\n", i + 1);
-            return 1;
-        }
-        tree_name_lists[i] = tr_leaf_names(trees[i]);   /* Collect the leaf names from the tree into a list of strings */
-        if (tree_name_lists[i] == NULL) {
-            fprintf(stderr, "ERROR: failed to collect tree tip names for tree %d\n", i + 1);
-            return 1;
-        }
+    /* Get the leaf names from the first tree, assuming all trees have the same tips */
+    tree_names = tr_leaf_names(trees[0]);
+
+    /* List to hold the names of the shared tree tips and expression matrix cells */
+    keep_names = lst_new_ptr(gex->X->nrows > 0 ? gex->X->nrows : 1);
+
+    /* Check which tree tips are missing from the expression matrix */
+    for (j = 0; j < lst_size(tree_names); j++) {
+        String *s = lst_get_ptr(tree_names, j);
+        if (!gex_name_in_char_array(s->chars, gex->cell_names, gex->X->nrows))
+            tree_missing_from_expr++;
     }
 
-    keep_names = lst_new_ptr(gex->X->nrows > 0 ? gex->X->nrows : 1);  /* List to hold the names of the shared tree tips and expression matrix cells */
-    if (keep_names == NULL) {
-        return 1;
-    }
-
-    /* Check which tree tips are missing from the expression matrix across all trees. */
-    for (i = 0; i < n_trees; i++) {
-        for (j = 0; j < lst_size(tree_name_lists[i]); j++) {
-            String *s = lst_get_ptr(tree_name_lists[i], j);
-            if (!gex_name_in_char_array(s->chars, gex->cell_names, gex->X->nrows))
-                tree_missing_from_expr++;
-        }
-    }
-
-    /* Keep only expression cells that are present in every tree. */
+    /* Keep only expression cells that are present in the tree */
     for (i = 0; i < gex->X->nrows; i++) {
-        int present_in_all_trees = 1;
-        for (j = 0; j < n_trees; j++) {
-            if (!gex_name_in_string_list(gex->cell_names[i], tree_name_lists[j])) {
-                present_in_all_trees = 0;
-                break;
-            }
-        }
-        if (!present_in_all_trees) {
+
+        if (!gex_name_in_string_list(gex->cell_names[i], tree_names)) {
             expr_missing_from_tree++;
-        } else {
-            String *s = str_new_charstr(gex->cell_names[i]);
-            if (s == NULL) {
-                return 1;
-            }
-            lst_push_ptr(keep_names, s);
-            n_keep++;
+            continue;
         }
+        
+        String *s = str_new_charstr(gex->cell_names[i]);
+        if (s == NULL) {
+            return 1;
+        }
+        lst_push_ptr(keep_names, s);
+        n_keep++;
     }
 
     if (tree_missing_from_expr > 0 || expr_missing_from_tree > 0) {
-        prune_needed = 1;
         fprintf(stderr,
-                "WARNING: tree/expression names do not match perfectly across the full tree set; %d tree tip occurrence(s) are missing from the expression matrix and %d expression cell(s) are missing from at least one tree. Using the %d shared name(s) present in every tree.\n",
+                "WARNING: tree/expression names do not match perfectly; %d tree tip occurrence(s) are missing from the expression matrix and %d expression cell(s) are missing from the first tree. Using the %d shared names.\n",
                 tree_missing_from_expr, expr_missing_from_tree, n_keep);
     }
 
@@ -772,47 +771,28 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
         if (gex_name_in_string_list(gex->cell_names[i], keep_names)) {
             int g;
             subset->cell_names[j] = strdup(gex->cell_names[i]);
-            if (subset->cell_names[j] == NULL) {
-                gex_free_matrix_data(subset);
-                subset = NULL;
-                return 1;
-            }
             for (g = 0; g < gex->X->ncols; g++)
                 mat_set(subset->X, j, g, mat_get(gex->X, i, g));
             j++;
         }
     }
 
-    /* Prune the trees only when the tree and expression names do not already match. */
-    if (prune_needed) {
+    /* Prune the trees */
+    if (tree_missing_from_expr > 0) {
         for (i = 0; i < n_trees; i++) {
-            if (trees[i] != NULL)
-                tr_prune(&trees[i], keep_names, 1, NULL);
-            if (trees[i] == NULL) {
-                fprintf(stderr, "ERROR: tree %d became empty after reconciliation across all trees\n", i + 1);
-                gex_free_matrix_data(subset);
-                subset = NULL;
-                return 1;
+            if (trees[i] != NULL) {
+                List *tree_keep_names = gex_copy_string_ptr_list(keep_names);
+                tr_prune(&trees[i], tree_keep_names, 1, NULL);
+                gex_free_string_ptr_list(tree_keep_names);
             }
         }
     }
-    *gex_ptr = subset;
 
-    /* Print result summary */
-    if (n_keep < gex->X->nrows) {
-        printf("After reconciling mismatched tree and expression matrix names, %d tree tip(s) and %d expression cell(s) are shared and kept for downstream analysis.\n\n",
-            subset->X->nrows, subset->X->nrows);
-    } else {
-        printf("All tree tip names and expression cell names match in the input data.\n");
-    }
+    *gex_ptr = subset;
 
     /* Free memory */
     gex_free_matrix_data(gex);
-    for (i = 0; i < n_trees; i++) {
-        gex_free_string_ptr_list(tree_name_lists[i]);
-    }
-    if (tree_name_lists != NULL)
-        free(tree_name_lists);
+    gex_free_string_ptr_list(tree_names);
     gex_free_string_ptr_list(keep_names);
 
     return 0;
