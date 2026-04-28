@@ -427,11 +427,11 @@ int main(int argc, char *argv[]) {
         /* Pagel's lambda LRT is only for <=1000 cells; Full LRT is only for <=100 cells */
         if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_LAMBDA && gex->X->nrows > 1000) {
             filter_mode = GEX_FILTER_MORAN;
-            fprintf(stderr, "WARNING: Pagel's lambda Brownian LRT is only for <=1000 cells. Switching to Moran's I filter instead.\n");
+            printf("WARNING: Pagel's lambda Brownian LRT is only for <=1000 cells. Switching to Moran's I filter instead.\n");
         }
         if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_FULL && gex->X->nrows > 100) {
             filter_mode = GEX_FILTER_MORAN;
-            fprintf(stderr, "WARNING: Full Brownian LRT is only for <=100 cells. Switching to Moran's I filter instead.\n");
+            printf("WARNING: Full Brownian LRT is only for <=100 cells. Switching to Moran's I filter instead.\n");
         }
 
         /* Run the phylogenetic autocorrelation filter tests if requested */
@@ -482,7 +482,7 @@ int main(int argc, char *argv[]) {
     /* pPCA is only for <=1000 cells */
     if (pca_method == PCA_METHOD_PHYLOPCA && (gex_filtered->X->nrows > 1000 || gex_filtered->X->ncols > 1000)) {
         pca_method = PCA_METHOD_PCA;
-        fprintf(stderr, "WARNING: pPCA is only for <=1000 cells and <=1000 genes. Switching to standard PCA instead.\n");
+        printf("WARNING: pPCA is only for <=1000 cells and <=1000 genes. Switching to standard PCA instead.\n");
     }
 
     /* Run PCA on the filtered matrix and retain the smallest number of

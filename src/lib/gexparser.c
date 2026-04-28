@@ -740,8 +740,7 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     }
 
     if (tree_missing_from_expr > 0 || expr_missing_from_tree > 0) {
-        fprintf(stderr,
-                "WARNING: tree/expression names do not match perfectly; %d tree tip occurrence(s) are missing from the expression matrix and %d expression cell(s) are missing from the first tree. Using the %d shared names.\n",
+        printf("WARNING: tree/expression names do not match perfectly; %d tree tip occurrence(s) are missing from the expression matrix and %d expression cell(s) are missing from the first tree. Using the %d shared names.\n",
                 tree_missing_from_expr, expr_missing_from_tree, n_keep);
     }
 
