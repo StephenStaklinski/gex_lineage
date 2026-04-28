@@ -710,6 +710,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     GexLatentBrownianModel *model = NULL;   /* Fitted model */
     Matrix **Sigma_invs = NULL;   /* Inverses of regularized tree covariance matrices */
     double *logdet_sigmas = NULL; /* Log determinants of regularized tree covariances */
+    const double sigma_jitter = 1e-12; /* Diagonal jitter for singular tree covariance matrices */
 
     /* Gradients */
     double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
@@ -741,8 +742,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     logdet_sigmas = scalloc(n_sigmas, sizeof(double));
     for (i = 0; i < n_sigmas; i++) {
         Sigma_invs[i] = mat_new(n, n);
+        mat_add_diag(Sigmas[i], sigma_jitter);
         mat_invert(Sigma_invs[i], Sigmas[i]);
         logdet_sigmas[i] = mat_logdet(Sigmas[i]);
+        mat_add_diag(Sigmas[i], -sigma_jitter);
     }
 
     /* Allocate the model object and its core parameter matrices. */

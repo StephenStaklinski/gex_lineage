@@ -436,29 +436,22 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     int i, j, t;   /* Loop indices */
     int n = X->nrows;  /* Number of cells */
     int n_genes = X->ncols;  /* Number of genes */
-    double eps = 1e-12;  /* Jitter to add to covariance matrix diagonal elements for numerical stability */
-    Matrix **Sigma_regs = NULL;   /* Regularized covariance matrices */
-    Matrix **Ls = NULL;   /* Cholesky factors of regularized covariance matrices */
+    const double sigma_jitter = 1e-12;  /* Jitter to add to covariance matrix diagonal elements for numerical stability */
+    Matrix **Ls = scalloc(n_sigmas, sizeof(Matrix *));   /* Cholesky factors of regularized covariance matrices */
     GexLRTResult *res = NULL;   /* Result structure for the LRT computation */
-    double *logdet_sigmas = NULL;   /* Log determinants of the regularized covariance matrices */
+    double *logdet_sigmas = scalloc(n_sigmas, sizeof(double));   /* Log determinants of the regularized covariance matrices */
     Vector *y = vec_new(n);   /* Vector for storing the expression values */
     unsigned int rng_state; /* Random number generator state */
-
-    Sigma_regs = scalloc(n_sigmas, sizeof(Matrix *));
-    Ls = scalloc(n_sigmas, sizeof(Matrix *));
-    logdet_sigmas = scalloc(n_sigmas, sizeof(double));
-
     Vector *y_sim = vec_new(n);  /* Vector for simulating data under the null model for p-value estimation */
 
     /* Pre-compute reused terms from the covariance matrices */
     for (t = 0; t < n_sigmas; t++) {
-        Sigma_regs[t] = mat_new(n, n);
-        mat_copy(Sigma_regs[t], Sigmas[t]);
-        mat_add_diag(Sigma_regs[t], eps);   /* Add jitter to the diagonal for numerical stability */
+        /* Add jitter to the diagonal for numerical stability */
+        mat_add_diag(Sigmas[t], sigma_jitter);
 
         /* Compute the Cholesky factor of the covariance matrix */
         Ls[t] = mat_new(n, n);
-        mat_cholesky(Ls[t], Sigma_regs[t]);
+        mat_cholesky(Ls[t], Sigmas[t]);
 
         /* Get the log determinant of the covariance matrix from the Cholesky factor */
         logdet_sigmas[t] = mat_logdet_chol(Ls[t]);
@@ -534,7 +527,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         else {
             double lambda_hat_sum = 0.0;
             for (t = 0; t < n_sigmas; t++) {
-                data.Sigma = Sigma_regs[t];
+                data.Sigma = Sigmas[t];
                 /* Diagonal never changes, so we set it here */
                 for (i = 0; i < n; i++)
                     data.Sigma_lambda->data[i][i] = data.Sigma->data[i][i];
@@ -605,6 +598,11 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
     gex_bh_adjust(res->pvals, res->qvals, res->n_genes);    /* Adjust p-values for multiple testing */
 
+    for (t = 0; t < n_sigmas; t++) {
+        /* Remove jitter from the diagonal to restore the original matrices */
+        mat_add_diag(Sigmas[t], -sigma_jitter);
+    }
+
     /* Free memory */
     if (y != NULL)
         vec_free(y);
@@ -614,13 +612,6 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         free(ll_alts);
     if (X_centered != NULL)
         mat_free(X_centered);
-    if (Sigma_regs != NULL) {
-        for (t = 0; t < n_sigmas; t++) {
-            if (Sigma_regs[t] != NULL)
-                mat_free(Sigma_regs[t]);
-        }
-        free(Sigma_regs);
-    }
     if (Ls != NULL) {
         for (t = 0; t < n_sigmas; t++) {
             if (Ls[t] != NULL)

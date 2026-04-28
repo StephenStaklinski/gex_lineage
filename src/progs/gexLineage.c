@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
     int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     PcaMethod pca_method = PCA_METHOD_PHYLOPCA;  /* Method for performing PCA to initialize latent model fitting */
-    double pca_var_threshold = 0.99;    /* Threshold of variance explained to retain PCA components up to */
+    double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
