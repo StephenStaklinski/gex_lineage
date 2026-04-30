@@ -33,23 +33,28 @@ double gaussian_observation_term(Matrix *FL,
     int k = F->ncols;
     double obj = 0.0;
     double sigma2_obs = exp(log_sigma2_obs);
-    Matrix *resid = mat_new(n, p);   /* Residual matrix */
 
     /* Initialize gradient accumulator for log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
         *grad_log_sigma_obs = 0.0;
+    if (grad_F != NULL)
+        mat_zero(grad_F);
+    if (grad_L != NULL)
+        mat_zero(grad_L);
 
     /* Gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs).
        Compute residuals r_ij = X_ij - (FL)_ij and accumulate the
        negative log-likelihood and its gradient w.r.t. log(sigma2_obs). */
     for (i = 0; i < n; i++) {
         double *Xc_i = Xc->data[i]; /* Row of centered data for cell i */
-        double *resid_i = resid->data[i]; /* Row of residuals for cell i */
+        double *FL_i = FL->data[i];
+        double *F_i = F->data[i];
+        double *grad_F_i = (grad_F != NULL ? grad_F->data[i] : NULL);
         double r;
+
         for (j = 0; j < p; j++) {
             /* Residual is observed minus predicted */
-            r = Xc_i[j] - FL->data[i][j];
-            resid_i[j] = r;
+            r = Xc_i[j] - FL_i[j];
 
             /* Quadratic term of Gaussian negative log-likelihood */
             obj += 0.5 * r * r / sigma2_obs;
@@ -57,20 +62,13 @@ double gaussian_observation_term(Matrix *FL,
             /* Gradient w.r.t. log(sigma2_obs) from quadratic term */
             if (grad_log_sigma_obs != NULL)
                 *grad_log_sigma_obs += -0.5 * r * r / sigma2_obs;
-        }
 
-        /* Compute gradient w.r.t. F */
-        if (grad_F != NULL) {
-            double *grad_F_i = grad_F->data[i]; /* Row of gradient for cell i */
             for (d = 0; d < k; d++) {
-                double gz = 0.0;
-
-                /* Accumulate gradient contribution across features */
-                double *L_d = L->data[d]; /* Row of L for latent factor d */
-                for (j = 0; j < p; j++)
-                    gz += -resid_i[j] * L_d[j] / sigma2_obs;
-
-                grad_F_i[d] = gz;
+                double *L_d = L->data[d];
+                if (grad_F_i != NULL)
+                    grad_F_i[d] += -r * L_d[j] / sigma2_obs;
+                if (grad_L != NULL)
+                    grad_L->data[d][j] += -F_i[d] * r / sigma2_obs;
             }
         }
     }
@@ -84,28 +82,12 @@ double gaussian_observation_term(Matrix *FL,
     included here to obtain full likelihood values. */
     obj += 0.5 * n_entries * log(2.0 * M_PI);
 
-    /* Gradient w.r.t. L */
-    if (grad_L != NULL) {
-        for (d = 0; d < k; d++) {
-            double *grad_L_d = grad_L->data[d]; /* Row of gradient for latent factor d */
-            for (j = 0; j < p; j++) {
-                double grad = 0.0;
-                for (i = 0; i < n; i++)
-                    grad += -F->data[i][d] * resid->data[i][j] / sigma2_obs;
-                grad_L_d[j] = grad;
-            }
-        }
-    }
-
     /* Gradient w.r.t. log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL) {
         *grad_log_sigma_obs += 0.5 * n_entries;
         /* Normalize the gradient to be per observation (only for stability with Adam steps) */
         *grad_log_sigma_obs /= n_entries;
     }
-
-    /* Free memory */
-    mat_free(resid);
 
     return obj;
 }
