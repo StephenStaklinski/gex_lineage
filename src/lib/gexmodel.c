@@ -530,18 +530,25 @@ void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
     int k = L->nrows;
     int p = L->ncols;
 
+    int use_sum = 1; /* Whether to use the sum of loadings (1) or the max loading (0) for sign identifiability.*/
+
     for (d = 0; d < k; d++) {
         /* Find the index of the largest loading in absolute value for this factor */
-        double max_val = 0.0;
+        double sign_val = 0.0;
         for (j = 0; j < p; j++) {
             double val = mat_get(L, d, j);
-            if (fabs(val) > fabs(max_val)) {
-                max_val = val;
+
+            if (use_sum) {
+                sign_val += val;
+            } else {
+                if (fabs(val) > fabs(sign_val)) {
+                    sign_val = val;
+                }
             }
         }
 
-        /* If the largest loading is negative, flip the signs of the factor and loadings */
-        if (max_val < 0.0) {
+        /* Decide whether or not to flip the sign of the loadings */
+        if (sign_val < 0.0) {
             int i;
             for (i = 0; i < F->nrows; i++) {
                 mat_set(F, i, d, -mat_get(F, i, d));
