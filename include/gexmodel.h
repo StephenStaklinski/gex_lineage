@@ -38,7 +38,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         PCA *pca,
                                                         GexScaleInvarConstraint scale_invar_constraint,
                                                         double L_l1_strength,
-                                                        const char *outprefix);
+                                                        const char *outprefix,
+                                                        int verbose_log);
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
 

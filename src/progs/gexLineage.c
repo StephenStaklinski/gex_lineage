@@ -96,6 +96,7 @@ static void usage(const char *progname) {
         "[--no-filter] "
         "[--no-preprocess ]"
         "[--verbose] "
+        "[--verbose-log] "
         "[--seed S]\n",
         progname);
 }
@@ -120,6 +121,7 @@ int main(int argc, char *argv[]) {
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
+    int verbose_log = 0;    /* If nonzero, write the full optimization log. */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
     GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_SIGMA2S; /* Which constraint to use for counteracting scale invariance */
 
@@ -268,6 +270,9 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
+        }
+        else if (strcmp(argv[i], "--verbose-log") == 0) {
+            verbose_log = 1;
         }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
@@ -516,7 +521,8 @@ int main(int argc, char *argv[]) {
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
     model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees, k,
-                                          pca, scale_invar_constraint, L_l1_strength, outprefix);
+                                          pca, scale_invar_constraint, L_l1_strength,
+                                          outprefix, verbose_log);
 
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(k, sizeof(char *));
@@ -574,4 +580,3 @@ int main(int argc, char *argv[]) {
 
     return 0; /* Success */
 }
-

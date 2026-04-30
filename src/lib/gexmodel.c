@@ -688,7 +688,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       PCA *pca,
                                                       GexScaleInvarConstraint scale_invar_constraint,
                                                       double L_l1_strength,
-                                                      const char *outprefix) {
+                                                      const char *outprefix,
+                                                      int verbose_log) {
     /* Optimization related */
     int step;   /* Optimization step */
     int max_steps = 100000;   /* Maximum number of optimization steps to prevent infinite run */
@@ -738,10 +739,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
-    fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
-    for (i = 0; i < k; i++)
-        fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
-    fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
+    if (verbose_log) {
+        fprintf(logf, "step\tobjective\tlong_avg\tshort_avg\trel_change\tstable_steps\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
+        for (i = 0; i < k; i++)
+            fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
+        fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
+    }
+    else {
+        fprintf(logf, "objective\tbrownian_neglprior\tobservation_negll\tl1_penalty\n");
+    }
 
     /* Pre-compute the inverse and log-determinant for each tree */
     n = gex->X->nrows;
@@ -975,30 +981,42 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
-        fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
-                step,
-                model->objective,
-                running_objective_avg_long,
-                running_objective_avg_short,
-                rel_objective_change,
-                stable_steps,
-                clipping_on,
-                grad_norm,
-                grad_F_norm,
-                grad_L_norm,
-                grad_log_sigma_obs_norm,
-                grad_log_sigma_latent_norm,
-                model->observation_objective,
-                model->brownian_prior_objective,
-                model->l1_objective,
-                exp(model->log_sigma2_obs));
-        for (d = 0; d < k; d++)
-            fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
-        fprintf(logf, "\t%.17g\t%.17g\t%.17g\n", 
-                    mat_frobenius_norm(model->F), 
-                    mat_frobenius_norm(model->L),
-                    mat_frobenius_norm(model->FL));
-        fflush(logf);
+        if (verbose_log) {
+            fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\t%d\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+                    step,
+                    model->objective,
+                    running_objective_avg_long,
+                    running_objective_avg_short,
+                    rel_objective_change,
+                    stable_steps,
+                    clipping_on,
+                    grad_norm,
+                    grad_F_norm,
+                    grad_L_norm,
+                    grad_log_sigma_obs_norm,
+                    grad_log_sigma_latent_norm,
+                    model->observation_objective,
+                    model->brownian_prior_objective,
+                    model->l1_objective,
+                    exp(model->log_sigma2_obs));
+            for (d = 0; d < k; d++)
+                fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
+            fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
+                        mat_frobenius_norm(model->F),
+                        mat_frobenius_norm(model->L),
+                        mat_frobenius_norm(model->FL));
+        }
+        else {
+            fprintf(logf, "%.17g\t%.17g\t%.17g\t%.17g\n",
+                    model->objective,
+                    model->brownian_prior_objective,
+                    model->observation_objective,
+                    model->l1_objective);
+        }
+
+        if (step % 100 == 0) {
+            fflush(logf);
+        }
 
         /* Update both moving-average histories. */
         if (objective_hist_size_long < running_avg_window_long) {
@@ -1050,9 +1068,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Prevent sign invariance by making the largest loading of L positive */
     post_hoc_sign_identifiability(model->L, model->F);
 
-    /* Write a final footer line describing why optimization terminated. */
+    /* Keep the extra termination metadata in the verbose log only. */
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
-    fflush(logf);
 
     /* Free memory */
     if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
