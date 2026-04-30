@@ -1014,10 +1014,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     model->l1_objective);
         }
 
-        if (step % 100 == 0) {
-            fflush(logf);
-        }
-
         /* Update both moving-average histories. */
         if (objective_hist_size_long < running_avg_window_long) {
             objective_hist_long[objective_hist_idx_long] = model->objective;
