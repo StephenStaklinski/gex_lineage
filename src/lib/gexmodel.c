@@ -1032,9 +1032,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
     
-    /* Prevent sign invariance by making the largest loading of L positive */
-    post_hoc_sign_identifiability(model->L, model->F);
-
     /* Prevent permutation invariance by reordering factors */
     if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
         reorder_factors_by_row_norm(model->L, model->F);
@@ -1042,6 +1039,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     else {
         reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
     }
+
+    /* Prevent sign invariance by making the largest loading of L positive */
+    post_hoc_sign_identifiability(model->L, model->F);
 
     /* Write a final footer line describing why optimization terminated. */
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));

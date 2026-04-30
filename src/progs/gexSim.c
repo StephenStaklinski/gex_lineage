@@ -370,9 +370,6 @@ int main(int argc, char *argv[]) {
         simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, 
                                                     sigma2_obs, L_row_norms, L, gex_obs);
 
-        /* Deterministic transformation to prevent sign invariance */
-        post_hoc_sign_identifiability(L, gex->X);
-
         /* Deterministic transformation to prevent permutation invariance */
         double *log_sigma2_latent = scalloc(k, sizeof(double));
         for (i = 0; i < k; i++)
@@ -388,6 +385,9 @@ int main(int argc, char *argv[]) {
             for (i = 0; i < k; i++)
                 vec_set(sigma2s, i, exp(log_sigma2_latent[i]));
         }
+
+        /* Deterministic transformation to prevent sign invariance */
+        post_hoc_sign_identifiability(L, gex->X);
 
         double brownian_negll = 0.0;
         if (!identity_cov) {
