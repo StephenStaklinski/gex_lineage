@@ -28,7 +28,6 @@ static void usage(const char *progname) {
         "[--L-l2-norm <csv>] "
         "[--desired-tip-var <csv> ] "
         "[--sigma2 <csv>] "
-        "[--use-n-trees N] "
         "[--dim K] "
         "[--sigma2-obs S] "
         "[--include-factorization ]"
@@ -47,7 +46,6 @@ int main(int argc, char *argv[]) {
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int n_genes = 100; /* Number of genes to simulate */
     double desired_L_l2_norm = 1.0; /* Default desired L l2 norm for latent factors */
-    int use_n_trees = 0;  /* 0: all trees, >0: first N trees */
     int k = 5; /* Number of latent factors to simulate */
     double sigma2_obs = 1.0; /* Variance of observation noise */
     int expr_only = 1; /* If nonzero, only output the simulated expression matrix. */
@@ -123,13 +121,6 @@ int main(int argc, char *argv[]) {
             }
             input_sigma2s = parse_csv_to_vec(argv[++i]);
         }
-        else if (strcmp(argv[i], "--use-n-trees") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            use_n_trees = atoi(argv[++i]);
-        }
         else if (strcmp(argv[i], "--dim") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -189,16 +180,6 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
-    if (use_n_trees < 0) {
-        fprintf(stderr, "ERROR: --use-n-trees must be 0 or a positive integer\n");
-        return 1;
-    }
-    if (use_n_trees > n_trees) {
-        fprintf(stderr, "ERROR: --use-n-trees (%d) cannot exceed the number of loaded trees (%d)\n",
-                use_n_trees, n_trees);
-        return 1;
-    }
-
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
@@ -246,15 +227,8 @@ int main(int argc, char *argv[]) {
         }
 
         use_Sigmas = Sigmas;
-        n_use_sigmas = (use_n_trees == 0 ? n_trees : use_n_trees);
-
-        if (n_use_sigmas == n_trees) {
-            printf("Using all %d tree(s)...\n",
-                    n_use_sigmas);
-        } else {
-            printf("Using the first %d tree(s)...\n",
-                    n_use_sigmas);
-        }
+        n_use_sigmas = n_trees;
+        printf("Using all %d tree(s)...\n", n_use_sigmas);
 
     } else {
         /* Use identity covariance for simulations instead of tree-based covariance if requested */

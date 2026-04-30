@@ -79,8 +79,7 @@ static void usage(const char *progname) {
         "--expr <matrix.tsv> "
         "--outprefix <prefix> "
         "[--tree-total-time T] "
-        "[--n-filter-trees N] "
-        "[--n-model-trees N] "
+        "[--filter-covariance average|all] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
         "[--scale-invar-constraint sigma2s|Lrows] "
@@ -109,8 +108,7 @@ int main(int argc, char *argv[]) {
     const char *outprefix = NULL;   /* Prefix for all output files */
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
-    int n_filter_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
-    int n_model_trees = 0;  /* Number of trees to use for latent model fitting; 0 means use all trees */
+    int filter_average_covariance = 1;  /* If nonzero, use the average covariance for phylogenetic filtering. */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     PcaMethod pca_method = PCA_METHOD_PHYLOPCA;  /* Method for performing PCA to initialize latent model fitting */
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
@@ -130,9 +128,9 @@ int main(int argc, char *argv[]) {
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
-    Matrix *filter_avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
+    Matrix *filter_avg_Sigma = NULL; /* Average covariance used for filtering and/or phyloPCA */
     Matrix **filter_Sigmas = NULL; /* Covariance matrices used for filtering */
-    TreeNode **model_trees = NULL; /* Selected trees for latent model fitting */
+    int n_filter_sigmas = 0; /* Number of covariance matrices used for phylogenetic filtering */
     MoranResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     PCA *pca = NULL; /* PCA results */
@@ -170,19 +168,22 @@ int main(int argc, char *argv[]) {
             }
             tree_total_time = atof(argv[++i]);
         }
-        else if (strcmp(argv[i], "--n-filter-trees") == 0) {
+        else if (strcmp(argv[i], "--filter-covariance") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
                 return 1;
             }
-            n_filter_trees = atoi(argv[++i]);
-        }
-        else if (strcmp(argv[i], "--n-model-trees") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
+            i++;
+            if (strcmp(argv[i], "average") == 0) {
+                filter_average_covariance = 1;
+            }
+            else if (strcmp(argv[i], "all") == 0) {
+                filter_average_covariance = 0;
+            }
+            else {
+                fprintf(stderr, "ERROR: --filter-covariance must be one of average or all\n");
                 return 1;
             }
-            n_model_trees = atoi(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
@@ -313,24 +314,6 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
-    if (n_filter_trees < -1) {
-        fprintf(stderr, "ERROR: --n-filter-trees must be -1, 0, or a positive integer\n");
-        return 1;
-    }
-    if (n_filter_trees > n_trees) {
-        fprintf(stderr, "ERROR: --n-filter-trees (%d) cannot exceed the number of loaded trees (%d)\n",
-                n_filter_trees, n_trees);
-        return 1;
-    }
-    if (n_model_trees < 0) {
-        fprintf(stderr, "ERROR: --n-model-trees must be nonnegative (0 means use all trees)\n");
-        return 1;
-    }
-    if (n_model_trees > n_trees) {
-        fprintf(stderr, "ERROR: --n-model-trees (%d) cannot exceed the number of loaded trees (%d)\n",
-                n_model_trees, n_trees);
-        return 1;
-    }
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
         return 1;
@@ -382,7 +365,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Compute average covariance matrix over input trees if needed */
-    if (n_filter_trees == -1 || pca_method == PCA_METHOD_PHYLOPCA) {
+    if (filter_average_covariance || pca_method == PCA_METHOD_PHYLOPCA) {
         filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
                                                        gex->cell_names, gex->X->nrows);
     }
@@ -404,27 +387,24 @@ int main(int argc, char *argv[]) {
 
 
     /* Select which covariance matrix or matrices to use for the phylogenetic signal filtering */
-    if (n_filter_trees == -1) {
+    if (filter_average_covariance) {
         filter_Sigmas = scalloc(1, sizeof(Matrix *));
         filter_Sigmas[0] = filter_avg_Sigma;
+        n_filter_sigmas = 1;
     }
     else {
         filter_Sigmas = Sigmas;
-        if (n_filter_trees == 0)
-            n_filter_trees = n_trees;
+        n_filter_sigmas = n_trees;
     }
 
     /* Run the phylogenetic signal filter(s). */
     if (!no_filter) {
         const char *tree_msg;
-        int tree_count = n_filter_trees;
-        if (n_filter_trees == -1) {
+        int tree_count = n_trees;
+        if (filter_average_covariance) {
             tree_msg = "the average covariance across all";
-            tree_count = n_trees;
-        } else if (n_filter_trees == n_trees) {
-            tree_msg = "all";
         } else {
-            tree_msg = "the first";
+            tree_msg = "all";
         }
         printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using %s %d tree(s)...\n",
             tree_msg, tree_count);
@@ -442,7 +422,7 @@ int main(int argc, char *argv[]) {
         /* Run the phylogenetic autocorrelation filter tests if requested */
         if (filter_mode == GEX_FILTER_MORAN) {
             morans = gex_compute_morans_i(gex->X, filter_Sigmas,
-                                          (n_filter_trees == -1 ? 1 : n_filter_trees));
+                                          n_filter_sigmas);
 
             char corr_path[4096];
             snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
@@ -452,7 +432,7 @@ int main(int argc, char *argv[]) {
         /* Run the phylogenetic LRT filter tests if requested */
         if (filter_mode == GEX_FILTER_LRT) {
             lrt = gex_compute_brownian_lrt(gex->X, filter_Sigmas,
-                                           (n_filter_trees == -1 ? 1 : n_filter_trees),
+                                           n_filter_sigmas,
                                            n_perms,lrt_alt_mode);
 
             char lrt_path[4096];
@@ -509,29 +489,9 @@ int main(int argc, char *argv[]) {
         print_pca_summary(pca);
     }
 
-    /* Downsample the input set of trees for fitting the latent model if requested */
-    if (n_model_trees > 0 && n_model_trees < n_trees) {
-        int *indices = smalloc(n_trees * sizeof(int));
-        model_trees = scalloc(n_model_trees, sizeof(TreeNode *));
-        for (i = 0; i < n_trees; i++)
-            indices[i] = i;
-        for (i = 0; i < n_model_trees; i++) {
-            int j = i + (int)(random() % (n_trees - i));
-            int tmp = indices[i];
-            indices[i] = indices[j];
-            indices[j] = tmp;
-            model_trees[i] = trees[indices[i]];
-        }
-        free(indices);
-        printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
-    } else {
-        model_trees = trees;
-        n_model_trees = n_trees;
-    }
-
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
-    model = gex_fit_latent_brownian_model(gex_filtered, model_trees, n_model_trees,
+    model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
                                           outprefix, verbose_log);
 
@@ -577,9 +537,6 @@ int main(int argc, char *argv[]) {
                 mat_free(Sigmas[i]);
         }
         free(Sigmas);
-    }
-    if (model_trees != NULL && model_trees != trees) {
-        free(model_trees);
     }
     if (filter_Sigmas != NULL && filter_Sigmas != Sigmas) {
         free(filter_Sigmas);

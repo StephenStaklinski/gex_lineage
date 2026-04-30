@@ -171,26 +171,27 @@ static BrownianPruneCache *brownian_prune_cache_new(TreeNode *tree,
     return cache;
 }
 
-static void brownian_prune_cache_free(BrownianPruneCache *cache) {
-    if (cache == NULL)
-        return;
-    if (cache->postorder != NULL) free(cache->postorder);
-    if (cache->tip_index_by_id != NULL) free(cache->tip_index_by_id);
-    if (cache->mean != NULL) free(cache->mean);
-    if (cache->var != NULL) free(cache->var);
-    if (cache->adj != NULL) free(cache->adj);
-    if (cache->grad != NULL) free(cache->grad);
-    free(cache);
-}
-
 static void brownian_prune_caches_free(BrownianPruneCache **tree_caches,
                                         int n_trees) {
     int i;
     if (tree_caches == NULL)
         return;
     for (i = 0; i < n_trees; i++) {
-        if (tree_caches[i] != NULL)
-            brownian_prune_cache_free(tree_caches[i]);
+        if (tree_caches[i] != NULL) {
+            if (tree_caches[i]->postorder != NULL) 
+                free(tree_caches[i]->postorder);
+            if (tree_caches[i]->tip_index_by_id != NULL) 
+                free(tree_caches[i]->tip_index_by_id);
+            if (tree_caches[i]->mean != NULL) 
+                free(tree_caches[i]->mean);
+            if (tree_caches[i]->var != NULL) 
+                free(tree_caches[i]->var);
+            if (tree_caches[i]->adj != NULL) 
+                free(tree_caches[i]->adj);
+            if (tree_caches[i]->grad != NULL) 
+                free(tree_caches[i]->grad);
+            free(tree_caches[i]);
+        }
     }
     free(tree_caches);
 }
