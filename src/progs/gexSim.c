@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int n_genes = 100; /* Number of genes to simulate */
     double desired_L_l2_norm = 1.0; /* Default desired L l2 norm for latent factors */
-    int use_n_trees = -1;  /* -1: average covariance, 0: all trees, >0: first N trees */
+    int use_n_trees = 0;  /* 0: all trees, >0: first N trees */
     int k = 5; /* Number of latent factors to simulate */
     double sigma2_obs = 1.0; /* Variance of observation noise */
     int expr_only = 1; /* If nonzero, only output the simulated expression matrix. */
@@ -57,9 +57,9 @@ int main(int argc, char *argv[]) {
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
-    Matrix *avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
     Matrix **use_Sigmas = NULL; /* Covariance matrices used for filtering */
     int n_trees = 0;    /* Number of input trees */
+    int n_use_sigmas = 0; /* Number of covariance matrices used for simulation */
     Vector *mu;   /* Mean vector for simulations */
     Vector *L_row_norms; /* Row norms of L, for output */
     Vector *sigma2s = NULL;   /* Vector of Brownian variance parameters for simulations */
@@ -189,8 +189,8 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded %d tree(s).\n", n_trees);
 
-    if (use_n_trees < -1) {
-        fprintf(stderr, "ERROR: --use-n-trees must be -1, 0, or a positive integer\n");
+    if (use_n_trees < 0) {
+        fprintf(stderr, "ERROR: --use-n-trees must be 0 or a positive integer\n");
         return 1;
     }
     if (use_n_trees > n_trees) {
@@ -245,32 +245,15 @@ int main(int argc, char *argv[]) {
             print_covariance_summary(Sigmas[0], gex->cell_names, n_cells);
         }
 
-        /* Compute average covariance matrix over input trees if needed */
-        if (use_n_trees == -1) {
-            avg_Sigma = gex_average_tree_covariance(trees, n_trees,
-                                                    gex->cell_names, n_cells);
-            if (avg_Sigma == NULL) {
-                fprintf(stderr, "ERROR: failed to compute average covariance for filtering.\n");
-                return 1;
-            }
-            use_Sigmas = scalloc(1, sizeof(Matrix *));
-            use_Sigmas[0] = avg_Sigma;
-        }
-        else {
-            use_Sigmas = Sigmas;
-            if (use_n_trees == 0)
-                use_n_trees = n_trees;
-        }
+        use_Sigmas = Sigmas;
+        n_use_sigmas = (use_n_trees == 0 ? n_trees : use_n_trees);
 
-        if (use_n_trees == -1) {
-            printf("Using the average covariance across all %d tree(s)...\n",
-                    n_trees);
-        } else if (use_n_trees == n_trees) {
+        if (n_use_sigmas == n_trees) {
             printf("Using all %d tree(s)...\n",
-                    use_n_trees);
+                    n_use_sigmas);
         } else {
             printf("Using the first %d tree(s)...\n",
-                    use_n_trees);
+                    n_use_sigmas);
         }
 
     } else {
@@ -282,6 +265,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: failed to create identity covariance matrix for simulations.\n");
             return 1;
         }
+        n_use_sigmas = 1;
         printf("Using identity covariance instead of phylogenetic covariance from trees.\n");
     }
 
@@ -342,7 +326,7 @@ int main(int argc, char *argv[]) {
 
     /* Run simulation */
     gex->X = brownian_simulate(use_Sigmas, 
-                                (use_n_trees == -1 ? 1 : use_n_trees), 
+                                n_use_sigmas,
                                 mu, 
                                 sim_dim,
                                 sigma2s);
@@ -391,30 +375,13 @@ int main(int argc, char *argv[]) {
 
         double brownian_negll = 0.0;
         if (!identity_cov) {
-            /* Compute the negative log-likelihoods for the Brownian (over all trees to 
-            be comparable to model fitting, for now) and observation models */
-            Matrix **Sigma_invs = scalloc(n_trees, sizeof(Matrix *));
-            for (i = 0; i < n_trees; i++) {
-                Sigma_invs[i] = mat_new(n_cells, n_cells);
-                mat_invert(Sigma_invs[i], Sigmas[i]);
-            }
-            double *logdet_sigmas = scalloc(n_trees, sizeof(double));
-            for (i = 0; i < n_trees; i++) {
-                logdet_sigmas[i] = mat_logdet(Sigmas[i]);
-            }
-
-            brownian_negll = latent_brownian_prior_term(gex->X, log_sigma2_latent, Sigma_invs, logdet_sigmas, n_trees, NULL, NULL);
-
-            /* Free memory */
-            if (logdet_sigmas != NULL)
-                free(logdet_sigmas);
-            if (Sigma_invs != NULL) {
-                for (i = 0; i < n_trees; i++) {
-                    if (Sigma_invs[i] != NULL)
-                        mat_free(Sigma_invs[i]);
-                }
-                free(Sigma_invs);
-            }
+            brownian_negll = gex_brownian_prior_from_trees(gex->X,
+                                                           log_sigma2_latent,
+                                                           trees,
+                                                           n_use_sigmas,
+                                                           gex->cell_names,
+                                                           NULL,
+                                                           NULL);
         }
 
         Matrix *FL = mat_new(n_cells, n_genes);
@@ -451,11 +418,11 @@ int main(int argc, char *argv[]) {
         }
         free(Sigmas);
     }
+    if (identity_cov && use_Sigmas != NULL && use_Sigmas[0] != NULL) {
+        mat_free(use_Sigmas[0]);
+    }
     if (use_Sigmas != NULL && use_Sigmas != Sigmas) {
         free(use_Sigmas);
-    }
-    if (avg_Sigma != NULL) {
-        mat_free(avg_Sigma);
     }
 
     return 0; /* Success */

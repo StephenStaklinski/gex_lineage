@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
     Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
     Matrix *filter_avg_Sigma = NULL; /* Average covariance used when --n-filter-trees=-1 */
     Matrix **filter_Sigmas = NULL; /* Covariance matrices used for filtering */
-    Matrix **model_Sigmas = NULL; /* Selected covariance matrices for latent model fitting */
+    TreeNode **model_trees = NULL; /* Selected trees for latent model fitting */
     MoranResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     PCA *pca = NULL; /* PCA results */
@@ -511,17 +511,28 @@ int main(int argc, char *argv[]) {
 
     /* Downsample the input set of trees for fitting the latent model if requested */
     if (n_model_trees > 0 && n_model_trees < n_trees) {
-        model_Sigmas = downsample_sigmas(Sigmas, n_trees, n_model_trees);
+        int *indices = smalloc(n_trees * sizeof(int));
+        model_trees = scalloc(n_model_trees, sizeof(TreeNode *));
+        for (i = 0; i < n_trees; i++)
+            indices[i] = i;
+        for (i = 0; i < n_model_trees; i++) {
+            int j = i + (int)(random() % (n_trees - i));
+            int tmp = indices[i];
+            indices[i] = indices[j];
+            indices[j] = tmp;
+            model_trees[i] = trees[indices[i]];
+        }
+        free(indices);
         printf("Randomly downsampled (without replacement) %d tree(s) for latent model fitting.\n", n_model_trees);
     } else {
-        model_Sigmas = Sigmas;
+        model_trees = trees;
         n_model_trees = n_trees;
     }
 
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
-    model = gex_fit_latent_brownian_model(gex_filtered, model_Sigmas, n_model_trees, k,
-                                          pca, scale_invar_constraint, L_l1_strength,
+    model = gex_fit_latent_brownian_model(gex_filtered, model_trees, n_model_trees,
+                                          k, pca, scale_invar_constraint, L_l1_strength,
                                           outprefix, verbose_log);
 
     /* Write the fitted latent Brownian model parameters to files */
@@ -567,9 +578,8 @@ int main(int argc, char *argv[]) {
         }
         free(Sigmas);
     }
-    /* Only free model_Sigmas if it is separately allocated */
-    if (model_Sigmas != NULL && model_Sigmas != Sigmas) {
-        free(model_Sigmas);
+    if (model_trees != NULL && model_trees != trees) {
+        free(model_trees);
     }
     if (filter_Sigmas != NULL && filter_Sigmas != Sigmas) {
         free(filter_Sigmas);

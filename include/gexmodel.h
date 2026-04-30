@@ -8,6 +8,7 @@
 #include "mvn.h"
 
 #include <phast/matrix.h>
+#include <phast/trees.h>
 
 typedef enum {
     GEX_SCALE_INVAR_SIGMA2S = 0,
@@ -32,8 +33,8 @@ typedef struct {
 } GexLatentBrownianModel;
 
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
-                                                        Matrix **Sigmas,
-                                                        int n_sigmas,
+                                                        TreeNode **trees,
+                                                        int n_trees,
                                                         int k,
                                                         PCA *pca,
                                                         GexScaleInvarConstraint scale_invar_constraint,
@@ -58,17 +59,13 @@ double gaussian_observation_term(Matrix *FL,
                                         Matrix *grad_L,
                                         double *grad_log_sigma_obs);
 
-double latent_brownian_prior_term(Matrix *F,
+double gex_brownian_prior_from_trees(Matrix *F,
                                         double *log_sigma2_latent,
-                                        Matrix **Sigma_invs,
-                                        double *logdet_sigmas,
-                                        int n_sigmas,
+                                        TreeNode **trees,
+                                        int n_trees,
+                                        char **cell_names,
                                         Matrix *grad_F,
                                         double *grad_log_sigma_latent);
-
-Matrix **downsample_sigmas(Matrix **Sigmas,
-                                    int n_sigmas,
-                                    int n_keep);
 
 void write_summary_tsv(const char *path,
                         int n_cells,
