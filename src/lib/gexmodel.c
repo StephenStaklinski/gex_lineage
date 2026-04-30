@@ -110,93 +110,112 @@ double gaussian_observation_term(Matrix *FL,
     return obj;
 }
 
-typedef struct {
-    TreeNode *tree;
-    TreeNode **postorder;
-    int n_postorder;
-    int nnodes;
-    int n_tips;
-    int *tip_index_by_id;
-    double *mean;
-    double *var;
-    double *adj;
-    double *grad;
-} BrownianPruneCache;
-
-static BrownianPruneCache *brownian_prune_cache_new(TreeNode *tree,
-                                                     char **tip_names,
-                                                     int n_tips) {
+static int init_brownian_pruning_tree(TreeNode *tree,
+                                      char **tip_names,
+                                      int n_tips,
+                                      TreeNode ***postorder_out,
+                                      int *n_postorder_out,
+                                      int **tip_index_by_id_out) {
     int i, j;
-    List *postorder = NULL;
-    BrownianPruneCache *cache = NULL;
+    List *postorder_list = NULL;
+    TreeNode **postorder = NULL;
+    int *tip_index_by_id = NULL;
+    int n_postorder;
 
     if (tree == NULL || tip_names == NULL || n_tips <= 0)
-        return NULL;
+        return -1;
 
     tr_set_nnodes(tree);
-    postorder = tr_postorder(tree);
+    postorder_list = tr_postorder(tree);
+    n_postorder = lst_size(postorder_list);
+    postorder = scalloc(n_postorder, sizeof(TreeNode *));
+    tip_index_by_id = smalloc(tree->nnodes * sizeof(int));
 
-    cache = scalloc(1, sizeof(BrownianPruneCache));
-    cache->tree = tree;
-    cache->nnodes = tree->nnodes;
-    cache->n_tips = n_tips;
-    cache->n_postorder = lst_size(postorder);
-    cache->postorder = scalloc(cache->n_postorder, sizeof(TreeNode *));
-    cache->tip_index_by_id = smalloc(cache->nnodes * sizeof(int));
-    cache->mean = scalloc(cache->nnodes, sizeof(double));
-    cache->var = scalloc(cache->nnodes, sizeof(double));
-    cache->adj = scalloc(cache->nnodes, sizeof(double));
-    cache->grad = scalloc(n_tips, sizeof(double));
-
-    for (i = 0; i < cache->nnodes; i++)
-        cache->tip_index_by_id[i] = -1;
-    for (i = 0; i < cache->n_postorder; i++) {
-        TreeNode *node = lst_get_ptr(postorder, i);
-        cache->postorder[i] = node;
+    for (i = 0; i < tree->nnodes; i++)
+        tip_index_by_id[i] = -1;
+    for (i = 0; i < n_postorder; i++) {
+        TreeNode *node = lst_get_ptr(postorder_list, i);
+        postorder[i] = node;
         if (node->lchild == NULL && node->rchild == NULL) {
             for (j = 0; j < n_tips; j++) {
                 if (strcmp(node->name, tip_names[j]) == 0) {
-                    cache->tip_index_by_id[node->id] = j;
+                    tip_index_by_id[node->id] = j;
                     break;
                 }
             }
-            if (cache->tip_index_by_id[node->id] < 0) {
+            if (tip_index_by_id[node->id] < 0) {
                 fprintf(stderr, "ERROR: could not find tip '%s' in expression data.\n",
                         node->name);
-                return NULL;
+                free(postorder);
+                free(tip_index_by_id);
+                return -1;
             }
         }
     }
 
-    return cache;
+    *postorder_out = postorder;
+    *n_postorder_out = n_postorder;
+    *tip_index_by_id_out = tip_index_by_id;
+    return 0;
 }
 
-static void brownian_prune_caches_free(BrownianPruneCache **tree_caches,
-                                        int n_trees) {
+static void free_brownian_pruning_arrays(TreeNode ***postorders,
+                                         int *n_postorders,
+                                         int **tip_index_by_id,
+                                         double **means,
+                                         double **vars,
+                                         double **adjoints,
+                                         double **tree_grads,
+                                         int n_trees) {
     int i;
-    if (tree_caches == NULL)
-        return;
-    for (i = 0; i < n_trees; i++) {
-        if (tree_caches[i] != NULL) {
-            if (tree_caches[i]->postorder != NULL) 
-                free(tree_caches[i]->postorder);
-            if (tree_caches[i]->tip_index_by_id != NULL) 
-                free(tree_caches[i]->tip_index_by_id);
-            if (tree_caches[i]->mean != NULL) 
-                free(tree_caches[i]->mean);
-            if (tree_caches[i]->var != NULL) 
-                free(tree_caches[i]->var);
-            if (tree_caches[i]->adj != NULL) 
-                free(tree_caches[i]->adj);
-            if (tree_caches[i]->grad != NULL) 
-                free(tree_caches[i]->grad);
-            free(tree_caches[i]);
-        }
+
+    if (postorders != NULL) {
+        for (i = 0; i < n_trees; i++)
+            if (postorders[i] != NULL)
+                free(postorders[i]);
+        free(postorders);
     }
-    free(tree_caches);
+    if (n_postorders != NULL)
+        free(n_postorders);
+    if (tip_index_by_id != NULL) {
+        for (i = 0; i < n_trees; i++)
+            if (tip_index_by_id[i] != NULL)
+                free(tip_index_by_id[i]);
+        free(tip_index_by_id);
+    }
+    if (means != NULL) {
+        for (i = 0; i < n_trees; i++)
+            if (means[i] != NULL)
+                free(means[i]);
+        free(means);
+    }
+    if (vars != NULL) {
+        for (i = 0; i < n_trees; i++)
+            if (vars[i] != NULL)
+                free(vars[i]);
+        free(vars);
+    }
+    if (adjoints != NULL) {
+        for (i = 0; i < n_trees; i++)
+            if (adjoints[i] != NULL)
+                free(adjoints[i]);
+        free(adjoints);
+    }
+    if (tree_grads != NULL) {
+        for (i = 0; i < n_trees; i++)
+            if (tree_grads[i] != NULL)
+                free(tree_grads[i]);
+        free(tree_grads);
+    }
 }
 
-static double brownian_prune_neglog_and_grad(BrownianPruneCache *cache,
+static double brownian_prune_neglog_and_grad(TreeNode *tree,
+                                             TreeNode **postorder,
+                                             int n_postorder,
+                                             int *tip_index_by_id,
+                                             double *mean,
+                                             double *var,
+                                             double *adjoint,
                                              const double *z,
                                              double sigma2,
                                              double *grad,
@@ -206,81 +225,83 @@ static double brownian_prune_neglog_and_grad(BrownianPruneCache *cache,
     double quad_over_sigma2 = 0.0;
     const double log2pi = log(2.0 * M_PI);
 
-    if (cache == NULL || z == NULL || sigma2 <= 0.0)
+    if (tree == NULL || postorder == NULL || tip_index_by_id == NULL ||
+        mean == NULL || var == NULL || adjoint == NULL || z == NULL ||
+        sigma2 <= 0.0)
         return HUGE_VAL;
 
-    for (i = 0; i < cache->nnodes; i++)
-        cache->adj[i] = 0.0;
+    for (i = 0; i < tree->nnodes; i++)
+        adjoint[i] = 0.0;
 
-    for (i = 0; i < cache->n_postorder; i++) {
-        TreeNode *node = cache->postorder[i];
+    for (i = 0; i < n_postorder; i++) {
+        TreeNode *node = postorder[i];
         int id = node->id;
-        int tip_idx = cache->tip_index_by_id[id];
+        int tip_idx = tip_index_by_id[id];
 
         if (tip_idx >= 0) {
-            cache->mean[id] = z[tip_idx];
-            cache->var[id] = 0.0;
+            mean[id] = z[tip_idx];
+            var[id] = 0.0;
         }
         else if (node->lchild != NULL && node->rchild != NULL) {
             int lid = node->lchild->id;
             int rid = node->rchild->id;
-            double u1 = cache->var[lid] + sigma2 * node->lchild->dparent;
-            double u2 = cache->var[rid] + sigma2 * node->rchild->dparent;
+            double u1 = var[lid] + sigma2 * node->lchild->dparent;
+            double u2 = var[rid] + sigma2 * node->rchild->dparent;
             double sum = u1 + u2;
-            double diff = cache->mean[lid] - cache->mean[rid];
+            double diff = mean[lid] - mean[rid];
 
             if (sum <= 0.0)
                 return HUGE_VAL;
 
             nll += 0.5 * (log2pi + log(sum) + diff * diff / sum);
             quad_over_sigma2 += diff * diff / sum;
-            cache->mean[id] = (cache->mean[lid] * u2 + cache->mean[rid] * u1) / sum;
-            cache->var[id] = u1 * u2 / sum;
+            mean[id] = (mean[lid] * u2 + mean[rid] * u1) / sum;
+            var[id] = u1 * u2 / sum;
         }
         else {
             TreeNode *child = (node->lchild != NULL ? node->lchild : node->rchild);
             int cid = child->id;
-            cache->mean[id] = cache->mean[cid];
-            cache->var[id] = cache->var[cid] + sigma2 * child->dparent;
+            mean[id] = mean[cid];
+            var[id] = var[cid] + sigma2 * child->dparent;
         }
     }
 
     {
-        int root_id = cache->tree->id;
-        double root_var = cache->var[root_id] + sigma2 * cache->tree->dparent;
-        double root_mean = cache->mean[root_id];
+        int root_id = tree->id;
+        double root_var = var[root_id] + sigma2 * tree->dparent;
+        double root_mean = mean[root_id];
 
         if (root_var <= 0.0)
             return HUGE_VAL;
 
         nll += 0.5 * (log2pi + log(root_var) + root_mean * root_mean / root_var);
         quad_over_sigma2 += root_mean * root_mean / root_var;
-        cache->adj[root_id] = root_mean / root_var;
+        adjoint[root_id] = root_mean / root_var;
     }
 
     if (grad != NULL) {
-        for (i = cache->n_postorder - 1; i >= 0; i--) {
-            TreeNode *node = cache->postorder[i];
+        for (i = n_postorder - 1; i >= 0; i--) {
+            TreeNode *node = postorder[i];
             int id = node->id;
 
-            if (cache->tip_index_by_id[id] >= 0) {
-                grad[cache->tip_index_by_id[id]] = cache->adj[id];
+            if (tip_index_by_id[id] >= 0) {
+                grad[tip_index_by_id[id]] = adjoint[id];
             }
             else if (node->lchild != NULL && node->rchild != NULL) {
                 int lid = node->lchild->id;
                 int rid = node->rchild->id;
-                double u1 = cache->var[lid] + sigma2 * node->lchild->dparent;
-                double u2 = cache->var[rid] + sigma2 * node->rchild->dparent;
+                double u1 = var[lid] + sigma2 * node->lchild->dparent;
+                double u2 = var[rid] + sigma2 * node->rchild->dparent;
                 double sum = u1 + u2;
-                double diff = cache->mean[lid] - cache->mean[rid];
-                double parent_adj = cache->adj[id];
+                double diff = mean[lid] - mean[rid];
+                double parent_adj = adjoint[id];
 
-                cache->adj[lid] += diff / sum + parent_adj * u2 / sum;
-                cache->adj[rid] += -diff / sum + parent_adj * u1 / sum;
+                adjoint[lid] += diff / sum + parent_adj * u2 / sum;
+                adjoint[rid] += -diff / sum + parent_adj * u1 / sum;
             }
             else {
                 TreeNode *child = (node->lchild != NULL ? node->lchild : node->rchild);
-                cache->adj[child->id] += cache->adj[id];
+                adjoint[child->id] += adjoint[id];
             }
         }
     }
@@ -295,9 +316,16 @@ static double brownian_prune_neglog_and_grad(BrownianPruneCache *cache,
 factors F across all latent dimensions. Returns the contribution to the
 objective, adds the prior gradient to F, and computes gradients with respect
 to log(sigma2_latent) for each latent factor. */
-static double brownian_prior_from_caches(Matrix *F,
+static double brownian_prior_from_pruning_arrays(Matrix *F,
                                         double *log_sigma2_latent,
-                                        BrownianPruneCache **tree_caches,
+                                        TreeNode **trees,
+                                        TreeNode ***postorders,
+                                        int *n_postorders,
+                                        int **tip_index_by_id,
+                                        double **means,
+                                        double **vars,
+                                        double **adjoints,
+                                        double **tree_grads,
                                         int n_sigmas,
                                         Matrix *grad_F,
                                         double *grad_log_sigma_latent) {
@@ -327,10 +355,16 @@ static double brownian_prior_from_caches(Matrix *F,
 
         /* Compute full per-tree Brownian Gaussian log densities. */
         for (t = 0; t < n_sigmas; t++) {
-            double neglog = brownian_prune_neglog_and_grad(tree_caches[t],
+            double neglog = brownian_prune_neglog_and_grad(trees[t],
+                                                           postorders[t],
+                                                           n_postorders[t],
+                                                           tip_index_by_id[t],
+                                                           means[t],
+                                                           vars[t],
+                                                           adjoints[t],
                                                            f_d,
                                                            sigma2_d,
-                                                           tree_caches[t]->grad,
+                                                           tree_grads[t],
                                                            &quad_terms[t]);
             prior_log_terms[t] = -neglog;
         }
@@ -351,7 +385,7 @@ static double brownian_prior_from_caches(Matrix *F,
                 for (i = 0; i < n; i++) {
                     double old_grad = mat_get(grad_F, i, d);
                     mat_set(grad_F, i, d,
-                            old_grad + weight * tree_caches[t]->grad[i]);
+                            old_grad + weight * tree_grads[t][i]);
                 }
             }
 
@@ -381,24 +415,48 @@ double gex_brownian_prior_from_trees(Matrix *F,
                                         double *grad_log_sigma_latent) {
     int i;
     double obj;
-    BrownianPruneCache **tree_caches = NULL;
+    TreeNode ***postorders = NULL;
+    int *n_postorders = NULL;
+    int **tip_index_by_id = NULL;
+    double **means = NULL;
+    double **vars = NULL;
+    double **adjoints = NULL;
+    double **tree_grads = NULL;
 
     if (F == NULL || log_sigma2_latent == NULL || trees == NULL ||
         n_trees <= 0 || cell_names == NULL)
         return HUGE_VAL;
 
-    tree_caches = scalloc(n_trees, sizeof(BrownianPruneCache *));
+    postorders = scalloc(n_trees, sizeof(TreeNode **));
+    n_postorders = scalloc(n_trees, sizeof(int));
+    tip_index_by_id = scalloc(n_trees, sizeof(int *));
+    means = scalloc(n_trees, sizeof(double *));
+    vars = scalloc(n_trees, sizeof(double *));
+    adjoints = scalloc(n_trees, sizeof(double *));
+    tree_grads = scalloc(n_trees, sizeof(double *));
+
     for (i = 0; i < n_trees; i++) {
-        tree_caches[i] = brownian_prune_cache_new(trees[i], cell_names, F->nrows);
-        if (tree_caches[i] == NULL) {
-            brownian_prune_caches_free(tree_caches, n_trees);
+        if (init_brownian_pruning_tree(trees[i], cell_names, F->nrows,
+                                       &postorders[i], &n_postorders[i],
+                                       &tip_index_by_id[i]) != 0) {
+            free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
+                                         means, vars, adjoints, tree_grads,
+                                         n_trees);
             return HUGE_VAL;
         }
+        means[i] = scalloc(trees[i]->nnodes, sizeof(double));
+        vars[i] = scalloc(trees[i]->nnodes, sizeof(double));
+        adjoints[i] = scalloc(trees[i]->nnodes, sizeof(double));
+        tree_grads[i] = scalloc(F->nrows, sizeof(double));
     }
 
-    obj = brownian_prior_from_caches(F, log_sigma2_latent, tree_caches,
-                                           n_trees, grad_F, grad_log_sigma_latent);
-    brownian_prune_caches_free(tree_caches, n_trees);
+    obj = brownian_prior_from_pruning_arrays(F, log_sigma2_latent, trees,
+                                     postorders, n_postorders, tip_index_by_id,
+                                     means, vars, adjoints, tree_grads,
+                                     n_trees, grad_F, grad_log_sigma_latent);
+    free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
+                                 means, vars, adjoints, tree_grads,
+                                 n_trees);
     return obj;
 }
 
@@ -468,8 +526,15 @@ the latent factor Brownian prior, and the L1 regularization on loadings L (laten
 */
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *Xc,
-                                           BrownianPruneCache **tree_caches,
-                                           int n_sigmas,
+                                           TreeNode **trees,
+                                           TreeNode ***postorders,
+                                           int *n_postorders,
+                                           int **tip_index_by_id,
+                                           double **prune_means,
+                                           double **prune_vars,
+                                           double **prune_adjoints,
+                                           double **tree_grads,
+                                           int n_trees,
                                            Matrix *grad_F,
                                            Matrix *grad_L,
                                            double *grad_log_sigma_latent,
@@ -497,8 +562,12 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the mixture-of-Brownian prior contribution on F and accumulate the
     gradients w.r.t. F and log(sigma2_latent). */
     model->brownian_prior_objective =
-        brownian_prior_from_caches(model->F, model->log_sigma2_latent, tree_caches, n_sigmas,
-                                    grad_F, grad_log_sigma_latent);
+        brownian_prior_from_pruning_arrays(model->F, model->log_sigma2_latent,
+                                           trees, postorders, n_postorders,
+                                           tip_index_by_id, prune_means,
+                                           prune_vars, prune_adjoints,
+                                           tree_grads, n_trees,
+                                           grad_F, grad_log_sigma_latent);
     obj += model->brownian_prior_objective;
     if (!isfinite(obj)) {
         return HUGE_VAL;
@@ -895,7 +964,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int n_cells = gex->X->nrows;
     int n_genes = gex->X->ncols;
     GexLatentBrownianModel *model = NULL;   /* Fitted model */
-    BrownianPruneCache **tree_caches = NULL; /* Linear-time Brownian likelihood caches */
+    TreeNode ***postorders = NULL;
+    int *n_postorders = NULL;
+    int **tip_index_by_id = NULL;
+    double **prune_means = NULL;
+    double **prune_vars = NULL;
+    double **prune_adjoints = NULL;
+    double **tree_grads = NULL;
 
     /* Gradients */
     double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
@@ -926,14 +1001,28 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "objective\tbrownian_neglprior\tobservation_negll\tl1_penalty\n");
     }
 
-    /* Pre-compute tree traversal caches for the Brownian prior. */
-    tree_caches = scalloc(n_trees, sizeof(BrownianPruneCache *));
+    /* Pre-compute tree traversal arrays and scratch space for Brownian pruning. */
+    postorders = scalloc(n_trees, sizeof(TreeNode **));
+    n_postorders = scalloc(n_trees, sizeof(int));
+    tip_index_by_id = scalloc(n_trees, sizeof(int *));
+    prune_means = scalloc(n_trees, sizeof(double *));
+    prune_vars = scalloc(n_trees, sizeof(double *));
+    prune_adjoints = scalloc(n_trees, sizeof(double *));
+    tree_grads = scalloc(n_trees, sizeof(double *));
     for (i = 0; i < n_trees; i++) {
-        tree_caches[i] = brownian_prune_cache_new(trees[i], gex->cell_names, n_cells);
-        if (tree_caches[i] == NULL) {
-            fprintf(stderr, "ERROR: failed to initialize Brownian pruning cache for tree %d.\n", i + 1);
+        if (init_brownian_pruning_tree(trees[i], gex->cell_names, n_cells,
+                                       &postorders[i], &n_postorders[i],
+                                       &tip_index_by_id[i]) != 0) {
+            fprintf(stderr, "ERROR: failed to initialize Brownian pruning arrays for tree %d.\n", i + 1);
+            free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
+                                         prune_means, prune_vars,
+                                         prune_adjoints, tree_grads, n_trees);
             return NULL;
         }
+        prune_means[i] = scalloc(trees[i]->nnodes, sizeof(double));
+        prune_vars[i] = scalloc(trees[i]->nnodes, sizeof(double));
+        prune_adjoints[i] = scalloc(trees[i]->nnodes, sizeof(double));
+        tree_grads[i] = scalloc(n_cells, sizeof(double));
     }
 
     /* Allocate the model object and its core parameter matrices. */
@@ -1052,7 +1141,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         clipping_on = 0;
 
         /* Compute the objective function and gradients */
-        model->objective = gex_model_objective_and_grad(model, gex->X, tree_caches,
+        model->objective = gex_model_objective_and_grad(model, gex->X, trees,
+                                                        postorders, n_postorders,
+                                                        tip_index_by_id,
+                                                        prune_means, prune_vars,
+                                                        prune_adjoints, tree_grads,
                                                         n_trees, grad_F, grad_L,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
@@ -1221,7 +1314,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
 
     /* Compute the final state objective and gradients. */
-    model->objective = gex_model_objective_and_grad(model, gex->X, tree_caches,
+    model->objective = gex_model_objective_and_grad(model, gex->X, trees,
+                                                    postorders, n_postorders,
+                                                    tip_index_by_id,
+                                                    prune_means, prune_vars,
+                                                    prune_adjoints, tree_grads,
                                                     n_trees, grad_F, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
@@ -1253,7 +1350,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (mL != NULL) mat_free(mL);
     if (vL != NULL) mat_free(vL);
     if (logf != NULL) fclose(logf);
-    brownian_prune_caches_free(tree_caches, n_trees);
+    free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
+                                 prune_means, prune_vars,
+                                 prune_adjoints, tree_grads, n_trees);
 
     return model;
 }
