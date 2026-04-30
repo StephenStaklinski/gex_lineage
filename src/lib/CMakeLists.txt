@@ -44,7 +44,9 @@ set_target_properties(vine_core PROPERTIES
 )
 
 target_compile_options(vine_core PUBLIC
-    -g -fno-inline -Wall -fno-strict-aliasing
+    -Wall 
+    -fno-strict-aliasing
+    $<$<CONFIG:Debug>:-g -fno-inline>
 )
 
 target_include_directories(vine_core
