@@ -31,8 +31,9 @@ double gaussian_observation_term(Matrix *FL,
     int n = Xc->nrows;
     int p = Xc->ncols;
     int k = F->ncols;
-    double obj = 0.0;
     double sigma2_obs = exp(log_sigma2_obs);
+    double inv_sigma2_obs = 1.0 / sigma2_obs;
+    double ss = 0.0;
 
     /* Initialize gradient accumulator for log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
@@ -47,49 +48,56 @@ double gaussian_observation_term(Matrix *FL,
        negative log-likelihood and its gradient w.r.t. log(sigma2_obs). */
     for (i = 0; i < n; i++) {
         double *Xc_i = Xc->data[i]; /* Row of centered data for cell i */
-        double *FL_i = FL->data[i];
         double *F_i = F->data[i];
+        double *FL_i = (FL != NULL ? FL->data[i] : NULL);
         double *grad_F_i = (grad_F != NULL ? grad_F->data[i] : NULL);
-        double r;
 
         for (j = 0; j < p; j++) {
-            /* Residual is observed minus predicted */
-            r = Xc_i[j] - FL_i[j];
+            double pred = 0.0;
+            double r;
+            double scaled_neg_r;
 
-            /* Quadratic term of Gaussian negative log-likelihood */
-            obj += 0.5 * r * r / sigma2_obs;
+            for (d = 0; d < k; d++)
+                pred += F_i[d] * L->data[d][j];
 
-            /* Gradient w.r.t. log(sigma2_obs) from quadratic term */
-            if (grad_log_sigma_obs != NULL)
-                *grad_log_sigma_obs += -0.5 * r * r / sigma2_obs;
+            if (FL_i != NULL)
+                FL_i[j] = pred;
 
-            for (d = 0; d < k; d++) {
-                double *L_d = L->data[d];
-                if (grad_F_i != NULL)
-                    grad_F_i[d] += -r * L_d[j] / sigma2_obs;
-                if (grad_L != NULL)
-                    grad_L->data[d][j] += -F_i[d] * r / sigma2_obs;
+            r = Xc_i[j] - pred; /* Residual is observed minus predicted */
+            ss += r * r;
+            scaled_neg_r = -r * inv_sigma2_obs;
+
+            if (grad_F_i != NULL) {
+                for (d = 0; d < k; d++)
+                    grad_F_i[d] += scaled_neg_r * L->data[d][j];
+            }
+
+            if (grad_L != NULL) {
+                for (d = 0; d < k; d++)
+                    grad_L->data[d][j] += scaled_neg_r * F_i[d];
             }
         }
     }
 
-    /* Log-determinant term of Gaussian likelihood: (np/2) log(σ²) */
-    double n_entries = (double)(n * p);
-    obj += 0.5 * n_entries * log(sigma2_obs);
+    {
+        double n_entries = (double)n * (double)p;
+        double obj = 0.5 * ss * inv_sigma2_obs;
 
-    /* Gaussian normalization constant: (np/2) log(2π). This is not
-    dependent on parameters so it does not matter for optimization but is
-    included here to obtain full likelihood values. */
-    obj += 0.5 * n_entries * log(2.0 * M_PI);
+        /* Log-determinant term of Gaussian likelihood: (np/2) log(σ²) */
+        obj += 0.5 * n_entries * log_sigma2_obs;
 
-    /* Gradient w.r.t. log(sigma2_obs) */
-    if (grad_log_sigma_obs != NULL) {
-        *grad_log_sigma_obs += 0.5 * n_entries;
-        /* Normalize the gradient to be per observation (only for stability with Adam steps) */
-        *grad_log_sigma_obs /= n_entries;
+        /* Gaussian normalization constant: (np/2) log(2π). This is not
+        dependent on parameters so it does not matter for optimization but is
+        included here to obtain full likelihood values. */
+        obj += 0.5 * n_entries * log(2.0 * M_PI);
+
+        /* Gradient w.r.t. log(sigma2_obs) */
+        if (grad_log_sigma_obs != NULL) {
+            *grad_log_sigma_obs = 0.5 - 0.5 * ss * inv_sigma2_obs / n_entries;
+        }
+
+        return obj;
     }
-
-    return obj;
 }
 
 static int init_brownian_pruning_tree(TreeNode *tree,
@@ -1225,9 +1233,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         else
             stable_steps = 0;
         
-        /* Reconstruct F*L */
-        mat_mult_lapack(model->FL, model->F, model->L);   /* Compute predicted values FL */
-
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
         if (verbose_log) {

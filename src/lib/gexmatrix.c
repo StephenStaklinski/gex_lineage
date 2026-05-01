@@ -264,8 +264,9 @@ double mat_sum_squared_entries(Matrix *X) {
 
     /* Calculate the sum of all squared entries */
     for (i = 0; i < X->nrows; i++) {
+        double *row = X->data[i];
         for (j = 0; j < X->ncols; j++) {
-            double val = mat_get(X, i, j);
+            double val = row[j];
             sum += val * val;
         }
     }
@@ -466,11 +467,11 @@ treated as a single vector. */
 double mat_frobenius_norm(Matrix *M) {
     int i, j;
     double ss = 0.0;
-    double val;
 
     for (i = 0; i < M->nrows; i++) {
+        double *row = M->data[i];
         for (j = 0; j < M->ncols; j++) {
-            val = mat_get(M, i, j);
+            double val = row[j];
             ss += val * val;
         }
     }
