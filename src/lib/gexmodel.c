@@ -1100,7 +1100,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
     }
     else {
-        fprintf(logf, "objective\tbrownian_neglprior\tobservation_negll\tl1_penalty\n");
+        fprintf(logf, "step\tobjective\tbrownian_neglprior\tobservation_negll\tl1_penalty\n");
     }
 
     /* Pre-compute tree traversal arrays and scratch space for Brownian pruning. */
@@ -1373,7 +1373,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                         model->FL_frobenius_norm);
         }
         else {
-            fprintf(logf, "%.17g\t%.17g\t%.17g\t%.17g\n",
+            fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\n",
+                    step,
                     model->objective,
                     model->brownian_prior_objective,
                     model->observation_objective,
