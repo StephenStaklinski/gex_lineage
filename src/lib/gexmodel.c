@@ -1,9 +1,8 @@
 #include "gexmodel.h"
 
+#include "gexadam.h"
 #include "gexpca.h"
 #include "gexmisc.h"
-
-#include <variational.h>
 
 #include <phast/matrix.h>
 #include <phast/misc.h>
@@ -685,96 +684,13 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
-/* Cosine decay of learning rate */
-static double cosine_lr(double curr_lr, double base_lr, int step, int max_steps) {
-    if (step <= 1 || step >= max_steps)
-        return curr_lr; /* Stay at the current learning rate after decay ends */
-
-    double progress = (double)step / (double)max_steps;
-    double lr = base_lr * 0.5 * (1.0 + cos(M_PI * progress));
-    double min_lr = 1e-6;  // floor for learning rate to prevent it from going to zero
-    lr = fmax(lr, min_lr);
-
-    return lr;
-}
-
-/* Perform one Adam optimization update for a scalar parameter in place.
-Updates the first and second moment estimates using the current gradient,
-applies bias correction to obtain mhat and vhat, and then updates the
-parameter using:
-
-    param -= lr * mhat / (sqrt(vhat) + eps)
-
-where m tracks the exponential moving average of gradients,
-v tracks the exponential moving average of squared gradients,
-and mhat and vhat are the corresponding bias-corrected estimates used
-for the parameter update. Bias correction accounts for initialization
-at early steps. */
-static void adam_step_scalar(double *param,
-                               double grad,
-                               double *m,
-                               double *v,
-                               double pow_beta1,
-                               double pow_beta2,
-                               double lr) {
-    double m_new = ADAM_BETA1 * (*m) + (1.0 - ADAM_BETA1) * grad;
-    double v_new = ADAM_BETA2 * (*v) + (1.0 - ADAM_BETA2) * grad * grad;
-    double mhat = m_new / (1.0 - pow_beta1);
-    double vhat = v_new / (1.0 - pow_beta2);
-
-    *m = m_new;
-    *v = v_new;
-    *param -= lr * mhat / (sqrt(vhat) + ADAM_EPS);
-}
-
-/* Adam update wrapper for a Matrix parameter */
-static void adam_step_matrix(Matrix *param,
-                                         Matrix *grad,
-                                         Matrix *m,
-                                         Matrix *v,
-                                         double pow_beta1,
-                                         double pow_beta2,
-                                         double lr) {
-    int i, j;
-    for (i = 0; i < param->nrows; i++) {
-        for (j = 0; j < param->ncols; j++) {
-            double p = mat_get(param, i, j);
-            double g = mat_get(grad, i, j);
-            double m_ij = mat_get(m, i, j);
-            double v_ij = mat_get(v, i, j);
-
-            adam_step_scalar(&p, g, &m_ij, &v_ij, pow_beta1, pow_beta2, lr);
-
-            mat_set(param, i, j, p);
-            mat_set(m, i, j, m_ij);
-            mat_set(v, i, j, v_ij);
-        }
-    }
-}
-
-/* Adam update wrapper for a vector parameter */
-static void adam_step_vector(double *param,
-                                double *grad,
-                                double *m,
-                                double *v,
-                                int n,
-                                double pow_beta1,
-                                double pow_beta2,
-                                double lr) {
-    int i;
-    for (i = 0; i < n; i++) {
-        adam_step_scalar(&param[i], grad[i], &m[i], &v[i], pow_beta1, pow_beta2, lr);
-    }
-}
-
 static void normalize_L_rows_and_rescale_F(Matrix *L,
                                            Matrix *F,
                                            Matrix *mL,
                                            Matrix *vL,
                                            Matrix *mF,
                                            Matrix *vF,
-                                           double target_row_norm)
-{
+                                           double target_row_norm) {
     int d, i, j;
     int k = L->nrows;
     int p = L->ncols;
@@ -820,59 +736,6 @@ static void normalize_L_rows_and_rescale_F(Matrix *L,
                 mat_set(vF, i, d, mat_get(vF, i, d) * scale_F * scale_F);
         }
     }
-}
-
-/* Uses an exponential moving average (EMA) to update the clipping threshold 
-to be clip_factor * normal gradient levels from the EMA */
-static double update_clip_threshold(double grad_norm,
-                                    double *ema_grad_norm,
-                                    int step,
-                                    int clip_warmup,
-                                    double clip_beta,
-                                    double clip_factor,
-                                    double clip_floor) {
-    double clip;
-
-    /* Update EMA from current block norm */
-    if (grad_norm > 0.0) {
-        if (*ema_grad_norm == 0.0)
-            *ema_grad_norm = grad_norm;
-        else
-            *ema_grad_norm = clip_beta * (*ema_grad_norm) +
-                             (1.0 - clip_beta) * grad_norm;
-    }
-
-    /* Skip clipping during warmup */
-    if (step < clip_warmup) {
-        return HUGE_VAL;
-    }
-
-    /* After warmup, allow adaptive thresholding */
-    double adaptive_clip = clip_factor * (*ema_grad_norm);
-    clip = fmax(clip_floor, adaptive_clip);
-
-    return clip;
-}
-
-static int clip_matrix_by_norm(Matrix *grad, double norm, double clip_norm) {
-    if (clip_norm > 0.0 && norm > clip_norm) {
-        double scale = clip_norm / norm;
-        mat_scale(grad, scale);
-        return 1;
-    }
-    return 0;
-
-}
-
-static int clip_vector_by_norm(double *grad, int n, double norm, double clip_norm) {
-    int i;
-    if (clip_norm > 0.0 && norm > clip_norm) {
-        double scale = clip_norm / norm;
-        for (i = 0; i < n; i++)
-            grad[i] *= scale;
-        return 1;
-    }
-    return 0;
 }
 
 void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
@@ -1210,6 +1073,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Adam hyperparameters */
     double base_lr = 0.1;   /* Base learning rate for Adam */
+    double min_lr = 1e-6;   /* Floor for learning rate to prevent it from going to zero */
     double lr = base_lr;
     int lr_decay_max_steps = max_steps / 2; /* Decay lr to try to finish in half the total max time */
     double clip_beta = 0.98;
@@ -1266,24 +1130,24 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
         /* Update gradient clipping thresholds */
-        clip_F = update_clip_threshold(grad_F_norm, &ema_F_norm, step, clip_warmup,
-                                        clip_beta, clip_factor, clip_floor);
-        clip_L = update_clip_threshold(grad_L_norm, &ema_L_norm, step, clip_warmup,
-                                        clip_beta, clip_factor, clip_floor);
-        clip_sigma_obs = update_clip_threshold(grad_log_sigma_obs_norm, &ema_log_sigma_obs_norm, step,
-                                                clip_warmup, clip_beta, clip_factor, clip_floor);
-        if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-            clip_sigma_latent = update_clip_threshold(grad_log_sigma_latent_norm, &ema_log_sigma_latent_norm,
+        clip_F = adam_update_clip_threshold(grad_F_norm, &ema_F_norm, step, clip_warmup,
+                                            clip_beta, clip_factor, clip_floor);
+        clip_L = adam_update_clip_threshold(grad_L_norm, &ema_L_norm, step, clip_warmup,
+                                            clip_beta, clip_factor, clip_floor);
+        clip_sigma_obs = adam_update_clip_threshold(grad_log_sigma_obs_norm, &ema_log_sigma_obs_norm,
                                                     step, clip_warmup, clip_beta, clip_factor, clip_floor);
+        if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
+            clip_sigma_latent = adam_update_clip_threshold(grad_log_sigma_latent_norm, &ema_log_sigma_latent_norm,
+                                                           step, clip_warmup, clip_beta, clip_factor, clip_floor);
         }
 
         /* Re-scale the gradients if their norm exceeds the clipping threshold and 
         recompute the norm for those that were rescales */
-        if (clip_matrix_by_norm(grad_F, grad_F_norm, clip_F)) {
+        if (adam_clip_matrix_by_norm(grad_F, grad_F_norm, clip_F)) {
             grad_F_norm = mat_frobenius_norm(grad_F);
             clipping_on |= 1;
         }
-        if (clip_matrix_by_norm(grad_L, grad_L_norm, clip_L)) {
+        if (adam_clip_matrix_by_norm(grad_L, grad_L_norm, clip_L)) {
             grad_L_norm = mat_frobenius_norm(grad_L);
             clipping_on |= 1;
         }
@@ -1293,8 +1157,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             clipping_on |= 1;
         }
         if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-            if (clip_vector_by_norm(grad_log_sigma_latent, k,
-                                        grad_log_sigma_latent_norm, clip_sigma_latent)) {
+            if (adam_clip_vector_by_norm(grad_log_sigma_latent, k,
+                                         grad_log_sigma_latent_norm, clip_sigma_latent)) {
                 grad_log_sigma_latent_norm = 0.0;
                 for (d = 0; d < k; d++) {
                     grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
@@ -1308,7 +1172,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         
 
         /* Perturb the model parameters */
-        lr = cosine_lr(lr, base_lr, step, lr_decay_max_steps);
+        lr = adam_cosine_lr(lr, base_lr, min_lr, step, lr_decay_max_steps);
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
@@ -1318,17 +1182,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
             /* Step Brownian variance parameters if they are not fixed for scale invariance */
             adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
-                                        m_log_sigma_latent, v_log_sigma_latent,
-                                        k, pow_beta1, pow_beta2, rel_sigma2_lr);
+                             m_log_sigma_latent, v_log_sigma_latent,
+                             k, pow_beta1, pow_beta2, rel_sigma2_lr);
         }
         adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
-                           &m_log_sigma_obs, &v_log_sigma_obs,
-                           pow_beta1, pow_beta2, rel_sigma2_lr);
+                         &m_log_sigma_obs, &v_log_sigma_obs,
+                         pow_beta1, pow_beta2, rel_sigma2_lr);
         
         if (scale_invar_constraint == GEX_SCALE_INVAR_LROWS) {
             /* Normalize L rows and rescale F to prevent scale invariance */
             normalize_L_rows_and_rescale_F(model->L, model->F,
-                               mL, vL, mF, vF, 1.0);
+                                           mL, vL, mF, vF, 1.0);
         }
         
         /* Compare the short and long running averages of the objective so
