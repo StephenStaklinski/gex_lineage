@@ -17,6 +17,12 @@
 #include <omp.h>
 #endif
 
+
+/* Prevents instability from 0 branch lengths */
+static double brownian_branch_variance(double sigma2, double branch_length) {
+    return sigma2 * max(branch_length, 1e-8);
+}
+
 /* Compute Gaussian observation negative log-likelihood and gradients for
 X ~ N(FL, sigma2_obs). Returns the full contribution to the objective,
 including the Gaussian normalization constant, fills residual matrix,
@@ -344,8 +350,8 @@ static double brownian_prune_neglog_and_grad(TreeNode *tree,
         else if (node->lchild != NULL && node->rchild != NULL) {
             int lid = node->lchild->id;
             int rid = node->rchild->id;
-            double u1 = var[lid] + sigma2 * node->lchild->dparent;
-            double u2 = var[rid] + sigma2 * node->rchild->dparent;
+            double u1 = var[lid] + brownian_branch_variance(sigma2, node->lchild->dparent);
+            double u2 = var[rid] + brownian_branch_variance(sigma2, node->rchild->dparent);
             double sum = u1 + u2;
             double diff = mean[lid] - mean[rid];
 
@@ -361,7 +367,7 @@ static double brownian_prune_neglog_and_grad(TreeNode *tree,
             TreeNode *child = (node->lchild != NULL ? node->lchild : node->rchild);
             int cid = child->id;
             mean[id] = mean[cid];
-            var[id] = var[cid] + sigma2 * child->dparent;
+            var[id] = var[cid] + brownian_branch_variance(sigma2, child->dparent);
         }
     }
 
@@ -389,8 +395,8 @@ static double brownian_prune_neglog_and_grad(TreeNode *tree,
             else if (node->lchild != NULL && node->rchild != NULL) {
                 int lid = node->lchild->id;
                 int rid = node->rchild->id;
-                double u1 = var[lid] + sigma2 * node->lchild->dparent;
-                double u2 = var[rid] + sigma2 * node->rchild->dparent;
+                double u1 = var[lid] + brownian_branch_variance(sigma2, node->lchild->dparent);
+                double u2 = var[rid] + brownian_branch_variance(sigma2, node->rchild->dparent);
                 double sum = u1 + u2;
                 double diff = mean[lid] - mean[rid];
                 double parent_adj = adjoint[id];
