@@ -29,6 +29,7 @@ typedef struct {
     double observation_objective;
     double brownian_prior_objective;
     double l1_objective;
+    double FL_frobenius_norm;
     MVN *latent_mvn;
 } GexLatentBrownianModel;
 
@@ -57,7 +58,8 @@ double gaussian_observation_term(Matrix *FL,
                                         Matrix *Xc,
                                         Matrix *grad_F,
                                         Matrix *grad_L,
-                                        double *grad_log_sigma_obs);
+                                        double *grad_log_sigma_obs,
+                                        double *FL_frobenius_norm);
 
 double gex_brownian_prior_from_trees(Matrix *F,
                                         double *log_sigma2_latent,

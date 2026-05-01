@@ -16,6 +16,9 @@
 #include <string.h>
 #include <math.h>
 
+#ifdef VINE_HAS_OPENMP
+#include <omp.h>
+#endif
 
 /* Parse the filter mode from a string. Sets pointer to mode_out.
 Returns 0 on success or -1 on failure. */
@@ -86,17 +89,18 @@ static void usage(const char *progname) {
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
         "[--dim K] "
-        "[--pca-method phylopca|pca|none]"
+        "[--pca-method phylopca|pca|none] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
         "[--moran-min-i I] "
         "[--filter-only] "
         "[--no-filter] "
-        "[--no-preprocess ]"
+        "[--no-preprocess] "
         "[--verbose] "
         "[--verbose-log] "
-        "[--seed S]\n",
+        "[--seed S] "
+        "[--nthreads N]\n",
         progname);
 }
 
@@ -120,6 +124,7 @@ int main(int argc, char *argv[]) {
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     int verbose_log = 0;    /* If nonzero, write the full optimization log. */
+    int nthreads = 1;   /* Number of OpenMP threads to use */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
     GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_SIGMA2S; /* Which constraint to use for counteracting scale invariance */
 
@@ -282,6 +287,17 @@ int main(int argc, char *argv[]) {
             }
             set_seed((unsigned int)atoi(argv[++i]));
         }
+        else if (strcmp(argv[i], "--nthreads") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            nthreads = atoi(argv[++i]);
+            if (nthreads <= 0) {
+                fprintf(stderr, "ERROR: thread count must be positive.\n");
+                return 1;
+            }
+        }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;   /* Success since user just wants cli help */
@@ -304,6 +320,18 @@ int main(int argc, char *argv[]) {
     if (pca_method == PCA_METHOD_NONE && k == 0) {
         fprintf(stderr, "ERROR: --dim must be specified when --pca-method is none.\n");
         return 1;
+    }
+    if (nthreads > 0) {
+#ifdef VINE_HAS_OPENMP
+        omp_set_num_threads(nthreads);
+        if (verbose)
+            printf("Using %d thread(s) for OpenMP-enabled calculations.\n", nthreads);
+#else
+        if (nthreads > 1) {
+            fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP threads.\n");
+            return 1;
+        }
+#endif
     }
 
     /* Load the input trees */

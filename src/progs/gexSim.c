@@ -360,7 +360,7 @@ int main(int argc, char *argv[]) {
 
         Matrix *FL = mat_new(n_cells, n_genes);
         mat_mult_lapack(FL, gex->X, L);
-        double observation_negll = gaussian_observation_term(FL, gex->X, L, log(sigma2_obs), gex_obs->X, NULL, NULL, NULL);
+        double observation_negll = gaussian_observation_term(FL, gex->X, L, log(sigma2_obs), gex_obs->X, NULL, NULL, NULL, NULL);
 
         /* Write out results */
         write_model(outprefix, gex_obs, L, gex->X, gex_obs->cell_names, gex_obs->gene_names,

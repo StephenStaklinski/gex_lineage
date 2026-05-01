@@ -14,6 +14,9 @@
 #include <unistd.h>
 #include <time.h>
 
+#ifdef VINE_HAS_OPENMP
+#include <omp.h>
+#endif
 
 /* Compute Gaussian observation negative log-likelihood and gradients for
 X ~ N(FL, sigma2_obs). Returns the full contribution to the objective,
@@ -26,7 +29,8 @@ double gaussian_observation_term(Matrix *FL,
                                     Matrix *Xc,
                                     Matrix *grad_F,
                                     Matrix *grad_L,
-                                    double *grad_log_sigma_obs) {
+                                    double *grad_log_sigma_obs,
+                                    double *FL_frobenius_norm) {
     int i, j, d;
     int n = Xc->nrows;
     int p = Xc->ncols;
@@ -34,6 +38,7 @@ double gaussian_observation_term(Matrix *FL,
     double sigma2_obs = exp(log_sigma2_obs);
     double inv_sigma2_obs = 1.0 / sigma2_obs;
     double ss = 0.0;
+    double pred_ss = 0.0;
 
     /* Initialize gradient accumulator for log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
@@ -42,6 +47,108 @@ double gaussian_observation_term(Matrix *FL,
         mat_zero(grad_F);
     if (grad_L != NULL)
         mat_zero(grad_L);
+    if (FL_frobenius_norm != NULL)
+        *FL_frobenius_norm = 0.0;
+
+#ifdef VINE_HAS_OPENMP
+    if ((long long)n * (long long)p >= 100000 && omp_get_max_threads() > 1) {
+        int t;
+        int nthreads = omp_get_max_threads();
+        double *thread_ss = scalloc(nthreads, sizeof(double));
+        double *thread_pred_ss = scalloc(nthreads, sizeof(double));
+        double **thread_grad_L = NULL;
+
+        if (grad_L != NULL) {
+            thread_grad_L = scalloc(nthreads, sizeof(double *));
+            for (t = 0; t < nthreads; t++)
+                thread_grad_L[t] = scalloc((size_t)k * (size_t)p, sizeof(double));
+        }
+
+#pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            double local_ss = 0.0;
+            double local_pred_ss = 0.0;
+            double *local_grad_L = (thread_grad_L != NULL ? thread_grad_L[tid] : NULL);
+            int i_thread, j_thread, d_thread;
+
+#pragma omp for schedule(static)
+            for (i_thread = 0; i_thread < n; i_thread++) {
+                double *Xc_i = Xc->data[i_thread];
+                double *F_i = F->data[i_thread];
+                double *FL_i = (FL != NULL ? FL->data[i_thread] : NULL);
+                double *grad_F_i = (grad_F != NULL ? grad_F->data[i_thread] : NULL);
+
+                for (j_thread = 0; j_thread < p; j_thread++) {
+                    double pred = 0.0;
+                    double r;
+                    double scaled_neg_r;
+
+                    for (d_thread = 0; d_thread < k; d_thread++)
+                        pred += F_i[d_thread] * L->data[d_thread][j_thread];
+                    local_pred_ss += pred * pred;
+
+                    if (FL_i != NULL)
+                        FL_i[j_thread] = pred;
+
+                    r = Xc_i[j_thread] - pred;
+                    local_ss += r * r;
+                    scaled_neg_r = -r * inv_sigma2_obs;
+
+                    if (grad_F_i != NULL) {
+                        for (d_thread = 0; d_thread < k; d_thread++)
+                            grad_F_i[d_thread] += scaled_neg_r * L->data[d_thread][j_thread];
+                    }
+
+                    if (local_grad_L != NULL) {
+                        for (d_thread = 0; d_thread < k; d_thread++)
+                            local_grad_L[(size_t)d_thread * (size_t)p + (size_t)j_thread] +=
+                                scaled_neg_r * F_i[d_thread];
+                    }
+                }
+            }
+
+            thread_ss[tid] = local_ss;
+            thread_pred_ss[tid] = local_pred_ss;
+        }
+
+        for (t = 0; t < nthreads; t++) {
+            ss += thread_ss[t];
+            pred_ss += thread_pred_ss[t];
+        }
+
+        if (grad_L != NULL) {
+            for (t = 0; t < nthreads; t++) {
+                double *local_grad_L = thread_grad_L[t];
+                for (d = 0; d < k; d++) {
+                    double *grad_L_d = grad_L->data[d];
+                    double *local_grad_L_d = local_grad_L + (size_t)d * (size_t)p;
+                    for (j = 0; j < p; j++)
+                        grad_L_d[j] += local_grad_L_d[j];
+                }
+                free(local_grad_L);
+            }
+            free(thread_grad_L);
+        }
+        if (FL_frobenius_norm != NULL)
+            *FL_frobenius_norm = sqrt(pred_ss);
+        free(thread_pred_ss);
+        free(thread_ss);
+
+        {
+            double n_entries = (double)n * (double)p;
+            double obj = 0.5 * ss * inv_sigma2_obs;
+
+            obj += 0.5 * n_entries * log_sigma2_obs;
+            obj += 0.5 * n_entries * log(2.0 * M_PI);
+
+            if (grad_log_sigma_obs != NULL)
+                *grad_log_sigma_obs = 0.5 - 0.5 * ss * inv_sigma2_obs / n_entries;
+
+            return obj;
+        }
+    }
+#endif
 
     /* Gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs).
        Compute residuals r_ij = X_ij - (FL)_ij and accumulate the
@@ -59,6 +166,7 @@ double gaussian_observation_term(Matrix *FL,
 
             for (d = 0; d < k; d++)
                 pred += F_i[d] * L->data[d][j];
+            pred_ss += pred * pred;
 
             if (FL_i != NULL)
                 FL_i[j] = pred;
@@ -95,6 +203,8 @@ double gaussian_observation_term(Matrix *FL,
         if (grad_log_sigma_obs != NULL) {
             *grad_log_sigma_obs = 0.5 - 0.5 * ss * inv_sigma2_obs / n_entries;
         }
+        if (FL_frobenius_norm != NULL)
+            *FL_frobenius_norm = sqrt(pred_ss);
 
         return obj;
     }
@@ -546,7 +656,9 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the likelihood from the gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. F and log(sigma2_obs). */
     model->observation_objective =
-        gaussian_observation_term(model->FL, model->F, model->L, model->log_sigma2_obs, Xc, grad_F, grad_L, grad_log_sigma_obs);
+        gaussian_observation_term(model->FL, model->F, model->L, model->log_sigma2_obs,
+                                  Xc, grad_F, grad_L, grad_log_sigma_obs,
+                                  &model->FL_frobenius_norm);
     obj += model->observation_objective;
 
     /* Add the mixture-of-Brownian prior contribution on F and accumulate the
@@ -1258,7 +1370,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
                         mat_frobenius_norm(model->F),
                         mat_frobenius_norm(model->L),
-                        mat_frobenius_norm(model->FL));
+                        model->FL_frobenius_norm);
         }
         else {
             fprintf(logf, "%.17g\t%.17g\t%.17g\t%.17g\n",
