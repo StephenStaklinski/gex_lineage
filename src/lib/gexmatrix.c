@@ -461,6 +461,98 @@ void write_labeled_matrix_tsv(const char *filename,
     out = NULL;
 }
 
+void write_top_loading_genes_tsv(const char *filename,
+                                 Matrix *loadings,
+                                 char **factor_names,
+                                 int n_factors,
+                                 char **gene_names,
+                                 int n_genes,
+                                 int n_top,
+                                 const char *factor_label) {
+    int factor, rank, j;
+    FILE *out = NULL;
+    int *used = NULL;
+
+    if (filename == NULL || loadings == NULL || factor_names == NULL || gene_names == NULL ||
+        n_factors <= 0 || n_genes <= 0 ||
+        loadings->nrows != n_factors || loadings->ncols != n_genes)
+        return;
+
+    if (n_top > n_genes)
+        n_top = n_genes;
+
+    out = fopen(filename, "w");
+    if (out == NULL) {
+        fprintf(stderr, "ERROR: failed to open %s for writing: %s\n",
+                filename, strerror(errno));
+        return;
+    }
+
+    fprintf(out, "%s", factor_label == NULL ? "factor" : factor_label);
+    for (rank = 0; rank < n_top; rank++)
+        fprintf(out, "\tgene_up_%d", rank + 1);
+    for (rank = 0; rank < n_top; rank++)
+        fprintf(out, "\tgene_down_%d", rank + 1);
+    fprintf(out, "\n");
+
+    used = scalloc(n_genes, sizeof(int));
+    for (factor = 0; factor < n_factors; factor++) {
+        fprintf(out, "%s", factor_names[factor]);
+        for (j = 0; j < n_genes; j++)
+            used[j] = 0;
+
+        for (rank = 0; rank < n_top; rank++) {
+            int best_j = -1;
+            double best_loading = 0.0;
+
+            for (j = 0; j < n_genes; j++) {
+                double loading = mat_get(loadings, factor, j);
+                if (used[j])
+                    continue;
+                if (best_j < 0 || loading > best_loading) {
+                    best_j = j;
+                    best_loading = loading;
+                }
+            }
+
+            if (best_j >= 0) {
+                used[best_j] = 1;
+                fprintf(out, "\t%s", gene_names[best_j]);
+            } else {
+                fprintf(out, "\t");
+            }
+        }
+        for (j = 0; j < n_genes; j++)
+            used[j] = 0;
+
+        for (rank = 0; rank < n_top; rank++) {
+            int best_j = -1;
+            double best_loading = 0.0;
+
+            for (j = 0; j < n_genes; j++) {
+                double loading = mat_get(loadings, factor, j);
+                if (used[j])
+                    continue;
+                if (best_j < 0 || loading < best_loading) {
+                    best_j = j;
+                    best_loading = loading;
+                }
+            }
+
+            if (best_j >= 0) {
+                used[best_j] = 1;
+                fprintf(out, "\t%s", gene_names[best_j]);
+            } else {
+                fprintf(out, "\t");
+            }
+        }
+        fprintf(out, "\n");
+    }
+
+    free(used);
+    fclose(out);
+}
+
 /* Compute the Frobenius norm of a matrix.
 This is equivalent to the Euclidean (l2) norm of all entries
 treated as a single vector. */

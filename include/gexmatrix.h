@@ -68,6 +68,15 @@ void write_labeled_matrix_tsv(const char *filename,
                                  int n_cols,
                                  const char *corner_label);
 
+void write_top_loading_genes_tsv(const char *filename,
+                                 Matrix *loadings,
+                                 char **factor_names,
+                                 int n_factors,
+                                 char **gene_names,
+                                 int n_genes,
+                                 int n_top,
+                                 const char *factor_label);
+
 double mat_frobenius_norm(Matrix *M);
 
 double mat_diag_mean(Matrix *X);

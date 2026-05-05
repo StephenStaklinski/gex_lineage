@@ -1561,69 +1561,6 @@ void write_summary_tsv(const char *path,
     summary_out = NULL;
 }
 
-static void write_top_loading_genes_tsv(const char *path,
-                                        Matrix *L,
-                                        char **factor_names,
-                                        char **gene_names,
-                                        int k,
-                                        int n_genes,
-                                        int n_top) {
-    int d, rank, j;
-    FILE *out = NULL;
-    int *used = NULL;
-
-    if (path == NULL || L == NULL || factor_names == NULL || gene_names == NULL ||
-        k <= 0 || n_genes <= 0)
-        return;
-
-    if (n_top > n_genes)
-        n_top = n_genes;
-
-    out = fopen(path, "w");
-    if (out == NULL) {
-        fprintf(stderr, "WARNING: failed to open file %s for writing top loading genes\n", path);
-        return;
-    }
-
-    fprintf(out, "factor");
-    for (rank = 0; rank < n_top; rank++)
-        fprintf(out, "\tgene%d", rank + 1);
-    fprintf(out, "\n");
-
-    used = scalloc(n_genes, sizeof(int));
-    for (d = 0; d < k; d++) {
-        fprintf(out, "%s", factor_names[d]);
-        for (j = 0; j < n_genes; j++)
-            used[j] = 0;
-
-        for (rank = 0; rank < n_top; rank++) {
-            int best_j = -1;
-            double best_loading = 0.0;
-
-            for (j = 0; j < n_genes; j++) {
-                double loading = mat_get(L, d, j);
-                if (used[j])
-                    continue;
-                if (best_j < 0 || loading > best_loading) {
-                    best_j = j;
-                    best_loading = loading;
-                }
-            }
-
-            if (best_j >= 0) {
-                used[best_j] = 1;
-                fprintf(out, "\t%s", gene_names[best_j]);
-            } else {
-                fprintf(out, "\t");
-            }
-        }
-        fprintf(out, "\n");
-    }
-
-    free(used);
-    fclose(out);
-}
-
 void write_model(const char *outprefix,
                                 GexMatrix *gex,
                                 Matrix *L,
@@ -1663,8 +1600,8 @@ void write_model(const char *outprefix,
                                      gene_names, gex->X->ncols, "cell");
     write_labeled_matrix_tsv(l_path, L, factor_names, k,
                                      gene_names, gex->X->ncols, "factor");
-    write_top_loading_genes_tsv(top_genes_path, L, factor_names,
-                                gene_names, k, gex->X->ncols, 10);
+    write_top_loading_genes_tsv(top_genes_path, L, factor_names, k,
+                                gene_names, gex->X->ncols, 10, "factor");
     write_labeled_matrix_tsv(f_path, F, cell_names, gex->X->nrows,
                                      factor_names, k, "cell");
 }

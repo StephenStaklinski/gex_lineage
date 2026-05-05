@@ -347,6 +347,7 @@ void print_pca_summary(PCA *pca) {
 void write_pca_tsv(const char *outprefix, PCA *pca, GexMatrix *gex) {
     char eval_filename[1024];
     char evec_filename[1024];
+    char top_genes_filename[1024];
     FILE *eval_file = NULL;
     FILE *evec_file = NULL;
     double cumulative = 0.0;
@@ -393,6 +394,18 @@ void write_pca_tsv(const char *outprefix, PCA *pca, GexMatrix *gex) {
     }
 
     fclose(evec_file);
+
+    snprintf(top_genes_filename, sizeof(top_genes_filename), "%s.pca.top_genes.tsv", outprefix);
+    char **pc_names = scalloc(pca->K, sizeof(char *));
+    for (i = 0; i < pca->K; i++) {
+        pc_names[i] = smalloc(64 * sizeof(char));
+        snprintf(pc_names[i], 64, "PC%d", i + 1);
+    }
+    write_top_loading_genes_tsv(top_genes_filename, pca->components, pc_names, pca->K,
+                                gex->gene_names, gex->X->ncols, 10, "PC");
+    for (i = 0; i < pca->K; i++)
+        free(pc_names[i]);
+    free(pc_names);
 }
 
 void free_pca(PCA *pca) {
