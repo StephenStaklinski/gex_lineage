@@ -18,21 +18,6 @@ static void usage(const char *progname) {
             progname);
 }
 
-static double mat_diag_mean(Matrix *X) {
-    int i;
-    int n;
-    double score = 0.0;
-
-    if (X == NULL || X->nrows != X->ncols || X->nrows == 0)
-        return NAN;
-
-    n = X->nrows;
-    for (i = 0; i < n; i++)
-        score += mat_get(X, i, i);
-
-    return score / (double)n;
-}
-
 int main(int argc, char *argv[]) {
     const char *sim_prefix = NULL;
     const char *fit_prefix = NULL;

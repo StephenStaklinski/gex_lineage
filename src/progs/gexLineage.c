@@ -528,7 +528,7 @@ int main(int argc, char *argv[]) {
 
     if (varimax) {
         printf("Applying varimax rotation to fitted factors before writing outputs...\n");
-        varimax_rotate_model_factors(model->L, model->F, 100, 1e-6);
+        varimax_rotate_model_factors(model->L, model->F, outprefix, 1000, 1e-6);
         post_hoc_sign_identifiability(model->L, model->F);
         mat_mult_lapack(model->FL, model->F, model->L);
     }

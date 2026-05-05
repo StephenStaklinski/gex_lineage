@@ -479,6 +479,19 @@ double mat_frobenius_norm(Matrix *M) {
     return sqrt(ss);
 }
 
+double mat_diag_mean(Matrix *X) {
+    int i;
+    double sum = 0.0;
+
+    if (X == NULL || X->nrows != X->ncols || X->nrows == 0)
+        return NAN;
+
+    for (i = 0; i < X->nrows; i++)
+        sum += mat_get(X, i, i);
+
+    return sum / (double)X->nrows;
+}
+
 /* RMSE between two matrices */
 double mat_rmse(Matrix *A, Matrix *B) {
     int i, j;

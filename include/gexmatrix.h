@@ -70,6 +70,8 @@ void write_labeled_matrix_tsv(const char *filename,
 
 double mat_frobenius_norm(Matrix *M);
 
+double mat_diag_mean(Matrix *X);
+
 double mat_rmse(Matrix *A, Matrix *B);
 
 double mat_pearson_correlation(Matrix *A, Matrix *B);

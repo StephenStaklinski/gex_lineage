@@ -894,7 +894,7 @@ void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_l
 /* Performs varimax rotation on the fitted model factors to find a 
 more interpretable and sparse basis by maximizing the variance of the 
 squared loadings (cols of L; rows of F; how genes are loaded across a factor) */
-void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol) {
+void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, int max_iter, double tol) {
     int i, j, a, b, c, iter;
     int k;
     int p;
@@ -907,10 +907,15 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol
     Matrix *Rt = NULL;
     Matrix *L_new = NULL;
     Matrix *F_new = NULL;
+    Matrix *L_before = NULL;
+    Matrix *F_before = NULL;
+    Matrix *FL_before = NULL;
+    Matrix *FL_after = NULL;
     Vector *S = NULL;
     double *col_ss = NULL;
     double prev_d = 0.0;
     double gamma = 1.0;
+    int min_iter = 10;
 
     if (L == NULL || F == NULL || L->nrows != F->ncols)
         return;
@@ -923,6 +928,13 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol
         max_iter = 100;
     if (tol <= 0.0)
         tol = 1e-6;
+
+    if (outprefix != NULL) {
+        L_before = mat_create_copy(L);
+        F_before = mat_create_copy(F);
+        FL_before = mat_new(F->nrows, L->ncols);
+        mat_mult_lapack(FL_before, F, L);
+    }
 
     R = mat_new(k, k);
     R_new = mat_new(k, k);
@@ -978,7 +990,7 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol
         VT = NULL;
         S = NULL;
 
-        if (iter > 0 && prev_d > 0.0 && d < prev_d * (1.0 + tol))
+        if (iter > min_iter && prev_d > 0.0 && d < prev_d * (1.0 + tol))
             break;
         prev_d = d;
     }
@@ -991,6 +1003,12 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol
     mat_copy(L, L_new);
     mat_copy(F, F_new);
 
+    if (outprefix != NULL) {
+        FL_after = mat_new(F->nrows, L->ncols);
+        mat_mult_lapack(FL_after, F, L);
+        write_varimax_summary_tsv(outprefix, L_before, F_before, FL_before, L, F, FL_after, iter);
+    }
+
     if (R != NULL) mat_free(R);
     if (R_new != NULL) mat_free(R_new);
     if (Lambda != NULL) mat_free(Lambda);
@@ -998,7 +1016,66 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol
     if (Rt != NULL) mat_free(Rt);
     if (L_new != NULL) mat_free(L_new);
     if (F_new != NULL) mat_free(F_new);
+    if (L_before != NULL) mat_free(L_before);
+    if (F_before != NULL) mat_free(F_before);
+    if (FL_before != NULL) mat_free(FL_before);
+    if (FL_after != NULL) mat_free(FL_after);
     if (col_ss != NULL) free(col_ss);
+}
+
+void write_varimax_summary_tsv(const char *outprefix,
+                               Matrix *L_before,
+                               Matrix *F_before,
+                               Matrix *FL_before,
+                               Matrix *L_after,
+                               Matrix *F_after,
+                               Matrix *FL_after,
+                               int n_iters
+                            ) {
+    char path[4096];
+    FILE *out = NULL;
+    Matrix *L_corr = NULL;
+    Matrix *F_corr = NULL;
+    double L_before_norm;
+    double L_after_norm;
+    double F_before_norm;
+    double F_after_norm;
+
+    if (outprefix == NULL || L_before == NULL || F_before == NULL || FL_before == NULL ||
+        L_after == NULL || F_after == NULL || FL_after == NULL)
+        return;
+
+    L_corr = mat_factor_pearson_correlation(L_before, L_after, 1, 1);
+    F_corr = mat_factor_pearson_correlation(F_before, F_after, 0, 1);
+    L_before_norm = mat_frobenius_norm(L_before);
+    L_after_norm = mat_frobenius_norm(L_after);
+    F_before_norm = mat_frobenius_norm(F_before);
+    F_after_norm = mat_frobenius_norm(F_after);
+
+    snprintf(path, sizeof(path), "%s.varimax.summary.tsv", outprefix);
+    out = fopen(path, "w");
+
+    fprintf(out, "metric\tvalue\n");
+    fprintf(out, "n_iters\t%d\n", n_iters);
+    fprintf(out, "L_rmse_before_after\t%.17g\n", mat_rmse(L_before, L_after));
+    fprintf(out, "F_rmse_before_after\t%.17g\n", mat_rmse(F_before, F_after));
+    fprintf(out, "FL_rmse_before_after\t%.17g\n", mat_rmse(FL_before, FL_after));
+    fprintf(out, "L_mean_abs_matched_factor_pearson\t%.17g\n", mat_diag_mean(L_corr));
+    fprintf(out, "F_mean_abs_matched_factor_pearson\t%.17g\n", mat_diag_mean(F_corr));
+    fprintf(out, "L_frobenius_before\t%.17g\n", L_before_norm);
+    fprintf(out, "L_frobenius_after\t%.17g\n", L_after_norm);
+    fprintf(out, "L_frobenius_relative_change\t%.17g\n",
+            L_before_norm > 0.0 ? fabs(L_after_norm - L_before_norm) / L_before_norm : NAN);
+    fprintf(out, "F_frobenius_before\t%.17g\n", F_before_norm);
+    fprintf(out, "F_frobenius_after\t%.17g\n", F_after_norm);
+    fprintf(out, "F_frobenius_relative_change\t%.17g\n",
+            F_before_norm > 0.0 ? fabs(F_after_norm - F_before_norm) / F_before_norm : NAN);
+    fclose(out);
+
+    if (L_corr != NULL) 
+        mat_free(L_corr);
+    if (F_corr != NULL) 
+        mat_free(F_corr);
 }
 
 /* Main model entry point. Fit a low-rank factorization of the centered gene
