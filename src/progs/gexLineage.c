@@ -542,6 +542,31 @@ int main(int argc, char *argv[]) {
 
     printf("Wrote resulting model parameters to outprefix %s\n", outprefix);
 
+    /* Compare the fitted factors to each other pairwise */
+    Matrix *factor_corr = NULL;
+    char factor_corr_path[4096];
+
+    factor_corr = mat_factor_pearson_correlation(model->L, model->L, 1, 0);
+    snprintf(factor_corr_path, sizeof(factor_corr_path),
+                "%s.L.pearson_correlation.tsv", outprefix);
+    write_labeled_matrix_tsv(factor_corr_path, factor_corr,
+                                factor_names, k,
+                                factor_names, k,
+                                "PCA_factor");
+    mat_free(factor_corr);
+
+    /* Compare the PCA to each other pairwise (just checking for technical accuracy here) */
+    if (pca != NULL) {
+        factor_corr = mat_factor_pearson_correlation(pca->components, pca->components, 1, 0);
+        snprintf(factor_corr_path, sizeof(factor_corr_path),
+                    "%s.pca.pearson_correlation.tsv", outprefix);
+        write_labeled_matrix_tsv(factor_corr_path, factor_corr,
+                                    factor_names, pca->K,
+                                    factor_names, pca->K,
+                                    "PCA_factor");
+        mat_free(factor_corr);
+    }
+
     /* Compare the fitted factors to the initial PCA factors */
     if (pca != NULL) {
         Matrix *factor_corr = NULL;
@@ -551,17 +576,13 @@ int main(int argc, char *argv[]) {
         generate_names(pca_factor_names, pca->K, "PC");
         factor_corr = mat_factor_pearson_correlation(pca->components, model->L, 1, 0);
 
-        if (factor_corr != NULL) {
-            snprintf(factor_corr_path, sizeof(factor_corr_path),
-                     "%s.pca.L.pearson_correlation.tsv", outprefix);
-            write_labeled_matrix_tsv(factor_corr_path, factor_corr,
-                                     pca_factor_names, pca->K,
-                                     factor_names, k,
-                                     "PCA_factor");
-            mat_free(factor_corr);
-        } else {
-            fprintf(stderr, "WARNING: could not compute PCA/model factor Pearson correlations\n");
-        }
+        snprintf(factor_corr_path, sizeof(factor_corr_path),
+                    "%s.pca.L.pearson_correlation.tsv", outprefix);
+        write_labeled_matrix_tsv(factor_corr_path, factor_corr,
+                                    pca_factor_names, pca->K,
+                                    factor_names, k,
+                                    "PCA_factor");
+        mat_free(factor_corr);
 
         for (i = 0; i < pca->K; i++) {
             if (pca_factor_names[i] != NULL)
