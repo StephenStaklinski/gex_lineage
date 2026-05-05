@@ -92,6 +92,7 @@ static PCA *pca_eigen(Matrix *Cov) {
     /* Allocate memory for the output PCA result */
     out = scalloc(1, sizeof(PCA));
     out->components = mat_new(p, p);
+    out->eigenvalues = scalloc(p, sizeof(double));
     out->var_explained = scalloc(p, sizeof(double));
     out->K = p;
 
@@ -101,7 +102,8 @@ static PCA *pca_eigen(Matrix *Cov) {
         double lambda = pairs[i].val;
 
         /* Normalize variance explained by this component */
-        out->var_explained[i] = lambda / total_var;
+        out->eigenvalues[i] = lambda;
+        out->var_explained[i] = total_var > 0.0 ? lambda / total_var : 0.0;
 
         for (j = 0; j < p; j++) {
             /* eigenvectors are columns of eigvecs */
@@ -132,11 +134,13 @@ PCA *pca_lapack(Matrix *Xc) {
     r = S->size;
     out = scalloc(1, sizeof(PCA));
     out->components = mat_new(r, VT->ncols);
+    out->eigenvalues = scalloc(r, sizeof(double));
     out->var_explained = scalloc(r, sizeof(double));
     out->K = r;
 
     for (i = 0; i < r; i++) {
         double lambda = S->data[i] * S->data[i] / (double)(Xc->nrows - 1);
+        out->eigenvalues[i] = lambda;
         out->var_explained[i] = lambda;
         total_var += lambda;
     }
@@ -159,6 +163,7 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
     int i, j;
     int keep_K = k;
     Matrix *new_components = NULL;
+    double *new_eigenvalues = NULL;
     double *new_var = NULL;
 
     /* If k was not specified, determine how many components to keep based on the variance threshold */
@@ -170,10 +175,12 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
 
     /* Allocate memory for the reduced PCA components and variance explained */
     new_components = mat_new(keep_K, out->components->ncols);
+    new_eigenvalues = scalloc(keep_K, sizeof(double));
     new_var = scalloc(keep_K, sizeof(double));
 
     /* Fill the reduced PCA result with the top components and their variance explained */
     for (i = 0; i < keep_K; i++) {
+        new_eigenvalues[i] = out->eigenvalues[i];
         new_var[i] = out->var_explained[i];
         for (j = 0; j < out->components->ncols; j++)
             mat_set(new_components, i, j, mat_get(out->components, i, j));
@@ -181,8 +188,10 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
 
     /* Replace the original PCA components and variance explained with the reduced versions */
     mat_free(out->components);
+    free(out->eigenvalues);
     free(out->var_explained);
     out->components = new_components;
+    out->eigenvalues = new_eigenvalues;
     out->var_explained = new_var;
     out->K = keep_K;
 }
@@ -335,11 +344,64 @@ void print_pca_summary(PCA *pca) {
     printf("\n");
 }
 
+void write_pca_tsv(const char *outprefix, PCA *pca, GexMatrix *gex) {
+    char eval_filename[1024];
+    char evec_filename[1024];
+    FILE *eval_file = NULL;
+    FILE *evec_file = NULL;
+    double cumulative = 0.0;
+    int i, j;
+
+    if (pca == NULL || gex == NULL || gex->X == NULL)
+        return;
+
+    snprintf(eval_filename, sizeof(eval_filename), "%s.pca.eigenvalues.tsv", outprefix);
+    eval_file = fopen(eval_filename, "w");
+    if (eval_file == NULL) {
+        fprintf(stderr, "ERROR: failed to open file %s for writing PCA eigenvalues\n", eval_filename);
+        return;
+    }
+
+    fprintf(eval_file, "PC\tEigenvalue\tVarianceExplained\tCumulativeVarianceExplained\n");
+    for (i = 0; i < pca->K; i++) {
+        cumulative += pca->var_explained[i];
+        fprintf(eval_file, "PC%d\t%.10g\t%.10g\t%.10g\n",
+                i + 1,
+                pca->eigenvalues[i],
+                pca->var_explained[i],
+                cumulative);
+    }
+    fclose(eval_file);
+
+    snprintf(evec_filename, sizeof(evec_filename), "%s.pca.eigenvectors.tsv", outprefix);
+    evec_file = fopen(evec_filename, "w");
+    if (evec_file == NULL) {
+        fprintf(stderr, "ERROR: failed to open file %s for writing PCA eigenvectors\n", evec_filename);
+        return;
+    }
+
+    fprintf(evec_file, "Gene");
+    for (i = 0; i < pca->K; i++)
+        fprintf(evec_file, "\tPC%d", i + 1);
+    fprintf(evec_file, "\n");
+
+    for (j = 0; j < gex->X->ncols; j++) {
+        fprintf(evec_file, "%s", gex->gene_names[j]);
+        for (i = 0; i < pca->K; i++)
+            fprintf(evec_file, "\t%.10g", mat_get(pca->components, i, j));
+        fprintf(evec_file, "\n");
+    }
+
+    fclose(evec_file);
+}
+
 void free_pca(PCA *pca) {
     if (pca == NULL) return;
 
     if (pca->components != NULL)
         mat_free(pca->components);
+    if (pca->eigenvalues != NULL)
+        free(pca->eigenvalues);
     if (pca->var_explained != NULL)
         free(pca->var_explained);
 

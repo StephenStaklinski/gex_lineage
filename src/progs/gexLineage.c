@@ -513,9 +513,7 @@ int main(int argc, char *argv[]) {
     } else {
         printf("Retaining the top %d PCA component(s).\n", k);
     }
-    if (verbose) {
-        print_pca_summary(pca);
-    }
+    write_pca_tsv(outprefix, pca, gex_filtered);
 
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);

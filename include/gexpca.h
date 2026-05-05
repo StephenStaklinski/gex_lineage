@@ -1,6 +1,8 @@
 #ifndef GEXPCA_H
 #define GEXPCA_H
 
+#include "gexmatrix.h"
+
 #include <phast/matrix.h>
 
 typedef enum {
@@ -11,6 +13,7 @@ typedef enum {
 
 typedef struct {
     Matrix *components;   // K x n_genes (principal components / loadings)
+    double *eigenvalues;  // length K
     double *var_explained; // length K
     int K;
 } PCA;
@@ -22,5 +25,7 @@ PCA *compute_phylo_pca(Matrix *gex, Matrix *C, int k, double variance_threshold)
 void free_pca(PCA *pca);
 
 void print_pca_summary(PCA *pca);
+
+void write_pca_tsv(const char *outprefix, PCA *pca, GexMatrix *gex);
 
 #endif
