@@ -18,60 +18,17 @@ static void usage(const char *progname) {
             progname);
 }
 
-/* Absolute Pearson correlation between row r1 of A and row r2 of B.
-   Used to compare rows of L across genes. */
-static double vec_abs_pearson_correlation(Vector *A, Vector *B) {
-    int j;
-    int n = A->size;
-    double mean_a = 0.0;
-    double mean_b = 0.0;
-    double num = 0.0;
-    double den_a = 0.0;
-    double den_b = 0.0;
-
-    /* Compute row means */
-    for (j = 0; j < n; j++) {
-        mean_a += vec_get(A, j);
-        mean_b += vec_get(B, j);
-    }
-    mean_a /= (double)n;
-    mean_b /= (double)n;
-
-    /* Compute Pearson correlation numerator and denominator */
-    for (j = 0; j < n; j++) {
-        double da = vec_get(A, j) - mean_a;
-        double db = vec_get(B, j) - mean_b;
-        num += da * db;
-        den_a += da * da;
-        den_b += db * db;
-    }
-    num /= sqrt(den_a * den_b);
-
-    return fabs(num);
-}
-
-/* Mean Pearson correlation between cols of F_true and F_fit. */
-static double F_col_mean_correlation(Matrix *F_true, Matrix *F_fit) {
+static double mat_diag_mean(Matrix *X) {
     int i;
-    int n = F_true->ncols;
+    int n;
     double score = 0.0;
 
-    for (i = 0; i < n; i++) {
-        score += vec_abs_pearson_correlation(mat_get_col(F_true, i), mat_get_col(F_fit, i));
-    }
+    if (X == NULL || X->nrows != X->ncols || X->nrows == 0)
+        return NAN;
 
-    return score / (double)n;
-}
-
-/* Mean Pearson correlation between rows of L_true and L_fit. */
-static double L_row_mean_correlation(Matrix *L_true, Matrix *L_fit) {
-    int i;
-    int n = L_true->nrows;
-    double score = 0.0;
-
-    for (i = 0; i < n; i++) {
-        score += vec_abs_pearson_correlation(mat_get_row(L_true, i), mat_get_row(L_fit, i));
-    }
+    n = X->nrows;
+    for (i = 0; i < n; i++)
+        score += mat_get(X, i, i);
 
     return score / (double)n;
 }
@@ -101,6 +58,8 @@ int main(int argc, char *argv[]) {
     GexMatrix *fit_L = NULL;
     Matrix *fit_Z = NULL;
     GexMatrix *fit_X = NULL;
+    Matrix *F_factor_corr = NULL;
+    Matrix *L_factor_corr = NULL;
 
     double z_rmse = -1.0;
     double x_rmse = -1.0;
@@ -193,10 +152,12 @@ int main(int argc, char *argv[]) {
     gene_cov_corr = mat_pearson_correlation(sim_cell_cov, fit_cell_cov);
 
     /* Compare learned factors in F */
-    F_col_mean_abs_corr = F_col_mean_correlation(sim_F->X, fit_F->X);
+    F_factor_corr = mat_factor_pearson_correlation(sim_F->X, fit_F->X, 0, 1);
+    F_col_mean_abs_corr = mat_diag_mean(F_factor_corr);
 
     /* Compare learned factors in L */
-    L_row_mean_abs_corr = L_row_mean_correlation(sim_L->X, fit_L->X);
+    L_factor_corr = mat_factor_pearson_correlation(sim_L->X, fit_L->X, 1, 1);
+    L_row_mean_abs_corr = mat_diag_mean(L_factor_corr);
 
     out = fopen(eval_summary_path, "w");
     fprintf(out, "metric\tvalue\n");
@@ -217,6 +178,10 @@ int main(int argc, char *argv[]) {
         mat_free(sim_cell_cov);
     if (fit_cell_cov != NULL)
         mat_free(fit_cell_cov);
+    if (F_factor_corr != NULL)
+        mat_free(F_factor_corr);
+    if (L_factor_corr != NULL)
+        mat_free(L_factor_corr);
     if (sim_F != NULL)
         gex_free_matrix_data(sim_F);
     if (sim_L != NULL)

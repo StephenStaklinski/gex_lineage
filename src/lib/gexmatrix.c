@@ -572,7 +572,7 @@ static double pearson_arrays(const double *a, const double *b, int n) {
     return num / sqrt(den_a * den_b);
 }
 
-Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows) {
+Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows, int absolute) {
     int i, j, k;
     int n_factors_a, n_factors_b, n_values;
     Matrix *corr = NULL;
@@ -611,7 +611,10 @@ Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows) {
                     b[k] = mat_get(B, k, j);
                 }
             }
-            mat_set(corr, i, j, pearson_arrays(a, b, n_values));
+            double r = pearson_arrays(a, b, n_values);
+            if (absolute && !isnan(r))
+                r = fabs(r);
+            mat_set(corr, i, j, r);
         }
     }
 

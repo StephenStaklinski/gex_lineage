@@ -549,11 +549,11 @@ int main(int argc, char *argv[]) {
         char **pca_factor_names = scalloc(pca->K, sizeof(char *));
 
         generate_names(pca_factor_names, pca->K, "PC");
-        factor_corr = mat_factor_pearson_correlation(pca->components, model->L, 1);
+        factor_corr = mat_factor_pearson_correlation(pca->components, model->L, 1, 0);
 
         if (factor_corr != NULL) {
             snprintf(factor_corr_path, sizeof(factor_corr_path),
-                     "%s.pca.model_factor_pearson.tsv", outprefix);
+                     "%s.pca.L.pearson_correlation.tsv", outprefix);
             write_labeled_matrix_tsv(factor_corr_path, factor_corr,
                                      pca_factor_names, pca->K,
                                      factor_names, k,
