@@ -542,6 +542,34 @@ int main(int argc, char *argv[]) {
 
     printf("Wrote resulting model parameters to outprefix %s\n", outprefix);
 
+    /* Compare the fitted factors to the initial PCA factors */
+    if (pca != NULL) {
+        Matrix *factor_corr = NULL;
+        char factor_corr_path[4096];
+        char **pca_factor_names = scalloc(pca->K, sizeof(char *));
+
+        generate_names(pca_factor_names, pca->K, "PC");
+        factor_corr = mat_factor_pearson_correlation(pca->components, model->L, 1);
+
+        if (factor_corr != NULL) {
+            snprintf(factor_corr_path, sizeof(factor_corr_path),
+                     "%s.pca.model_factor_pearson.tsv", outprefix);
+            write_labeled_matrix_tsv(factor_corr_path, factor_corr,
+                                     pca_factor_names, pca->K,
+                                     factor_names, k,
+                                     "PCA_factor");
+            mat_free(factor_corr);
+        } else {
+            fprintf(stderr, "WARNING: could not compute PCA/model factor Pearson correlations\n");
+        }
+
+        for (i = 0; i < pca->K; i++) {
+            if (pca_factor_names[i] != NULL)
+                free(pca_factor_names[i]);
+        }
+        free(pca_factor_names);
+    }
+
     /* Free memory */
     if (factor_names != NULL) {
         for (i = 0; i < k; i++) {

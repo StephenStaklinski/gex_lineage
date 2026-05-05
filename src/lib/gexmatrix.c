@@ -540,6 +540,87 @@ double mat_pearson_correlation(Matrix *A, Matrix *B) {
     return num / sqrt(den_a * den_b);
 }
 
+static double pearson_arrays(const double *a, const double *b, int n) {
+    int i;
+    double mean_a = 0.0;
+    double mean_b = 0.0;
+    double num = 0.0;
+    double den_a = 0.0;
+    double den_b = 0.0;
+
+    if (a == NULL || b == NULL || n <= 0)
+        return NAN;
+
+    for (i = 0; i < n; i++) {
+        mean_a += a[i];
+        mean_b += b[i];
+    }
+    mean_a /= (double)n;
+    mean_b /= (double)n;
+
+    for (i = 0; i < n; i++) {
+        double da = a[i] - mean_a;
+        double db = b[i] - mean_b;
+        num += da * db;
+        den_a += da * da;
+        den_b += db * db;
+    }
+
+    if (den_a <= 0.0 || den_b <= 0.0)
+        return NAN;
+
+    return num / sqrt(den_a * den_b);
+}
+
+Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows) {
+    int i, j, k;
+    int n_factors_a, n_factors_b, n_values;
+    Matrix *corr = NULL;
+    double *a = NULL;
+    double *b = NULL;
+
+    if (A == NULL || B == NULL)
+        return NULL;
+
+    if (compare_rows) {
+        if (A->ncols != B->ncols)
+            return NULL;
+        n_factors_a = A->nrows;
+        n_factors_b = B->nrows;
+        n_values = A->ncols;
+    } else {
+        if (A->nrows != B->nrows)
+            return NULL;
+        n_factors_a = A->ncols;
+        n_factors_b = B->ncols;
+        n_values = A->nrows;
+    }
+
+    corr = mat_new(n_factors_a, n_factors_b);
+    a = scalloc(n_values, sizeof(double));
+    b = scalloc(n_values, sizeof(double));
+
+    for (i = 0; i < n_factors_a; i++) {
+        for (j = 0; j < n_factors_b; j++) {
+            for (k = 0; k < n_values; k++) {
+                if (compare_rows) {
+                    a[k] = mat_get(A, i, k);
+                    b[k] = mat_get(B, j, k);
+                } else {
+                    a[k] = mat_get(A, k, i);
+                    b[k] = mat_get(B, k, j);
+                }
+            }
+            mat_set(corr, i, j, pearson_arrays(a, b, n_values));
+        }
+    }
+
+    free(a);
+    free(b);
+
+    return corr;
+}
+
 /* Compute the log-determinant of a matrix given its Cholesky factor L. */
 double mat_logdet_chol(Matrix *L) {
     int j;

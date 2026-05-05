@@ -74,6 +74,8 @@ double mat_rmse(Matrix *A, Matrix *B);
 
 double mat_pearson_correlation(Matrix *A, Matrix *B);
 
+Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows);
+
 double mat_logdet_chol(Matrix *L);
 
 double mat_logdet(Matrix *Sigma);
