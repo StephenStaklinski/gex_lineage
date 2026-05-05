@@ -891,6 +891,116 @@ void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_l
     free(order);
 }
 
+/* Performs varimax rotation on the fitted model factors to find a 
+more interpretable and sparse basis by maximizing the variance of the 
+squared loadings (cols of L; rows of F; how genes are loaded across a factor) */
+void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol) {
+    int i, j, a, b, c, iter;
+    int k;
+    int p;
+    Matrix *R = NULL;
+    Matrix *R_new = NULL;
+    Matrix *Lambda = NULL;
+    Matrix *B = NULL;
+    Matrix *U = NULL;
+    Matrix *VT = NULL;
+    Matrix *Rt = NULL;
+    Matrix *L_new = NULL;
+    Matrix *F_new = NULL;
+    Vector *S = NULL;
+    double *col_ss = NULL;
+    double prev_d = 0.0;
+    double gamma = 1.0;
+
+    if (L == NULL || F == NULL || L->nrows != F->ncols)
+        return;
+
+    k = L->nrows;
+    p = L->ncols;
+    if (k <= 1 || p <= 1)
+        return;
+    if (max_iter <= 0)
+        max_iter = 100;
+    if (tol <= 0.0)
+        tol = 1e-6;
+
+    R = mat_new(k, k);
+    R_new = mat_new(k, k);
+    Lambda = mat_new(p, k);
+    B = mat_new(k, k);
+    col_ss = scalloc(k, sizeof(double));
+    mat_set_identity(R);
+
+    for (iter = 0; iter < max_iter; iter++) {
+        double d = 0.0;
+
+        for (j = 0; j < p; j++) {
+            for (b = 0; b < k; b++) {
+                double val = 0.0;
+                for (c = 0; c < k; c++)
+                    val += mat_get(L, c, j) * mat_get(R, c, b);
+                mat_set(Lambda, j, b, val);
+            }
+        }
+
+        for (b = 0; b < k; b++) {
+            col_ss[b] = 0.0;
+            for (j = 0; j < p; j++) {
+                double val = mat_get(Lambda, j, b);
+                col_ss[b] += val * val;
+            }
+        }
+
+        for (a = 0; a < k; a++) {
+            for (b = 0; b < k; b++) {
+                double val = 0.0;
+                for (j = 0; j < p; j++) {
+                    double lambda = mat_get(Lambda, j, b);
+                    double phi = mat_get(L, a, j);
+                    val += phi * (lambda * lambda * lambda -
+                                  (gamma / (double)p) * lambda * col_ss[b]);
+                }
+                mat_set(B, a, b, val);
+            }
+        }
+
+        mat_svd_lapack(B, &U, &S, &VT);
+        mat_mult_lapack(R_new, U, VT);
+        for (i = 0; i < S->size; i++)
+            d += vec_get(S, i);
+
+        mat_copy(R, R_new);
+
+        if (U != NULL) mat_free(U);
+        if (VT != NULL) mat_free(VT);
+        if (S != NULL) vec_free(S);
+        U = NULL;
+        VT = NULL;
+        S = NULL;
+
+        if (iter > 0 && prev_d > 0.0 && d < prev_d * (1.0 + tol))
+            break;
+        prev_d = d;
+    }
+
+    Rt = mat_transpose(R);
+    L_new = mat_new(L->nrows, L->ncols);
+    F_new = mat_new(F->nrows, F->ncols);
+    mat_mult_lapack(L_new, Rt, L);
+    mat_mult_lapack(F_new, F, R);
+    mat_copy(L, L_new);
+    mat_copy(F, F_new);
+
+    if (R != NULL) mat_free(R);
+    if (R_new != NULL) mat_free(R_new);
+    if (Lambda != NULL) mat_free(Lambda);
+    if (B != NULL) mat_free(B);
+    if (Rt != NULL) mat_free(Rt);
+    if (L_new != NULL) mat_free(L_new);
+    if (F_new != NULL) mat_free(F_new);
+    if (col_ss != NULL) free(col_ss);
+}
+
 /* Main model entry point. Fit a low-rank factorization of the centered gene
 expression matrix that is regularized by a phylogenetic Brownian-motion prior.
 The data are modeled as X ≈ FL + E, where F (cells × latent factors) contains

@@ -51,6 +51,8 @@ void reorder_factors_by_row_norm(Matrix *L, Matrix *F);
 
 void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent);
 
+void varimax_rotate_model_factors(Matrix *L, Matrix *F, int max_iter, double tol);
+
 double gaussian_observation_term(Matrix *FL,
                                         Matrix *F,
                                         Matrix *L,

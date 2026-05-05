@@ -97,6 +97,7 @@ static void usage(const char *progname) {
         "[--filter-only] "
         "[--no-filter] "
         "[--no-preprocess] "
+        "[--varimax] "
         "[--verbose] "
         "[--verbose-log] "
         "[--seed S] "
@@ -122,6 +123,7 @@ int main(int argc, char *argv[]) {
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
+    int varimax = 0;    /* If nonzero, rotate fitted factors with varimax before writing outputs. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     int verbose_log = 0;    /* If nonzero, write the full optimization log. */
     int nthreads = 1;   /* Number of OpenMP threads to use */
@@ -273,6 +275,9 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--no-preprocess") == 0) {
             preprocess = 0;
+        }
+        else if (strcmp(argv[i], "--varimax") == 0) {
+            varimax = 1;
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
@@ -520,6 +525,13 @@ int main(int argc, char *argv[]) {
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
                                           outprefix, verbose_log);
+
+    if (varimax) {
+        printf("Applying varimax rotation to fitted factors before writing outputs...\n");
+        varimax_rotate_model_factors(model->L, model->F, 100, 1e-6);
+        post_hoc_sign_identifiability(model->L, model->F);
+        mat_mult_lapack(model->FL, model->F, model->L);
+    }
 
     /* Write the fitted latent Brownian model parameters to files */
     char **factor_names = scalloc(k, sizeof(char *));
