@@ -520,6 +520,31 @@ int main(int argc, char *argv[]) {
     }
     write_pca_tsv(outprefix, pca, gex_filtered);
 
+    /* Check for technical accuracy of PCA during testing */
+    if (pca != NULL && pca->components != NULL) {
+        char pca_gram_path[4096];
+        char **pca_factor_names = scalloc(pca->K, sizeof(char *));
+        Matrix *pca_components_t = mat_transpose(pca->components);
+        Matrix *pca_gram = mat_new(pca->K, pca->K);
+
+        generate_names(pca_factor_names, pca->K, "PC");
+        mat_mult_lapack(pca_gram, pca->components, pca_components_t);
+
+        snprintf(pca_gram_path, sizeof(pca_gram_path), "%s.pca.eigenvector_gram.tsv", outprefix);
+        write_labeled_matrix_tsv(pca_gram_path, pca_gram,
+                                 pca_factor_names, pca->K,
+                                 pca_factor_names, pca->K,
+                                 "PC");
+
+        for (i = 0; i < pca->K; i++) {
+            if (pca_factor_names[i] != NULL)
+                free(pca_factor_names[i]);
+        }
+        free(pca_factor_names);
+        mat_free(pca_components_t);
+        mat_free(pca_gram);
+    }
+
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
@@ -553,6 +578,23 @@ int main(int argc, char *argv[]) {
                         sigma2_obs, sigma2_latent);
 
     printf("Wrote resulting model parameters to outprefix %s\n", outprefix);
+    
+    /* Write out the gram matrix of L rows to check linear independence */
+    if (model != NULL && model->L != NULL) {
+        char l_gram_path[4096];
+        Matrix *Lt = mat_transpose(model->L);
+        Matrix *l_gram = mat_new(k, k);
+
+        mat_mult_lapack(l_gram, model->L, Lt);
+        snprintf(l_gram_path, sizeof(l_gram_path), "%s.L.gram.tsv", outprefix);
+        write_labeled_matrix_tsv(l_gram_path, l_gram,
+                                 factor_names, k,
+                                 factor_names, k,
+                                 "factor");
+
+        mat_free(Lt);
+        mat_free(l_gram);
+    }
 
     /* Compare the fitted factors to each other pairwise */
     Matrix *factor_corr = NULL;
