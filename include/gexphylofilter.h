@@ -21,6 +21,7 @@ typedef struct {
     double *zscores;
     double *pvals;
     double *qvals;
+    double *gene_variance;
     int n_genes;
 } MoranResult;
 
@@ -31,6 +32,7 @@ typedef struct {
     double *lrt_stat;
     double *pvals;
     double *qvals;
+    double *gene_variance;
     GexLRTAltMode alt_mode;
     int n_genes;
 } GexLRTResult;

@@ -28,6 +28,32 @@ static int gex_cmp_pval_asc(const void *a, const void *b) {
     return 0;
 }
 
+/* Compute the population variance for a gene expression column and clamp
+near-zero variance to zero. */
+static double gex_expression_col_variance(Matrix *X, int col) {
+    int i;
+    double mean = 0.0;
+    double variance = 0.0;
+    const double variance_tol = 1e-12;
+
+    if (X->nrows <= 1)
+        return 0.0;
+
+    for (i = 0; i < X->nrows; i++)
+        mean += mat_get(X, i, col);
+    mean /= (double)X->nrows;
+
+    for (i = 0; i < X->nrows; i++) {
+        double diff = mat_get(X, i, col) - mean;
+        variance += diff * diff;
+    }
+    variance /= (double)X->nrows;
+
+    if (!isfinite(variance) || variance <= variance_tol)
+        return 0.0;
+    return variance;
+}
+
 /* Adjust p-values for multiple testing using the Benjamini-Hochberg procedure.
 Fills the qvals array with the adjusted p-values. */
 static void gex_bh_adjust(double *pvals, double *qvals, int n) {
@@ -191,6 +217,7 @@ MoranResult *gex_compute_morans_i(Matrix *X,
     res->pvals = scalloc(n_genes, sizeof(double));
     res->qvals = scalloc(n_genes, sizeof(double));
     res->zscores = scalloc(n_genes, sizeof(double));
+    res->gene_variance = scalloc(n_genes, sizeof(double));
 
     /* Compute only the diagonal Moran statistic and its z-score per gene. */
     for (j = 0; j < n_genes; j++) {
@@ -199,6 +226,8 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         double ss4 = 0.0;
         double d1j, d2j;
 
+        res->gene_variance[j] = gex_expression_col_variance(X, j);
+
         for (t = 0; t < n; t++) {
             double zi = d0->data[t][j];
             double z2 = zi * zi;
@@ -206,6 +235,14 @@ MoranResult *gex_compute_morans_i(Matrix *X,
             numerator += zi * bi;
             ss2 += z2;
             ss4 += z2 * z2;
+        }
+
+        if (res->gene_variance[j] <= 0.0) {
+            Vjs[j] = 0.0;
+            res->morans_i[j] = 0.0;
+            res->zscores[j] = 0.0;
+            res->pvals[j] = 1.0;
+            continue;
         }
 
         d1j = ss2 / (double)n;
@@ -261,11 +298,12 @@ void write_moran_tsv(const char *filename,
     FILE *out;
 
     out = fopen(filename, "w");
-    fprintf(out, "gene\tphy_cor\tz_score\tp_value\tpadj\tkeep\n");
+    fprintf(out, "gene\tvariance\tphy_cor\tz_score\tp_value\tpadj\tkeep\n");
     for (i = 0; i < res->n_genes; i++) {
         int keep = (res->qvals[i] <= max_q);
-        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
+        fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
                 gex->gene_names[i],
+                res->gene_variance[i],
                 res->morans_i[i],
                 res->zscores[i],
                 res->pvals[i],
@@ -466,6 +504,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
     res->lrt_stat = scalloc(n_genes, sizeof(double));
     res->pvals = scalloc(n_genes, sizeof(double));
     res->qvals = scalloc(n_genes, sizeof(double));
+    res->gene_variance = scalloc(n_genes, sizeof(double));
     res->alt_mode = alt_mode;
     res->n_genes = n_genes;
 
@@ -498,15 +537,23 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
 
     for (j = 0; j < n_genes; j++) {
 
+        res->gene_variance[j] = gex_expression_col_variance(X, j);
+
         /* Extract gene expression data for the current gene across all cells */
         for (i = 0; i < n; i++)
             vec_set(y, i, mat_get(X_centered, i, j));
 
-        /* Calculate the variance of the gene expression data */
-        sigma20 = 0.0;
-        for (i = 0; i < n; i++)            
-            sigma20 += vec_get(y, i) * vec_get(y, i);
-        sigma20 /= (double)n;
+        sigma20 = res->gene_variance[j];
+
+        if (sigma20 <= 0.0) {
+            res->ll_null[j] = 0.0;
+            res->ll_alt[j] = 0.0;
+            if (res->lambda_hat != NULL)
+                res->lambda_hat[j] = 0.0;
+            res->lrt_stat[j] = 0.0;
+            res->pvals[j] = 1.0;
+            continue;
+        }
 
         /* Compute the log-likelihood under the null model */
         ll_null = gex_loglik_centered_gaussian_identity(n, sigma20);
@@ -647,15 +694,16 @@ void write_lrt_tsv(const char *filename,
     out = fopen(filename, "w");
 
     if (res->alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat != NULL)
-        fprintf(out, "gene\tll_null\tll_alt\tlambda_hat\tlrt_stat\tp_value\tq_value\tkeep\n");
+        fprintf(out, "gene\tvariance\tll_null\tll_alt\tlambda_hat\tlrt_stat\tp_value\tq_value\tkeep\n");
     else
-        fprintf(out, "gene\tll_null\tll_alt\tlrt_stat\tp_value\tq_value\tkeep\n");
+        fprintf(out, "gene\tvariance\tll_null\tll_alt\tlrt_stat\tp_value\tq_value\tkeep\n");
 
     for (i = 0; i < res->n_genes; i++) {
         int keep = (res->qvals[i] <= max_q && res->lrt_stat[i] > 0.0);
         if (res->alt_mode == GEX_LRT_ALT_LAMBDA && res->lambda_hat != NULL) {
-            fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
+            fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
                     gex->gene_names[i],
+                    res->gene_variance[i],
                     res->ll_null[i],
                     res->ll_alt[i],
                     res->lambda_hat[i],
@@ -665,8 +713,9 @@ void write_lrt_tsv(const char *filename,
                     (keep ? "True" : "False"));
         }
         else {
-            fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
+            fprintf(out, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%s\n",
                     gex->gene_names[i],
+                    res->gene_variance[i],
                     res->ll_null[i],
                     res->ll_alt[i],
                     res->lrt_stat[i],
@@ -689,6 +738,8 @@ void free_moran_result(MoranResult *res) {
         free(res->pvals);
     if (res->qvals != NULL)
         free(res->qvals);
+    if (res->gene_variance != NULL)
+        free(res->gene_variance);
 
     free(res);
 }
@@ -709,6 +760,8 @@ void free_lrt_result(GexLRTResult *res) {
         free(res->ll_alt);
     if (res->lambda_hat != NULL)
         free(res->lambda_hat);
+    if (res->gene_variance != NULL)
+        free(res->gene_variance);
     free(res);
 }
 
