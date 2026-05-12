@@ -1175,6 +1175,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
     int patience = 100;     /* Number of steps without meaningful smoothed improvement before stopping */
     int steps_since_best = 0; /* Number of steps since the best EMA objective improved meaningfully */
+    int lr_reductions = 0;  /* Number of plateau-triggered learning-rate reductions used so far */
+    int max_lr_reductions = 5; /* Number of learning-rate reductions to try before declaring convergence */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
     double objective_tol = 1e-3; /* Relative EMA improvement needed to reset patience */
     double ema_beta = 0.99;  /* Exponential smoothing coefficient for the objective */
@@ -1326,8 +1328,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Adam hyperparameters */
     double base_lr = 0.1;   /* Base learning rate for Adam */
     double min_lr = 1e-6;   /* Floor for learning rate to prevent it from going to zero */
+    double lr_decay_factor = 0.5; /* Multiplicative decay used when the EMA objective plateaus */
     double lr = base_lr;
-    int lr_decay_max_steps = max_steps / 2; /* Decay lr to try to finish in half the total max time */
     double clip_beta = 0.98;
     double clip_factor = 2.0;
     double clip_floor = 1.0;
@@ -1436,8 +1438,24 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
         
 
+        /* Keep the learning rate fixed while the EMA objective is improving.
+           When it plateaus for patience steps, try a multiplicative reduction
+           before allowing the same plateau rule to terminate optimization. */
+        if (step >= min_steps && steps_since_best >= patience) {
+            if (lr_reductions < max_lr_reductions && lr > min_lr) {
+                lr *= lr_decay_factor;
+                if (lr < min_lr)
+                    lr = min_lr;
+                lr_reductions++;
+                steps_since_best = 0;
+            }
+            else {
+                converged = 1;
+                break;
+            }
+        }
+
         /* Perturb the model parameters */
-        lr = adam_cosine_lr(lr, base_lr, min_lr, step, lr_decay_max_steps);
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
@@ -1495,11 +1513,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     model->l1_objective);
         }
 
-        /* Check the convergence rule and break if satisfied. */
-        if (step >= min_steps && steps_since_best >= patience) {
-            converged = 1;
-            break;
-        }
+        /* Convergence is checked before the parameter update so plateaued
+           steps can first trigger learning-rate reductions. */
     }
 
     /* Compute the final state objective and gradients. */
