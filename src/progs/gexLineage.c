@@ -3,6 +3,7 @@
 #include "gexmatrix.h"
 #include "gexmisc.h"
 #include "gexmodel.h"
+#include "gexlatentflow.h"
 #include "gexparser.h"
 #include "gexpca.h"
 #include "gexphylofilter.h"
@@ -95,6 +96,7 @@ static void usage(const char *progname) {
         "[--max-q Q] "
         "[--moran-min-i I] "
         "[--filter-only] "
+        "[--no-write-latent-flow] "
         "[--no-filter] "
         "[--no-preprocess] "
         "[--varimax] "
@@ -121,6 +123,7 @@ int main(int argc, char *argv[]) {
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
+    int write_latent_flow = 1; /* If nonzero, write PCA-projected latent tree states and flow edges. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int varimax = 0;    /* If nonzero, rotate fitted factors with varimax before writing outputs. */
@@ -269,6 +272,9 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
+        }
+        else if (strcmp(argv[i], "--no-write-latent-flow") == 0) {
+            write_latent_flow = 0;
         }
         else if (strcmp(argv[i], "--no-filter") == 0) {
             no_filter = 1;
@@ -556,6 +562,14 @@ int main(int argc, char *argv[]) {
         varimax_rotate_model_factors(model->L, model->F, outprefix, 1000, 1e-6);
         post_hoc_sign_identifiability(model->L, model->F);
         mat_mult_lapack(model->FL, model->F, model->L);
+    }
+
+    if (write_latent_flow) {
+        printf("Writing PCA-projected latent flow outputs...\n");
+        if (gex_write_latent_flow_outputs(outprefix, trees, 1, gex_filtered, model) != 0) {
+            fprintf(stderr, "ERROR: failed to write latent flow outputs.\n");
+            return 1;
+        }
     }
 
     /* Write the fitted latent Brownian model parameters to files */

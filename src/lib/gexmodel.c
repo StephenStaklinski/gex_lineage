@@ -565,6 +565,79 @@ double gex_brownian_prior_from_trees(Matrix *F,
     return obj;
 }
 
+Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
+                                            Matrix *F,
+                                            double *log_sigma2_latent,
+                                            char **cell_names) {
+    int d, i;
+    TreeNode **postorder = NULL;
+    int n_postorder = 0;
+    int *tip_index_by_id = NULL;
+    double *mean = NULL;
+    double *var = NULL;
+    double *adjoint = NULL;
+    double *z = NULL;
+    Matrix *states = NULL;
+
+    if (tree == NULL || F == NULL || log_sigma2_latent == NULL || cell_names == NULL)
+        return NULL;
+
+    if (init_brownian_pruning_tree(tree, cell_names, F->nrows,
+                                   &postorder, &n_postorder,
+                                   &tip_index_by_id) != 0)
+        return NULL;
+
+    states = mat_new(tree->nnodes, F->ncols);
+    mean = scalloc(tree->nnodes, sizeof(double));
+    var = scalloc(tree->nnodes, sizeof(double));
+    adjoint = scalloc(tree->nnodes, sizeof(double));
+    z = scalloc(F->nrows, sizeof(double));
+
+    for (d = 0; d < F->ncols; d++) {
+        double sigma2_d = exp(log_sigma2_latent[d]);
+
+        for (i = 0; i < F->nrows; i++)
+            z[i] = mat_get(F, i, d);
+
+        /* Brownian pruning conditions internal latent states on observed tip
+           states. Directionality is not inferred by Brownian motion itself; it
+           comes later from traversing the rooted tree from parent to child. */
+        if (!isfinite(brownian_prune_neglog_and_grad(tree,
+                                                     postorder,
+                                                     n_postorder,
+                                                     tip_index_by_id,
+                                                     mean,
+                                                     var,
+                                                     adjoint,
+                                                     z,
+                                                     sigma2_d,
+                                                     NULL,
+                                                     NULL))) {
+            mat_free(states);
+            states = NULL;
+            break;
+        }
+
+        for (i = 0; i < tree->nnodes; i++)
+            mat_set(states, i, d, mean[i]);
+    }
+
+    if (postorder != NULL)
+        free(postorder);
+    if (tip_index_by_id != NULL)
+        free(tip_index_by_id);
+    if (mean != NULL)
+        free(mean);
+    if (var != NULL)
+        free(var);
+    if (adjoint != NULL)
+        free(adjoint);
+    if (z != NULL)
+        free(z);
+
+    return states;
+}
+
 static double tree_tip_variance(TreeNode *tree) {
     TreeNode *node = tree;
     double variance;

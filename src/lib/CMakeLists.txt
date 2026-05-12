@@ -10,6 +10,7 @@ add_library(vine_core STATIC
     geometry.c
     gexadam.c
     gexbrownian.c
+    gexlatentflow.c
     gexmatrix.c
     gexmisc.c
     gexmodel.c

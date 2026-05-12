@@ -80,6 +80,11 @@ double gex_brownian_prior_from_trees(Matrix *F,
                                         Matrix *grad_F,
                                         double *grad_log_sigma_latent);
 
+Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
+                                            Matrix *F,
+                                            double *log_sigma2_latent,
+                                            char **cell_names);
+
 void write_summary_tsv(const char *path,
                         int n_cells,
                         int n_genes,
