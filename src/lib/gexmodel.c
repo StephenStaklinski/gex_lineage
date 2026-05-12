@@ -1168,10 +1168,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       GexScaleInvarConstraint scale_invar_constraint,
                                                       double L_l1_strength,
                                                       const char *outprefix,
+                                                      int max_iter,
                                                       int verbose_log) {
     /* Optimization related */
     int step;   /* Optimization step */
-    int max_steps = 100000;   /* Maximum number of optimization steps to prevent infinite run */
+    int max_steps = max_iter;   /* Maximum number of optimization steps to prevent infinite run */
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
     int patience = 100;     /* Number of steps without meaningful smoothed improvement before stopping */
     int steps_since_best = 0; /* Number of steps since the best EMA objective improved meaningfully */

@@ -89,6 +89,7 @@ static void usage(const char *progname) {
         "[--scale-invar-constraint sigma2s|Lrows] "
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
+        "[--max-iter N] "
         "[--dim K] "
         "[--pca-method phylopca|pca|none] "
         "[--pca-var-threshold V] "
@@ -121,6 +122,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
+    int max_iter = 100000;  /* Maximum number of optimization iterations for latent model fitting. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
@@ -239,6 +241,13 @@ int main(int argc, char *argv[]) {
             }
             L_l1_strength = atof(argv[++i]);
         }
+        else if (strcmp(argv[i], "--max-iter") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            max_iter = atoi(argv[++i]);
+        }
         else if (strcmp(argv[i], "--dim") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -355,6 +364,10 @@ int main(int argc, char *argv[]) {
 
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
+        return 1;
+    }
+    if (max_iter <= 0) {
+        fprintf(stderr, "ERROR: --max-iter must be positive.\n");
         return 1;
     }
 
@@ -555,7 +568,7 @@ int main(int argc, char *argv[]) {
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
-                                          outprefix, verbose_log);
+                                          outprefix, max_iter, verbose_log);
 
     if (varimax) {
         printf("Applying varimax rotation to fitted factors before writing outputs...\n");
