@@ -9,50 +9,28 @@
 #include <phast/misc.h>
 #include <phast/trees.h>
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static void collect_tree_nodes_and_depths(TreeNode *node,
-                                          TreeNode **nodes_by_id,
-                                          double *depth_by_id,
-                                          double depth) {
-    if (node == NULL)
-        return;
-
-    nodes_by_id[node->id] = node;
-    depth_by_id[node->id] = depth;
-
-    if (node->lchild != NULL)
-        collect_tree_nodes_and_depths(node->lchild, nodes_by_id, depth_by_id,
-                                      depth + node->lchild->dparent);
-    if (node->rchild != NULL)
-        collect_tree_nodes_and_depths(node->rchild, nodes_by_id, depth_by_id,
-                                      depth + node->rchild->dparent);
-}
-
-static TreeNode *find_tip_by_name(TreeNode *node, const char *name) {
-    TreeNode *found = NULL;
-
-    if (node == NULL || name == NULL)
-        return NULL;
-
-    if (node->lchild == NULL && node->rchild == NULL &&
-        node->name != NULL && strcmp(node->name, name) == 0)
-        return node;
-
-    found = find_tip_by_name(node->lchild, name);
-    if (found != NULL)
-        return found;
-    return find_tip_by_name(node->rchild, name);
-}
 
 static const char *node_output_name(TreeNode *node, char *buf, size_t buf_size) {
     if (node->name != NULL && node->name[0] != '\0' && strcmp(node->name, ";") != 0)
         return node->name;
     snprintf(buf, buf_size, "node_%d", node->id);
     return buf;
+}
+
+static int find_cell_index(char **cell_names, int n_cells, const char *name) {
+    int i;
+
+    if (cell_names == NULL || name == NULL)
+        return -1;
+
+    for (i = 0; i < n_cells; i++) {
+        if (cell_names[i] != NULL && strcmp(cell_names[i], name) == 0)
+            return i;
+    }
+    return -1;
 }
 
 static void project_latent_state(Matrix *states,
@@ -77,261 +55,114 @@ static void project_latent_state(Matrix *states,
     }
 }
 
-static void print_factor_header(FILE *fh, int k) {
+static void project_factor_values(double *values,
+                                  int k,
+                                  PCA *latent_pca,
+                                  double *tip_factor_means,
+                                  double *pc1,
+                                  double *pc2) {
     int d;
 
-    for (d = 0; d < k; d++)
-        fprintf(fh, "\tfactor_%d", d + 1);
-    fprintf(fh, "\n");
+    *pc1 = 0.0;
+    *pc2 = 0.0;
+    if (values == NULL || latent_pca == NULL || latent_pca->components == NULL)
+        return;
+
+    for (d = 0; d < k; d++) {
+        double centered = values[d] - tip_factor_means[d];
+        if (latent_pca->K >= 1)
+            *pc1 += centered * mat_get(latent_pca->components, 0, d);
+        if (latent_pca->K >= 2)
+            *pc2 += centered * mat_get(latent_pca->components, 1, d);
+    }
 }
 
-static int write_latent_nodes_pca_tsv(const char *path,
-                                      TreeNode *tree,
-                                      TreeNode **nodes_by_id,
-                                      double *depth_by_id,
-                                      Matrix *states,
-                                      PCA *latent_pca,
-                                      double *tip_factor_means) {
-    int id, d;
-    FILE *fh = fopen(path, "w");
+static int write_latent_flow_tsv(const char *outprefix,
+                                 TreeNode *tree,
+                                 Matrix *states,
+                                 PCA *latent_pca,
+                                 double *tip_factor_means,
+                                 Matrix *F,
+                                 char **cell_names) {
+    int i, d;
+    char path[4096];
+    FILE *fh = NULL;
+    List *preorder = NULL;
 
+    tr_set_nnodes(tree);
+    preorder = tr_preorder(tree);
+
+    snprintf(path, sizeof(path), "%s.latent_flow.tsv", outprefix);
+    fh = fopen(path, "w");
     if (fh == NULL) {
         fprintf(stderr, "ERROR: could not open %s for writing.\n", path);
         return -1;
     }
 
-    fprintf(fh, "node_id\tnode_name\tis_tip\ttree_depth\tpc1\tpc2");
-    print_factor_header(fh, states->ncols);
+    fprintf(fh, "node_id\tparent_id\tnode_name\tparent_name\tis_tip\ttree_depth\tbranch_length\tpc1\tpc2");
+    for (d = 0; d < states->ncols; d++)
+        fprintf(fh, "\tfactor_%d", d + 1);
+    fprintf(fh, "\n");
 
-    for (id = 0; id < tree->nnodes; id++) {
-        TreeNode *node = nodes_by_id[id];
+    for (i = 0; i < lst_size(preorder); i++) {
+        TreeNode *node = lst_get_ptr(preorder, i);
         char name_buf[64];
+        char parent_name_buf[64];
+        const char *name;
+        const char *parent_name = "NA";
+        int parent_id = -1;
+        int is_tip;
+        int cell_index = -1;
         double pc1, pc2;
+        double *tip_values = NULL;
 
         if (node == NULL)
             continue;
 
-        project_latent_state(states, latent_pca, tip_factor_means, id, &pc1, &pc2);
-        fprintf(fh, "%d\t%s\t%d\t%.17g\t%.17g\t%.17g",
-                id,
-                node_output_name(node, name_buf, sizeof(name_buf)),
-                (node->lchild == NULL && node->rchild == NULL) ? 1 : 0,
-                depth_by_id[id],
-                pc1,
-                pc2);
-        for (d = 0; d < states->ncols; d++)
-            fprintf(fh, "\t%.17g", mat_get(states, id, d));
-        fprintf(fh, "\n");
-    }
+        name = node_output_name(node, name_buf, sizeof(name_buf));
+        if (node->parent != NULL) {
+            parent_id = node->parent->id;
+            parent_name = node_output_name(node->parent, parent_name_buf,
+                                           sizeof(parent_name_buf));
+        }
+        is_tip = (node->lchild == NULL && node->rchild == NULL);
 
-    fclose(fh);
-    return 0;
-}
-
-static int write_latent_flow_edge(FILE *fh,
-                                  TreeNode *parent,
-                                  TreeNode *child,
-                                  double *depth_by_id,
-                                  Matrix *states,
-                                  PCA *latent_pca,
-                                  double *tip_factor_means) {
-    int d;
-    char parent_name_buf[64];
-    char child_name_buf[64];
-    double parent_pc1, parent_pc2, child_pc1, child_pc2;
-    double latent_delta_norm = 0.0;
-
-    if (parent == NULL || child == NULL)
-        return 0;
-
-    project_latent_state(states, latent_pca, tip_factor_means,
-                         parent->id, &parent_pc1, &parent_pc2);
-    project_latent_state(states, latent_pca, tip_factor_means,
-                         child->id, &child_pc1, &child_pc2);
-
-    for (d = 0; d < states->ncols; d++) {
-        double diff = mat_get(states, child->id, d) - mat_get(states, parent->id, d);
-        latent_delta_norm += diff * diff;
-    }
-    latent_delta_norm = sqrt(latent_delta_norm);
-
-    fprintf(fh, "%d\t%d\t%s\t%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\n",
-            parent->id,
-            child->id,
-            node_output_name(parent, parent_name_buf, sizeof(parent_name_buf)),
-            node_output_name(child, child_name_buf, sizeof(child_name_buf)),
-            parent_pc1,
-            parent_pc2,
-            child_pc1,
-            child_pc2,
-            child_pc1 - parent_pc1,
-            child_pc2 - parent_pc2,
-            child->dparent,
-            latent_delta_norm,
-            depth_by_id[parent->id],
-            depth_by_id[child->id]);
-
-    return 0;
-}
-
-static int write_latent_flow_edges_recursive(FILE *fh,
-                                             TreeNode *node,
-                                             double *depth_by_id,
-                                             Matrix *states,
-                                             PCA *latent_pca,
-                                             double *tip_factor_means) {
-    if (node == NULL)
-        return 0;
-
-    /* Brownian motion reconstructs latent states along the tree, while flow
-       direction comes from the rooted parent-to-child tree orientation. */
-    write_latent_flow_edge(fh, node, node->lchild, depth_by_id, states,
-                           latent_pca, tip_factor_means);
-    write_latent_flow_edge(fh, node, node->rchild, depth_by_id, states,
-                           latent_pca, tip_factor_means);
-
-    write_latent_flow_edges_recursive(fh, node->lchild, depth_by_id, states,
-                                      latent_pca, tip_factor_means);
-    write_latent_flow_edges_recursive(fh, node->rchild, depth_by_id, states,
-                                      latent_pca, tip_factor_means);
-    return 0;
-}
-
-static int write_latent_flow_edges_pca_tsv(const char *path,
-                                           TreeNode *tree,
-                                           double *depth_by_id,
-                                           Matrix *states,
-                                           PCA *latent_pca,
-                                           double *tip_factor_means) {
-    FILE *fh = fopen(path, "w");
-
-    if (fh == NULL) {
-        fprintf(stderr, "ERROR: could not open %s for writing.\n", path);
-        return -1;
-    }
-
-    fprintf(fh, "parent_node_id\tchild_node_id\tparent_name\tchild_name\tparent_pc1\tparent_pc2\tchild_pc1\tchild_pc2\tdelta_pc1\tdelta_pc2\tbranch_length\tlatent_delta_norm\ttree_depth_parent\ttree_depth_child\n");
-    write_latent_flow_edges_recursive(fh, tree, depth_by_id, states,
-                                      latent_pca, tip_factor_means);
-
-    fclose(fh);
-    return 0;
-}
-
-static int write_developmental_scores_tsv(const char *path,
-                                          TreeNode *tree,
-                                          double *depth_by_id,
-                                          Matrix *states,
-                                          PCA *latent_pca,
-                                          double *tip_factor_means,
-                                          char **cell_names,
-                                          int n_cells) {
-    int i, d;
-    FILE *fh = fopen(path, "w");
-    double root_pc1, root_pc2;
-
-    if (fh == NULL) {
-        fprintf(stderr, "ERROR: could not open %s for writing.\n", path);
-        return -1;
-    }
-
-    project_latent_state(states, latent_pca, tip_factor_means, tree->id,
-                         &root_pc1, &root_pc2);
-
-    fprintf(fh, "cell\ttree_depth\tlatent_distance_from_root\tprojected_distance_from_root\tpc1\tpc2");
-    print_factor_header(fh, states->ncols);
-
-    for (i = 0; i < n_cells; i++) {
-        TreeNode *tip = find_tip_by_name(tree, cell_names[i]);
-        double pc1, pc2;
-        double latent_distance = 0.0;
-        double projected_distance;
-
-        if (tip == NULL) {
-            fclose(fh);
-            fprintf(stderr, "ERROR: could not find cell '%s' in tree while writing developmental scores.\n",
-                    cell_names[i]);
-            return -1;
+        if (is_tip) {
+            cell_index = find_cell_index(cell_names, F->nrows, name);
+            if (cell_index < 0) {
+                fclose(fh);
+                fprintf(stderr, "ERROR: could not find tip '%s' in expression data while writing latent flow.\n",
+                        name);
+                return -1;
+            }
+            tip_values = F->data[cell_index];
+            project_factor_values(tip_values, F->ncols, latent_pca,
+                                  tip_factor_means, &pc1, &pc2);
+        }
+        else {
+            project_latent_state(states, latent_pca, tip_factor_means,
+                                 node->id, &pc1, &pc2);
         }
 
-        project_latent_state(states, latent_pca, tip_factor_means, tip->id, &pc1, &pc2);
+        fprintf(fh, "%d\t%d\t%s\t%s\t%d\t%.17g\t%.17g\t%.17g\t%.17g",
+                node->id,
+                parent_id,
+                name,
+                parent_name,
+                is_tip ? 1 : 0,
+                tr_distance_to_root(node),
+                node->parent == NULL ? 0.0 : node->dparent,
+                pc1,
+                pc2);
         for (d = 0; d < states->ncols; d++) {
-            double diff = mat_get(states, tip->id, d) - mat_get(states, tree->id, d);
-            latent_distance += diff * diff;
+            double value = is_tip ? tip_values[d] : mat_get(states, node->id, d);
+            fprintf(fh, "\t%.17g", value);
         }
-        latent_distance = sqrt(latent_distance);
-        projected_distance = sqrt((pc1 - root_pc1) * (pc1 - root_pc1) +
-                                  (pc2 - root_pc2) * (pc2 - root_pc2));
-
-        fprintf(fh, "%s\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
-                cell_names[i],
-                depth_by_id[tip->id],
-                latent_distance,
-                projected_distance,
-                pc1,
-                pc2);
-        for (d = 0; d < states->ncols; d++)
-            fprintf(fh, "\t%.17g", mat_get(states, tip->id, d));
         fprintf(fh, "\n");
     }
 
     fclose(fh);
     return 0;
-}
-
-static int write_latent_flow_for_tree(const char *outprefix,
-                                      int tree_index,
-                                      int write_aliases,
-                                      TreeNode *tree,
-                                      Matrix *states,
-                                      PCA *latent_pca,
-                                      double *tip_factor_means,
-                                      char **cell_names,
-                                      int n_cells) {
-    char path[4096];
-    TreeNode **nodes_by_id = NULL;
-    double *depth_by_id = NULL;
-    int status = 0;
-
-    tr_set_nnodes(tree);
-    nodes_by_id = scalloc(tree->nnodes, sizeof(TreeNode *));
-    depth_by_id = scalloc(tree->nnodes, sizeof(double));
-    collect_tree_nodes_and_depths(tree, nodes_by_id, depth_by_id, 0.0);
-
-    snprintf(path, sizeof(path), "%s.tree%d.latent_nodes.pca.tsv", outprefix, tree_index + 1);
-    status |= write_latent_nodes_pca_tsv(path, tree, nodes_by_id, depth_by_id,
-                                         states, latent_pca, tip_factor_means);
-
-    snprintf(path, sizeof(path), "%s.tree%d.latent_flow_edges.pca.tsv", outprefix, tree_index + 1);
-    status |= write_latent_flow_edges_pca_tsv(path, tree, depth_by_id,
-                                              states, latent_pca, tip_factor_means);
-
-    snprintf(path, sizeof(path), "%s.tree%d.developmental_scores.tsv", outprefix, tree_index + 1);
-    status |= write_developmental_scores_tsv(path, tree, depth_by_id,
-                                             states, latent_pca, tip_factor_means,
-                                             cell_names, n_cells);
-
-    if (write_aliases) {
-        snprintf(path, sizeof(path), "%s.latent_nodes.pca.tsv", outprefix);
-        status |= write_latent_nodes_pca_tsv(path, tree, nodes_by_id, depth_by_id,
-                                             states, latent_pca, tip_factor_means);
-
-        snprintf(path, sizeof(path), "%s.latent_flow_edges.pca.tsv", outprefix);
-        status |= write_latent_flow_edges_pca_tsv(path, tree, depth_by_id,
-                                                  states, latent_pca, tip_factor_means);
-
-        snprintf(path, sizeof(path), "%s.developmental_scores.tsv", outprefix);
-        status |= write_developmental_scores_tsv(path, tree, depth_by_id,
-                                                 states, latent_pca, tip_factor_means,
-                                                 cell_names, n_cells);
-    }
-
-    if (nodes_by_id != NULL)
-        free(nodes_by_id);
-    if (depth_by_id != NULL)
-        free(depth_by_id);
-
-    return status == 0 ? 0 : -1;
 }
 
 int gex_write_latent_flow_outputs(const char *outprefix,
@@ -339,10 +170,11 @@ int gex_write_latent_flow_outputs(const char *outprefix,
                                   int n_trees,
                                   GexMatrix *gex,
                                   GexLatentBrownianModel *model) {
-    int t, i, d;
+    int i, d;
     int n_pcs;
     double *tip_factor_means = NULL;
     PCA *latent_pca = NULL;
+    Matrix *states = NULL;
     int status = 0;
 
     if (outprefix == NULL || trees == NULL || n_trees <= 0 ||
@@ -362,25 +194,20 @@ int gex_write_latent_flow_outputs(const char *outprefix,
         tip_factor_means[d] /= (double)model->F->nrows;
     }
 
-    for (t = 0; t < n_trees; t++) {
-        Matrix *states = gex_reconstruct_latent_tree_states(trees[t],
-                                                            model->F,
-                                                            model->log_sigma2_latent,
-                                                            gex->cell_names);
-        if (states == NULL) {
-            fprintf(stderr, "ERROR: failed to reconstruct latent states for tree %d.\n", t + 1);
+    states = gex_reconstruct_latent_tree_states(trees[0],
+                                                model->F,
+                                                model->log_sigma2_latent,
+                                                gex->cell_names);
+    if (states == NULL) {
+        fprintf(stderr, "ERROR: failed to reconstruct latent states for tree 1.\n");
+        status = -1;
+    }
+    else {
+        if (write_latent_flow_tsv(outprefix, trees[0], states, latent_pca,
+                                  tip_factor_means, model->F,
+                                  gex->cell_names) != 0)
             status = -1;
-            break;
-        }
-
-        if (write_latent_flow_for_tree(outprefix, t, n_trees == 1, trees[t],
-                                       states, latent_pca, tip_factor_means,
-                                       gex->cell_names, gex->X->nrows) != 0)
-            status = -1;
-
         mat_free(states);
-        if (status != 0)
-            break;
     }
 
     if (latent_pca != NULL)

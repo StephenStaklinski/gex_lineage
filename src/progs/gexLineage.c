@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
-    int write_latent_flow = 1; /* If nonzero, write PCA-projected latent tree states and flow edges. */
+    int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int varimax = 0;    /* If nonzero, rotate fitted factors with varimax before writing outputs. */
@@ -565,7 +565,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (write_latent_flow) {
-        printf("Writing PCA-projected latent flow outputs...\n");
+        printf("Writing latent flow table...\n");
         if (gex_write_latent_flow_outputs(outprefix, trees, 1, gex_filtered, model) != 0) {
             fprintf(stderr, "ERROR: failed to write latent flow outputs.\n");
             return 1;
