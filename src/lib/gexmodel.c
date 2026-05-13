@@ -23,6 +23,86 @@ static double brownian_branch_variance(double sigma2, double branch_length) {
     return sigma2 * max(branch_length, 1e-8);
 }
 
+#ifdef VINE_HAS_OPENMP
+static int should_parallelize_observation(int n, int p, int k) {
+    (void)k;
+    return ((long long)n * (long long)p >= 100000 && omp_get_max_threads() > 1);
+}
+#else
+static int should_parallelize_observation(int n, int p, int k) {
+    (void)n;
+    (void)p;
+    (void)k;
+    return 0;
+}
+#endif
+
+static void gaussian_observation_row_block(Matrix *FL,
+                                           Matrix *F,
+                                           Matrix *L,
+                                           Matrix *Xc,
+                                           Matrix *grad_F,
+                                           Matrix *grad_L_matrix,
+                                           double *grad_L_flat,
+                                           int i_start,
+                                           int i_end,
+                                           int n,
+                                           int p,
+                                           int k,
+                                           double inv_sigma2_obs,
+                                           double *ss_out,
+                                           double *pred_ss_out) {
+    int i, j, d;
+    double ss = 0.0;
+    double pred_ss = 0.0;
+
+    (void)n;
+
+    for (i = i_start; i < i_end; i++) {
+        double *Xc_i = Xc->data[i];
+        double *F_i = F->data[i];
+        double *FL_i = (FL != NULL ? FL->data[i] : NULL);
+        double *grad_F_i = (grad_F != NULL ? grad_F->data[i] : NULL);
+
+        for (j = 0; j < p; j++) {
+            double pred = 0.0;
+            double r;
+            double scaled_neg_r;
+
+            for (d = 0; d < k; d++)
+                pred += F_i[d] * L->data[d][j];
+            pred_ss += pred * pred;
+
+            if (FL_i != NULL)
+                FL_i[j] = pred;
+
+            r = Xc_i[j] - pred;
+            ss += r * r;
+            scaled_neg_r = -r * inv_sigma2_obs;
+
+            if (grad_F_i != NULL) {
+                for (d = 0; d < k; d++)
+                    grad_F_i[d] += scaled_neg_r * L->data[d][j];
+            }
+
+            if (grad_L_matrix != NULL) {
+                for (d = 0; d < k; d++)
+                    grad_L_matrix->data[d][j] += scaled_neg_r * F_i[d];
+            }
+            else if (grad_L_flat != NULL) {
+                for (d = 0; d < k; d++)
+                    grad_L_flat[(size_t)d * (size_t)p + (size_t)j] +=
+                        scaled_neg_r * F_i[d];
+            }
+        }
+    }
+
+    if (ss_out != NULL)
+        *ss_out = ss;
+    if (pred_ss_out != NULL)
+        *pred_ss_out = pred_ss;
+}
+
 /* Compute Gaussian observation negative log-likelihood and gradients for
 X ~ N(FL, sigma2_obs). Returns the full contribution to the objective,
 including the Gaussian normalization constant, fills residual matrix,
@@ -36,7 +116,7 @@ double gaussian_observation_term(Matrix *FL,
                                     Matrix *grad_L,
                                     double *grad_log_sigma_obs,
                                     double *FL_frobenius_norm) {
-    int i, j, d;
+    int d, j;
     int n = Xc->nrows;
     int p = Xc->ncols;
     int k = F->ncols;
@@ -55,8 +135,8 @@ double gaussian_observation_term(Matrix *FL,
     if (FL_frobenius_norm != NULL)
         *FL_frobenius_norm = 0.0;
 
+    if (should_parallelize_observation(n, p, k)) {
 #ifdef VINE_HAS_OPENMP
-    if ((long long)n * (long long)p >= 100000 && omp_get_max_threads() > 1) {
         int t;
         int nthreads = omp_get_max_threads();
         double *thread_ss = scalloc(nthreads, sizeof(double));
@@ -72,49 +152,17 @@ double gaussian_observation_term(Matrix *FL,
 #pragma omp parallel
         {
             int tid = omp_get_thread_num();
-            double local_ss = 0.0;
-            double local_pred_ss = 0.0;
+            int actual_nthreads = omp_get_num_threads();
+            int i_start = (tid * n) / actual_nthreads;
+            int i_end = ((tid + 1) * n) / actual_nthreads;
             double *local_grad_L = (thread_grad_L != NULL ? thread_grad_L[tid] : NULL);
-            int i_thread, j_thread, d_thread;
 
-#pragma omp for schedule(static)
-            for (i_thread = 0; i_thread < n; i_thread++) {
-                double *Xc_i = Xc->data[i_thread];
-                double *F_i = F->data[i_thread];
-                double *FL_i = (FL != NULL ? FL->data[i_thread] : NULL);
-                double *grad_F_i = (grad_F != NULL ? grad_F->data[i_thread] : NULL);
-
-                for (j_thread = 0; j_thread < p; j_thread++) {
-                    double pred = 0.0;
-                    double r;
-                    double scaled_neg_r;
-
-                    for (d_thread = 0; d_thread < k; d_thread++)
-                        pred += F_i[d_thread] * L->data[d_thread][j_thread];
-                    local_pred_ss += pred * pred;
-
-                    if (FL_i != NULL)
-                        FL_i[j_thread] = pred;
-
-                    r = Xc_i[j_thread] - pred;
-                    local_ss += r * r;
-                    scaled_neg_r = -r * inv_sigma2_obs;
-
-                    if (grad_F_i != NULL) {
-                        for (d_thread = 0; d_thread < k; d_thread++)
-                            grad_F_i[d_thread] += scaled_neg_r * L->data[d_thread][j_thread];
-                    }
-
-                    if (local_grad_L != NULL) {
-                        for (d_thread = 0; d_thread < k; d_thread++)
-                            local_grad_L[(size_t)d_thread * (size_t)p + (size_t)j_thread] +=
-                                scaled_neg_r * F_i[d_thread];
-                    }
-                }
-            }
-
-            thread_ss[tid] = local_ss;
-            thread_pred_ss[tid] = local_pred_ss;
+            gaussian_observation_row_block(FL, F, L, Xc, grad_F,
+                                           NULL, local_grad_L,
+                                           i_start, i_end,
+                                           n, p, k, inv_sigma2_obs,
+                                           &thread_ss[tid],
+                                           &thread_pred_ss[tid]);
         }
 
         for (t = 0; t < nthreads; t++) {
@@ -135,61 +183,17 @@ double gaussian_observation_term(Matrix *FL,
             }
             free(thread_grad_L);
         }
-        if (FL_frobenius_norm != NULL)
-            *FL_frobenius_norm = sqrt(pred_ss);
+
         free(thread_pred_ss);
         free(thread_ss);
-
-        {
-            double n_entries = (double)n * (double)p;
-            double obj = 0.5 * ss * inv_sigma2_obs;
-
-            obj += 0.5 * n_entries * log_sigma2_obs;
-            obj += 0.5 * n_entries * log(2.0 * M_PI);
-
-            if (grad_log_sigma_obs != NULL)
-                *grad_log_sigma_obs = 0.5 - 0.5 * ss * inv_sigma2_obs / n_entries;
-
-            return obj;
-        }
-    }
 #endif
-
-    /* Gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs).
-       Compute residuals r_ij = X_ij - (FL)_ij and accumulate the
-       negative log-likelihood and its gradient w.r.t. log(sigma2_obs). */
-    for (i = 0; i < n; i++) {
-        double *Xc_i = Xc->data[i]; /* Row of centered data for cell i */
-        double *F_i = F->data[i];
-        double *FL_i = (FL != NULL ? FL->data[i] : NULL);
-        double *grad_F_i = (grad_F != NULL ? grad_F->data[i] : NULL);
-
-        for (j = 0; j < p; j++) {
-            double pred = 0.0;
-            double r;
-            double scaled_neg_r;
-
-            for (d = 0; d < k; d++)
-                pred += F_i[d] * L->data[d][j];
-            pred_ss += pred * pred;
-
-            if (FL_i != NULL)
-                FL_i[j] = pred;
-
-            r = Xc_i[j] - pred; /* Residual is observed minus predicted */
-            ss += r * r;
-            scaled_neg_r = -r * inv_sigma2_obs;
-
-            if (grad_F_i != NULL) {
-                for (d = 0; d < k; d++)
-                    grad_F_i[d] += scaled_neg_r * L->data[d][j];
-            }
-
-            if (grad_L != NULL) {
-                for (d = 0; d < k; d++)
-                    grad_L->data[d][j] += scaled_neg_r * F_i[d];
-            }
-        }
+    }
+    else {
+        gaussian_observation_row_block(FL, F, L, Xc, grad_F,
+                                       grad_L, NULL,
+                                       0, n,
+                                       n, p, k, inv_sigma2_obs,
+                                       &ss, &pred_ss);
     }
 
     {
