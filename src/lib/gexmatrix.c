@@ -769,8 +769,9 @@ void mat_add_gaussian_noise(Matrix *X, double stddev) {
     }
 }
 
-/* Multiply two matrices using LAPACK */
-void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
+/* Multiply two matrices using LAPACK, optionally transposing either input. */
+void mat_mult_lapack_transpose(Matrix *prod, Matrix *m1, int transpose_m1,
+                               Matrix *m2, int transpose_m2) {
     #ifdef SKIP_LAPACK
     die("ERROR: BLAS/LAPACK required for matrix multiplication.\n");
     #else
@@ -778,22 +779,27 @@ void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
     LAPACK_INT lda, ldb, ldc;
     LAPACK_DOUBLE alpha = 1.0, beta = 0.0;
     LAPACK_DOUBLE *A = NULL, *B = NULL, *C = NULL;
-    char transa = 'N', transb = 'N';
+    char transa = transpose_m1 ? 'T' : 'N';
+    char transb = transpose_m2 ? 'T' : 'N';
+    int m1_op_nrows = transpose_m1 ? m1->ncols : m1->nrows;
+    int m1_op_ncols = transpose_m1 ? m1->nrows : m1->ncols;
+    int m2_op_nrows = transpose_m2 ? m2->ncols : m2->nrows;
+    int m2_op_ncols = transpose_m2 ? m2->nrows : m2->ncols;
 
-    if (!(m1->ncols == m2->nrows &&
-            prod->nrows == m1->nrows && prod->ncols == m2->ncols))
+    if (!(m1_op_ncols == m2_op_nrows &&
+            prod->nrows == m1_op_nrows && prod->ncols == m2_op_ncols))
         die("ERROR mat_mult: bad matrix dimensions\n");
 
     m = (LAPACK_INT)prod->nrows;
     n = (LAPACK_INT)prod->ncols;
-    k = (LAPACK_INT)m1->ncols;
+    k = (LAPACK_INT)m1_op_ncols;
 
-    lda = m;
-    ldb = k;
+    lda = (LAPACK_INT)m1->nrows;
+    ldb = (LAPACK_INT)m2->nrows;
     ldc = m;
 
-    A = smalloc((size_t)m * (size_t)k * sizeof(*A));
-    B = smalloc((size_t)k * (size_t)n * sizeof(*B));
+    A = smalloc((size_t)m1->nrows * (size_t)m1->ncols * sizeof(*A));
+    B = smalloc((size_t)m2->nrows * (size_t)m2->ncols * sizeof(*B));
     C = smalloc((size_t)m * (size_t)n * sizeof(*C));
 
     mat_to_lapack(m1, A);
@@ -813,6 +819,11 @@ void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
     sfree(B);
     sfree(C);
     #endif
+}
+
+/* Multiply two matrices using LAPACK. */
+void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2) {
+    mat_mult_lapack_transpose(prod, m1, 0, m2, 0);
 }
 
 /* Solve Ly = z for y, where L is lower-triangular, using LAPACK dtrtrs */

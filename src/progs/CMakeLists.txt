@@ -31,6 +31,13 @@ foreach(tgt vine evalTrees crisprLnl gexLineage gexSim gexEvalSim)
     endif()
 endforeach()
 
+if(VINE_HAS_OPENBLAS_THREAD_CONTROL)
+    target_compile_definitions(gexLineage PRIVATE VINE_HAS_OPENBLAS_THREAD_CONTROL)
+endif()
+if(VINE_HAS_MKL_THREAD_CONTROL)
+    target_compile_definitions(gexLineage PRIVATE VINE_HAS_MKL_THREAD_CONTROL)
+endif()
+
 # Read version file and strip whitespace
 file(READ "${CMAKE_SOURCE_DIR}/version" VINE_VERSION_RAW)
 string(STRIP "${VINE_VERSION_RAW}" VINE_VERSION)

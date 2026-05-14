@@ -95,6 +95,9 @@ void mat_add_gaussian_noise(Matrix *X, double sigma2);
 
 void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2);
 
+void mat_mult_lapack_transpose(Matrix *prod, Matrix *m1, int transpose_m1,
+                               Matrix *m2, int transpose_m2);
+
 void mat_forward_subst_lapack(Matrix *L, Vector *z, Vector *y);
 
 void mat_backward_subst_lapack(Matrix *L, Vector *z, Vector *y);

@@ -1,5 +1,6 @@
 
 #include "gexbrownian.h"
+#include "gex_external_libs.h"
 #include "gexmatrix.h"
 #include "gexmisc.h"
 #include "gexmodel.h"
@@ -16,10 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-
-#ifdef VINE_HAS_OPENMP
-#include <omp.h>
-#endif
 
 /* Parse the filter mode from a string. Sets pointer to mode_out.
 Returns 0 on success or -1 on failure. */
@@ -342,16 +339,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (nthreads > 0) {
-#ifdef VINE_HAS_OPENMP
-        omp_set_num_threads(nthreads);
-        if (verbose)
-            printf("Using %d thread(s) for OpenMP-enabled calculations.\n", nthreads);
-#else
-        if (nthreads > 1) {
-            fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP threads.\n");
+        if (nthreads > 1 && !has_thread_control()) {
+            fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
             return 1;
         }
-#endif
+        set_num_threads(nthreads, verbose);
     }
 
     /* Load the input trees */
