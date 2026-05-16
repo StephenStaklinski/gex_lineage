@@ -25,10 +25,13 @@ typedef struct {
     double *log_sigma2_latent;  /* length k */
     double log_sigma2_obs;
     double l1_strength;
+    int final_absorbing_factor;
+    double absorbing_l2_strength;
     double objective;
     double observation_objective;
     double brownian_prior_objective;
     double l1_objective;
+    double l2_objective;
     double FL_frobenius_norm;
     MVN *latent_mvn;
 } GexLatentBrownianModel;
@@ -40,6 +43,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         PCA *pca,
                                                         GexScaleInvarConstraint scale_invar_constraint,
                                                         double L_l1_strength,
+                                                        int final_absorbing_factor,
+                                                        double L_absorbing_l2_strength,
                                                         const char *outprefix,
                                                         int max_iter,
                                                         int verbose_log);
@@ -50,7 +55,11 @@ void post_hoc_sign_identifiability(Matrix *L, Matrix *F);
 
 void reorder_factors_by_row_norm(Matrix *L, Matrix *F);
 
+void reorder_factors_by_row_norm_prefix(Matrix *L, Matrix *F, int n_reorder);
+
 void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent);
+
+void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_sigma2_latent, int n_reorder);
 
 void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, int max_iter, double tol);
 

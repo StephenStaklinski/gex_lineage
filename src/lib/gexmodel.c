@@ -552,19 +552,22 @@ static double tree_tip_variance(TreeNode *tree) {
     return variance;
 }
 
-/* Compute the gradient with respect to L under the Gaussian observation model
-   and add the L1 regularization penalty on L. Returns the contribution of the
-   L1 penalty to the objective and fills grad_L. */
+/* Add the L1 regularization penalty on rows [0, n_l1_rows) of L. Returns the
+   contribution of the L1 penalty to the objective and fills grad_L. */
 static double l1_regularized_L_term(Matrix *L,
                                     Matrix *grad_L,
-                                    double L_lambda_l1) {
+                                    double L_lambda_l1,
+                                    int n_l1_rows) {
     int j, d;
     int p = L->ncols;
     int k = L->nrows;
     double abs_sum = 0.0;
     double val, grad, subgrad;
 
-    for (d = 0; d < k; d++) {
+    if (n_l1_rows > k)
+        n_l1_rows = k;
+
+    for (d = 0; d < n_l1_rows; d++) {
         for (j = 0; j < p; j++) {
 
             val = mat_get(L, d, j);
@@ -593,12 +596,38 @@ static double l1_regularized_L_term(Matrix *L,
     return L_lambda_l1 * abs_sum;
 }
 
+/* Add the L2 regularization penalty on one row of L. Returns the contribution
+   0.5 * lambda * ||L_row||^2 and fills grad_L with lambda * L_row. */
+static double l2_regularized_L_row_term(Matrix *L,
+                                        Matrix *grad_L,
+                                        int row,
+                                        double L_lambda_l2) {
+    int j;
+    int p = L->ncols;
+    double ss = 0.0;
+
+    if (row < 0 || row >= L->nrows || L_lambda_l2 <= 0.0)
+        return 0.0;
+
+    for (j = 0; j < p; j++) {
+        double val = mat_get(L, row, j);
+        ss += val * val;
+        if (grad_L != NULL) {
+            double grad = mat_get(grad_L, row, j);
+            grad += L_lambda_l2 * val;
+            mat_set(grad_L, row, j, grad);
+        }
+    }
+
+    return 0.5 * L_lambda_l2 * ss;
+}
+
 /* Compute the negative log-posterior objective and its gradients for the
 latent Brownian factor model:
     X ≈ FL + ε,      ε_ij ~ N(0, sigma2_obs)
     f_d ~ N(0, sigma2_latent[d] * Sigma) independently for each latent factor d
-The objective (up to constants) is the sum of three terms for the data likelihood,
-the latent factor Brownian prior, and the L1 regularization on loadings L (latent factors x genes).
+The objective (up to constants) is the sum of terms for the data likelihood,
+the latent factor Brownian prior, and loading regularization.
 */
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *Xc,
@@ -618,6 +647,9 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     int d;
     int k = model->k;   /* Number of latent factors */
     double L_lambda_l1 = model->l1_strength;   /* L1 regularization strength for L */
+    double L_lambda_l2 = model->absorbing_l2_strength; /* L2 strength for final absorbing row of L */
+    int final_absorbing_factor = model->final_absorbing_factor;
+    int n_l1_rows = final_absorbing_factor ? k - 1 : k;
     double obj = 0.0;   /* Objective function value */
 
     /* Zero gradients */
@@ -651,11 +683,16 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
         return HUGE_VAL;
     }
 
-    /* Add the L1 regularization penalty on L and compute the gradient w.r.t. L. */
+    /* Add loading regularization and compute the gradient w.r.t. L. */
     model->l1_objective = 0.0;
+    model->l2_objective = 0.0;
     if (L_lambda_l1 > 0.0) {
-        model->l1_objective = l1_regularized_L_term(model->L, grad_L, L_lambda_l1);
+        model->l1_objective = l1_regularized_L_term(model->L, grad_L, L_lambda_l1, n_l1_rows);
         obj += model->l1_objective;
+    }
+    if (final_absorbing_factor && L_lambda_l2 > 0.0) {
+        model->l2_objective = l2_regularized_L_row_term(model->L, grad_L, k - 1, L_lambda_l2);
+        obj += model->l2_objective;
     }
 
     return obj;
@@ -778,16 +815,29 @@ static void selection_sort_decreasing(double *arr, int *indices, int n) {
 }
 
 void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
+    reorder_factors_by_row_norm_prefix(L, F, L->nrows);
+}
+
+void reorder_factors_by_row_norm_prefix(Matrix *L, Matrix *F, int n_reorder) {
     int d, j, i;
     int k = L->nrows;
     int p = L->ncols;
     int n = F->nrows;
 
     /* Compute row squared norms of L */
-    double *norms = smalloc(k * sizeof(double));
-    int *order = smalloc(k * sizeof(int));
+    double *norms;
+    int *order;
 
-    for (d = 0; d < k; d++) {
+    if (n_reorder >= k) {
+        n_reorder = k;
+    }
+    if (n_reorder <= 1)
+        return;
+
+    norms = smalloc(n_reorder * sizeof(double));
+    order = smalloc(n_reorder * sizeof(int));
+
+    for (d = 0; d < n_reorder; d++) {
         double ss = 0.0;
         for (j = 0; j < p; j++) {
             double val = mat_get(L, d, j);
@@ -797,13 +847,13 @@ void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
     }
 
     /* Sort indices by decreasing norm */
-    selection_sort_decreasing(norms, order, k);
+    selection_sort_decreasing(norms, order, n_reorder);
 
     /* Create reordered copies */
     Matrix *L_new = mat_new(k, p);
     Matrix *F_new = mat_new(n, k);
 
-    for (d = 0; d < k; d++) {
+    for (d = 0; d < n_reorder; d++) {
         int old_d = order[d];
 
         /* Copy row old_d of L into row d */
@@ -813,6 +863,12 @@ void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
         /* Copy column old_d of F into column d */
         for (i = 0; i < n; i++)
             mat_set(F_new, i, d, mat_get(F, i, old_d));
+    }
+    for (d = n_reorder; d < k; d++) {
+        for (j = 0; j < p; j++)
+            mat_set(L_new, d, j, mat_get(L, d, j));
+        for (i = 0; i < n; i++)
+            mat_set(F_new, i, d, mat_get(F, i, d));
     }
 
     /* Overwrite originals */
@@ -827,20 +883,32 @@ void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
 }
 
 void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent) {
+    reorder_factors_by_sigma2_latent_prefix(L, F, log_sigma2_latent, L->nrows);
+}
+
+void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_sigma2_latent, int n_reorder) {
     int d, j, i;
     int k = L->nrows;
     int p = L->ncols;
     int n = F->nrows;
 
     /* Sort indices by decreasing latent noise variance */
-    int *order = smalloc(k * sizeof(int));
-    selection_sort_decreasing(log_sigma2_latent, order, k); /* Sorts log_sigma2_latent in-place */
+    int *order;
+
+    if (n_reorder >= k) {
+        n_reorder = k;
+    }
+    if (n_reorder <= 1)
+        return;
+
+    order = smalloc(n_reorder * sizeof(int));
+    selection_sort_decreasing(log_sigma2_latent, order, n_reorder); /* Sorts prefix in-place */
 
     /* Create reordered copies */
     Matrix *L_new = mat_new(k, p);
     Matrix *F_new = mat_new(n, k);
 
-    for (d = 0; d < k; d++) {
+    for (d = 0; d < n_reorder; d++) {
         int old_d = order[d];
 
         /* Copy row old_d of L into row d */
@@ -850,6 +918,12 @@ void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_l
         /* Copy column old_d of F into column d */
         for (i = 0; i < n; i++)
             mat_set(F_new, i, d, mat_get(F, i, old_d));
+    }
+    for (d = n_reorder; d < k; d++) {
+        for (j = 0; j < p; j++)
+            mat_set(L_new, d, j, mat_get(L, d, j));
+        for (i = 0; i < n; i++)
+            mat_set(F_new, i, d, mat_get(F, i, d));
     }
 
     /* Overwrite originals */
@@ -1065,6 +1139,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       PCA *pca,
                                                       GexScaleInvarConstraint scale_invar_constraint,
                                                       double L_l1_strength,
+                                                      int final_absorbing_factor,
+                                                      double L_absorbing_l2_strength,
                                                       const char *outprefix,
                                                       int max_iter,
                                                       int verbose_log) {
@@ -1115,12 +1191,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     logf = fopen(log_path, "w");
     if (verbose_log) {
         fprintf(logf, "step\tobjective\tema_objective\tbest_ema_objective\tsteps_since_best\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
+        if (final_absorbing_factor)
+            fprintf(logf, "\tl2_penalty");
         for (i = 0; i < k; i++)
             fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
         fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
     }
     else {
-        fprintf(logf, "step\tobjective\tbrownian_neglprior\tobservation_negll\tl1_penalty\n");
+        fprintf(logf, "step\tobjective\tbrownian_neglprior\tobservation_negll\tl1_penalty");
+        if (final_absorbing_factor)
+            fprintf(logf, "\tl2_penalty");
+        fprintf(logf, "\n");
     }
 
     /* Pre-compute tree traversal arrays and scratch space for Brownian pruning. */
@@ -1156,6 +1237,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
     model->FL = mat_new(n_cells, n_genes); /* Allocate the product FL for efficient likelihood computation */
     model->l1_strength = L_l1_strength;
+    model->final_absorbing_factor = final_absorbing_factor;
+    model->absorbing_l2_strength = L_absorbing_l2_strength;
 
     if (pca != NULL) {
         /* L comes from the PCA where the rows of components are the eigenvectors */
@@ -1396,6 +1479,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     model->brownian_prior_objective,
                     model->l1_objective,
                     exp(model->log_sigma2_obs));
+            if (final_absorbing_factor)
+                fprintf(logf, "\t%.17g", model->l2_objective);
             for (d = 0; d < k; d++)
                 fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
             fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
@@ -1404,12 +1489,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                         model->FL_frobenius_norm);
         }
         else {
-            fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g\n",
+            fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g",
                     step,
                     model->objective,
                     model->brownian_prior_objective,
                     model->observation_objective,
                     model->l1_objective);
+            if (final_absorbing_factor)
+                fprintf(logf, "\t%.17g", model->l2_objective);
+            fprintf(logf, "\n");
         }
 
         /* Convergence is checked before the parameter update so plateaued
@@ -1428,10 +1516,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     
     /* Prevent permutation invariance by reordering factors */
     if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
-        reorder_factors_by_row_norm(model->L, model->F);
+        if (final_absorbing_factor)
+            reorder_factors_by_row_norm_prefix(model->L, model->F, k - 1);
+        else
+            reorder_factors_by_row_norm(model->L, model->F);
     }
     else {
-        reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
+        if (final_absorbing_factor)
+            reorder_factors_by_sigma2_latent_prefix(model->L, model->F, model->log_sigma2_latent, k - 1);
+        else
+            reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
     }
 
     /* Prevent sign invariance by making the largest loading of L positive */

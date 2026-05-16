@@ -86,6 +86,8 @@ static void usage(const char *progname) {
         "[--scale-invar-constraint sigma2s|Lrows] "
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
+        "[--final-absorbing-factor] "
+        "[--final-absorbing-L-l2-strength S] "
         "[--max-iter N] "
         "[--dim K] "
         "[--pca-method phylopca|pca|none] "
@@ -119,6 +121,8 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
+    int final_absorbing_factor = 0; /* If nonzero, use the final factor as dense absorbing background. */
+    double L_absorbing_l2_strength = 1e-4; /* L2 strength for the final absorbing factor. */
     int max_iter = 100000;  /* Maximum number of optimization iterations for latent model fitting. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
@@ -238,6 +242,16 @@ int main(int argc, char *argv[]) {
             }
             L_l1_strength = atof(argv[++i]);
         }
+        else if (strcmp(argv[i], "--final-absorbing-factor") == 0) {
+            final_absorbing_factor = 1;
+        }
+        else if (strcmp(argv[i], "--final-absorbing-L-l2-strength") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            L_absorbing_l2_strength = atof(argv[++i]);
+        }
         else if (strcmp(argv[i], "--max-iter") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -338,6 +352,10 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --dim must be specified when --pca-method is none.\n");
         return 1;
     }
+    if (final_absorbing_factor && varimax) {
+        fprintf(stderr, "ERROR: --final-absorbing-factor cannot currently be used together with --varimax.\n");
+        return 1;
+    }
     if (nthreads > 0) {
         if (nthreads > 1 && !has_thread_control()) {
             fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
@@ -356,6 +374,10 @@ int main(int argc, char *argv[]) {
 
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
+        return 1;
+    }
+    if (L_absorbing_l2_strength < 0.0) {
+        fprintf(stderr, "ERROR: --final-absorbing-L-l2-strength must be nonnegative.\n");
         return 1;
     }
     if (max_iter <= 0) {
@@ -560,6 +582,7 @@ int main(int argc, char *argv[]) {
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
+                                          final_absorbing_factor, L_absorbing_l2_strength,
                                           outprefix, max_iter, verbose_log);
 
     if (varimax) {
