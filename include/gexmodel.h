@@ -63,6 +63,8 @@ void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_s
 
 void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, int max_iter, double tol);
 
+void varimax_rotate_model_factors_prefix(Matrix *L, Matrix *F, int n_rotate, const char *outprefix, int max_iter, double tol);
+
 void write_varimax_summary_tsv(const char *outprefix,
                                 Matrix *L_before,
                                 Matrix *F_before,

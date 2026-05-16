@@ -940,6 +940,12 @@ void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_s
 more interpretable and sparse basis by maximizing the variance of the 
 squared loadings (cols of L; rows of F; how genes are loaded across a factor) */
 void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, int max_iter, double tol) {
+    if (L == NULL)
+        return;
+    varimax_rotate_model_factors_prefix(L, F, L->nrows, outprefix, max_iter, tol);
+}
+
+void varimax_rotate_model_factors_prefix(Matrix *L, Matrix *F, int n_rotate, const char *outprefix, int max_iter, double tol) {
     int i, j, a, b, c, iter;
     int k;
     int p;
@@ -965,9 +971,14 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, i
     if (L == NULL || F == NULL || L->nrows != F->ncols)
         return;
 
-    k = L->nrows;
+    if (n_rotate > L->nrows)
+        n_rotate = L->nrows;
+    if (n_rotate <= 1)
+        return;
+
+    k = n_rotate;
     p = L->ncols;
-    if (k <= 1 || p <= 1)
+    if (p <= 1)
         return;
     if (max_iter <= 0)
         max_iter = 100;
@@ -1043,8 +1054,34 @@ void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, i
     Rt = mat_transpose(R);
     L_new = mat_new(L->nrows, L->ncols);
     F_new = mat_new(F->nrows, F->ncols);
-    mat_mult_lapack(L_new, Rt, L);
-    mat_mult_lapack(F_new, F, R);
+    if (k == L->nrows) {
+        mat_mult_lapack(L_new, Rt, L);
+        mat_mult_lapack(F_new, F, R);
+    }
+    else {
+        for (a = 0; a < L->nrows; a++) {
+            for (j = 0; j < L->ncols; j++) {
+                double val = mat_get(L, a, j);
+                if (a < k) {
+                    val = 0.0;
+                    for (c = 0; c < k; c++)
+                        val += mat_get(Rt, a, c) * mat_get(L, c, j);
+                }
+                mat_set(L_new, a, j, val);
+            }
+        }
+        for (i = 0; i < F->nrows; i++) {
+            for (b = 0; b < F->ncols; b++) {
+                double val = mat_get(F, i, b);
+                if (b < k) {
+                    val = 0.0;
+                    for (c = 0; c < k; c++)
+                        val += mat_get(F, i, c) * mat_get(R, c, b);
+                }
+                mat_set(F_new, i, b, val);
+            }
+        }
+    }
     mat_copy(L, L_new);
     mat_copy(F, F_new);
 

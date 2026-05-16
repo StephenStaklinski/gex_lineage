@@ -352,10 +352,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --dim must be specified when --pca-method is none.\n");
         return 1;
     }
-    if (final_absorbing_factor && varimax) {
-        fprintf(stderr, "ERROR: --final-absorbing-factor cannot currently be used together with --varimax.\n");
-        return 1;
-    }
     if (nthreads > 0) {
         if (nthreads > 1 && !has_thread_control()) {
             fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
@@ -587,7 +583,10 @@ int main(int argc, char *argv[]) {
 
     if (varimax) {
         printf("Applying varimax rotation to fitted factors before writing outputs...\n");
-        varimax_rotate_model_factors(model->L, model->F, outprefix, 1000, 1e-6);
+        if (final_absorbing_factor)
+            varimax_rotate_model_factors_prefix(model->L, model->F, k - 1, outprefix, 1000, 1e-6);
+        else
+            varimax_rotate_model_factors(model->L, model->F, outprefix, 1000, 1e-6);
         post_hoc_sign_identifiability(model->L, model->F);
         mat_mult_lapack(model->FL, model->F, model->L);
     }
