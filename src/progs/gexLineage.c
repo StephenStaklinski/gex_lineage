@@ -65,6 +65,10 @@ static int parse_pca_method(const char *s, PcaMethod *method_out) {
         *method_out = PCA_METHOD_PHYLOPCA;
         return 0;
     }
+    if (strcmp(s, "maxphylopca") == 0) {
+        *method_out = PCA_METHOD_MAX_PHYLOPCA;
+        return 0;
+    }
     if (strcmp(s, "none") == 0) {
         *method_out = PCA_METHOD_NONE;
         return 0;
@@ -90,7 +94,7 @@ static void usage(const char *progname) {
         "[--final-absorbing-L-l2-strength S] "
         "[--max-iter N] "
         "[--dim K] "
-        "[--pca-method phylopca|pca|none] "
+        "[--pca-method maxphylopca|phylopca|pca|none] "
         "[--pca-var-threshold V] "
         "[--n-perms N] "
         "[--max-q Q] "
@@ -117,7 +121,7 @@ int main(int argc, char *argv[]) {
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     int filter_average_covariance = 1;  /* If nonzero, use the average covariance for phylogenetic filtering. */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
-    PcaMethod pca_method = PCA_METHOD_PHYLOPCA;  /* Method for performing PCA to initialize latent model fitting */
+    PcaMethod pca_method = PCA_METHOD_MAX_PHYLOPCA;  /* Method for performing PCA to initialize latent model fitting */
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
@@ -214,7 +218,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             if (parse_pca_method(argv[++i], &pca_method) != 0) {
-                fprintf(stderr, "ERROR: --pca-method must be one of pca or phylopca\n");
+                fprintf(stderr, "ERROR: --pca-method must be one of maxphylopca, phylopca, pca, or none\n");
                 return 1;
             }
         }
@@ -427,7 +431,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Compute average covariance matrix over input trees if needed */
-    if (filter_average_covariance || pca_method == PCA_METHOD_PHYLOPCA) {
+    if (filter_average_covariance || pca_method == PCA_METHOD_PHYLOPCA || pca_method == PCA_METHOD_MAX_PHYLOPCA) {
         filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
                                                        gex->cell_names, gex->X->nrows);
     }
@@ -527,7 +531,8 @@ int main(int argc, char *argv[]) {
     }
 
     /* pPCA is only for <=1000 cells */
-    if (pca_method == PCA_METHOD_PHYLOPCA && (gex_filtered->X->nrows > 1000 || gex_filtered->X->ncols > 1000)) {
+    if (pca_method == PCA_METHOD_PHYLOPCA &&
+        (gex_filtered->X->nrows > 1000 || gex_filtered->X->ncols > 1000)) {
         pca_method = PCA_METHOD_PCA;
         printf("WARNING: pPCA is only for <=1000 cells and <=1000 genes. Switching to standard PCA instead.\n");
     }
@@ -540,6 +545,9 @@ int main(int argc, char *argv[]) {
     } else if (pca_method == PCA_METHOD_PHYLOPCA) {
         printf("Running pPCA to initialize latent factors for the model...\n");
         pca = compute_phylo_pca(gex_filtered->X, filter_avg_Sigma, k, pca_var_threshold);
+    } else if (pca_method == PCA_METHOD_MAX_PHYLOPCA) {
+        printf("Running maxPhyloPCA to initialize latent factors for the model...\n");
+        pca = compute_max_phylo_pca(gex_filtered->X, filter_avg_Sigma, k, pca_var_threshold);
     }
     if (k == 0) {
         k = pca->K;

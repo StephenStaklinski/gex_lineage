@@ -319,6 +319,51 @@ PCA *compute_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
     return out;
 }
 
+/* Compute PCA after projecting expression onto the top phylogenetic
+covariance eigenvectors, so the retained axes emphasize maximum
+phylogenetic signal. */
+PCA *compute_max_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
+    Matrix *VtY = NULL;
+    Matrix *Yhat = NULL;
+    PCA *phylo_pca = NULL;
+    PCA *out = NULL;
+    int phylo_k;
+    const double phylo_projection_threshold = 0.999;
+
+    /* Compute top eigenvectors of the phylogenetic covariance. */
+    phylo_pca = pca_eigen(C);
+    if (phylo_pca == NULL)
+        return NULL;
+
+    phylo_k = pca_components_for_variance_threshold_internal(phylo_pca->var_explained,
+                                                             phylo_pca->K,
+                                                             phylo_projection_threshold);
+    if (k > phylo_k)
+        phylo_k = k;
+    filter_pca_components(phylo_pca, phylo_k, variance_threshold);
+
+    /* Project Y onto fitted values from the phylogenetic eigenvectors:
+    Y_hat = V_phy V_phy^T Y.  phylo_pca->components stores V_phy^T. */
+    VtY = mat_new(phylo_pca->K, X->ncols);
+    Yhat = mat_new(X->nrows, X->ncols);
+    mat_mult_lapack(VtY, phylo_pca->components, X);
+    mat_mult_lapack_transpose(Yhat, phylo_pca->components, 1, VtY, 0);
+
+    /* Run PCA on the fitted values and use the standard PCA rule to
+    choose the model rank. */
+    out = compute_pca(Yhat, k, variance_threshold);
+
+    /* Free memory */
+    if (VtY != NULL)
+        mat_free(VtY);
+    if (Yhat != NULL)
+        mat_free(Yhat);
+    if (phylo_pca != NULL)
+        free_pca(phylo_pca);
+
+    return out;
+}
+
 /* Print a summary of the PCA results */
 void print_pca_summary(PCA *pca) {
     int i;

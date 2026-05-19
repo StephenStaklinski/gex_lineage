@@ -8,7 +8,8 @@
 typedef enum {
     PCA_METHOD_PCA = 0,
     PCA_METHOD_PHYLOPCA = 1,
-    PCA_METHOD_NONE = 2,
+    PCA_METHOD_MAX_PHYLOPCA = 2,
+    PCA_METHOD_NONE = 3,
 } PcaMethod;
 
 typedef struct {
@@ -21,6 +22,8 @@ typedef struct {
 PCA *compute_pca(Matrix *gex, int k, double variance_threshold);
 
 PCA *compute_phylo_pca(Matrix *gex, Matrix *C, int k, double variance_threshold);
+
+PCA *compute_max_phylo_pca(Matrix *gex, Matrix *C, int k, double variance_threshold);
 
 void free_pca(PCA *pca);
 
