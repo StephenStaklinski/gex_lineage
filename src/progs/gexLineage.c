@@ -90,6 +90,7 @@ static void usage(const char *progname) {
         "[--scale-invar-constraint sigma2s|Lrows] "
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
+        "[--F-orthogonality-strength S] "
         "[--final-absorbing-factor] "
         "[--final-absorbing-L-l2-strength S] "
         "[--max-iter N] "
@@ -125,6 +126,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
+    double F_orthogonality_strength = 0.0;  /* Strength of F-column orthogonality penalty; 0 disables it. */
     int final_absorbing_factor = 0; /* If nonzero, use the final factor as dense absorbing background. */
     double L_absorbing_l2_strength = 1e-4; /* L2 strength for the final absorbing factor. */
     int max_iter = 100000;  /* Maximum number of optimization iterations for latent model fitting. */
@@ -245,6 +247,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             L_l1_strength = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--F-orthogonality-strength") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            F_orthogonality_strength = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--final-absorbing-factor") == 0) {
             final_absorbing_factor = 1;
@@ -374,6 +383,10 @@ int main(int argc, char *argv[]) {
 
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
+        return 1;
+    }
+    if (F_orthogonality_strength < 0.0) {
+        fprintf(stderr, "ERROR: --F-orthogonality-strength must be nonnegative (0 disables F orthogonality regularization)\n");
         return 1;
     }
     if (L_absorbing_l2_strength < 0.0) {
@@ -587,6 +600,7 @@ int main(int argc, char *argv[]) {
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
                                           final_absorbing_factor, L_absorbing_l2_strength,
+                                          F_orthogonality_strength,
                                           outprefix, max_iter, verbose_log);
 
     if (varimax) {

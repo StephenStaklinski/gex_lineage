@@ -597,7 +597,7 @@ static double l1_regularized_L_term(Matrix *L,
 }
 
 /* Add the L2 regularization penalty on one row of L. Returns the contribution
-   0.5 * lambda * ||L_row||^2 and fills grad_L with lambda * L_row. */
+   lambda * ||L_row||^2 and fills grad_L with 2 * lambda * L_row. */
 static double l2_regularized_L_row_term(Matrix *L,
                                         Matrix *grad_L,
                                         int row,
@@ -614,12 +614,54 @@ static double l2_regularized_L_row_term(Matrix *L,
         ss += val * val;
         if (grad_L != NULL) {
             double grad = mat_get(grad_L, row, j);
-            grad += L_lambda_l2 * val;
+            grad += 2.0 * L_lambda_l2 * val;
             mat_set(grad_L, row, j, grad);
         }
     }
 
-    return 0.5 * L_lambda_l2 * ss;
+    return L_lambda_l2 * ss;
+}
+
+/* Add a soft orthogonality penalty on columns of F. Returns the contribution
+   lambda * ||F^T F - I||_F^2 and fills grad_F with
+   4 * lambda * F * (F^T F - I). */
+static double orthogonal_F_columns_term(Matrix *F,
+                                        Matrix *grad_F,
+                                        double F_lambda_orthogonality) {
+    Matrix *FtF = NULL;
+    Matrix *pen_grad = NULL;
+    double ss = 0.0;
+    int i, a, b;
+
+    if (F == NULL || F_lambda_orthogonality <= 0.0)
+        return 0.0;
+
+    FtF = mat_new(F->ncols, F->ncols);
+    mat_mult_lapack_transpose(FtF, F, 1, F, 0);
+
+    for (a = 0; a < FtF->nrows; a++) {
+        for (b = 0; b < FtF->ncols; b++) {
+            double diff = mat_get(FtF, a, b) - (a == b ? 1.0 : 0.0);
+            mat_set(FtF, a, b, diff);
+            ss += diff * diff;
+        }
+    }
+
+    if (grad_F != NULL) {
+        pen_grad = mat_new(F->nrows, F->ncols);
+        mat_mult_lapack(pen_grad, F, FtF);
+        for (i = 0; i < grad_F->nrows; i++) {
+            for (a = 0; a < grad_F->ncols; a++) {
+                double grad = mat_get(grad_F, i, a);
+                grad += 4.0 * F_lambda_orthogonality * mat_get(pen_grad, i, a);
+                mat_set(grad_F, i, a, grad);
+            }
+        }
+        mat_free(pen_grad);
+    }
+
+    mat_free(FtF);
+    return F_lambda_orthogonality * ss;
 }
 
 /* Compute the negative log-posterior objective and its gradients for the
@@ -648,6 +690,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     int k = model->k;   /* Number of latent factors */
     double L_lambda_l1 = model->l1_strength;   /* L1 regularization strength for L */
     double L_lambda_l2 = model->absorbing_l2_strength; /* L2 strength for final absorbing row of L */
+    double F_lambda_orthogonality = model->F_orthogonality_strength;
     int final_absorbing_factor = model->final_absorbing_factor;
     int n_l1_rows = final_absorbing_factor ? k - 1 : k;
     double obj = 0.0;   /* Objective function value */
@@ -686,6 +729,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add loading regularization and compute the gradient w.r.t. L. */
     model->l1_objective = 0.0;
     model->l2_objective = 0.0;
+    model->F_orthogonality_objective = 0.0;
     if (L_lambda_l1 > 0.0) {
         model->l1_objective = l1_regularized_L_term(model->L, grad_L, L_lambda_l1, n_l1_rows);
         obj += model->l1_objective;
@@ -693,6 +737,11 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     if (final_absorbing_factor && L_lambda_l2 > 0.0) {
         model->l2_objective = l2_regularized_L_row_term(model->L, grad_L, k - 1, L_lambda_l2);
         obj += model->l2_objective;
+    }
+    if (F_lambda_orthogonality > 0.0) {
+        model->F_orthogonality_objective =
+            orthogonal_F_columns_term(model->F, grad_F, F_lambda_orthogonality);
+        obj += model->F_orthogonality_objective;
     }
 
     return obj;
@@ -1178,6 +1227,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       double L_l1_strength,
                                                       int final_absorbing_factor,
                                                       double L_absorbing_l2_strength,
+                                                      double F_orthogonality_strength,
                                                       const char *outprefix,
                                                       int max_iter,
                                                       int verbose_log) {
@@ -1230,6 +1280,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "step\tobjective\tema_objective\tbest_ema_objective\tsteps_since_best\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
         if (final_absorbing_factor)
             fprintf(logf, "\tl2_penalty");
+        if (F_orthogonality_strength > 0.0)
+            fprintf(logf, "\tF_orthogonality_penalty");
         for (i = 0; i < k; i++)
             fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
         fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
@@ -1238,6 +1290,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "step\tobjective\tbrownian_neglprior\tobservation_negll\tl1_penalty");
         if (final_absorbing_factor)
             fprintf(logf, "\tl2_penalty");
+        if (F_orthogonality_strength > 0.0)
+            fprintf(logf, "\tF_orthogonality_penalty");
         fprintf(logf, "\n");
     }
 
@@ -1276,6 +1330,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->l1_strength = L_l1_strength;
     model->final_absorbing_factor = final_absorbing_factor;
     model->absorbing_l2_strength = L_absorbing_l2_strength;
+    model->F_orthogonality_strength = F_orthogonality_strength;
 
     if (pca != NULL) {
         /* L comes from the PCA where the rows of components are the eigenvectors */
@@ -1518,6 +1573,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     exp(model->log_sigma2_obs));
             if (final_absorbing_factor)
                 fprintf(logf, "\t%.17g", model->l2_objective);
+            if (F_orthogonality_strength > 0.0)
+                fprintf(logf, "\t%.17g", model->F_orthogonality_objective);
             for (d = 0; d < k; d++)
                 fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
             fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
@@ -1534,6 +1591,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     model->l1_objective);
             if (final_absorbing_factor)
                 fprintf(logf, "\t%.17g", model->l2_objective);
+            if (F_orthogonality_strength > 0.0)
+                fprintf(logf, "\t%.17g", model->F_orthogonality_objective);
             fprintf(logf, "\n");
         }
 
