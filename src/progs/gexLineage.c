@@ -53,6 +53,10 @@ static int parse_scale_invar_constraint(const char *s, GexScaleInvarConstraint *
         *constraint_out = GEX_SCALE_INVAR_LROWS;
         return 0;
     }
+    if (strcmp(s, "none") == 0) {
+        *constraint_out = GEX_SCALE_INVAR_NONE;
+        return 0;
+    }
     return -1;
 }
 
@@ -87,7 +91,8 @@ static void usage(const char *progname) {
         "[--filter-covariance average|all] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
-        "[--scale-invar-constraint sigma2s|Lrows] "
+        "[--scale-invar-constraint sigma2s|Lrows|none] "
+        "[--no-post-hoc-identifiability] "
         "[--L-row-norm-interval N] "
         "[--L-l1-strength S] "
         "[--F-orthogonality-strength S] "
@@ -140,6 +145,7 @@ int main(int argc, char *argv[]) {
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int varimax = 0;    /* If nonzero, rotate fitted factors with varimax before writing outputs. */
+    int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     int verbose_log = 0;    /* If nonzero, write the full optimization log. */
     int nthreads = 1;   /* Number of OpenMP threads to use */
@@ -241,7 +247,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             if (parse_scale_invar_constraint(argv[++i], &scale_invar_constraint) != 0) {
-                fprintf(stderr, "ERROR: --scale-invar-constraint must be one of sigma2s or Lrows\n");
+                fprintf(stderr, "ERROR: --scale-invar-constraint must be one of sigma2s, Lrows, or none\n");
                 return 1;
             }
         }
@@ -335,6 +341,9 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--varimax") == 0) {
             varimax = 1;
+        }
+        else if (strcmp(argv[i], "--no-post-hoc-identifiability") == 0) {
+            apply_post_hoc_identifiability = 0;
         }
         else if (strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
@@ -628,6 +637,7 @@ int main(int argc, char *argv[]) {
                                           final_absorbing_factor, L_absorbing_l2_strength,
                                           F_orthogonality_strength, F_correlation_strength,
                                           L_correlation_strength,
+                                          apply_post_hoc_identifiability,
                                           outprefix, max_iter, verbose_log);
 
     if (varimax) {
@@ -636,7 +646,8 @@ int main(int argc, char *argv[]) {
             varimax_rotate_model_factors_prefix(model->L, model->F, k - 1, outprefix, 1000, 1e-6);
         else
             varimax_rotate_model_factors(model->L, model->F, outprefix, 1000, 1e-6);
-        post_hoc_sign_identifiability(model->L, model->F);
+        if (apply_post_hoc_identifiability)
+            post_hoc_sign_identifiability(model->L, model->F);
         mat_mult_lapack(model->FL, model->F, model->L);
     }
 

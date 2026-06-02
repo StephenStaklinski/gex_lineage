@@ -12,7 +12,8 @@
 
 typedef enum {
     GEX_SCALE_INVAR_SIGMA2S = 0,
-    GEX_SCALE_INVAR_LROWS = 1
+    GEX_SCALE_INVAR_LROWS = 1,
+    GEX_SCALE_INVAR_NONE = 2
 } GexScaleInvarConstraint;
 
 typedef struct {
@@ -54,6 +55,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         double F_orthogonality_strength,
                                                         double F_correlation_strength,
                                                         double L_correlation_strength,
+                                                        int apply_post_hoc_identifiability,
                                                         const char *outprefix,
                                                         int max_iter,
                                                         int verbose_log);

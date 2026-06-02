@@ -1334,6 +1334,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       double F_orthogonality_strength,
                                                       double F_correlation_strength,
                                                       double L_correlation_strength,
+                                                      int apply_post_hoc_identifiability,
                                                       const char *outprefix,
                                                       int max_iter,
                                                       int verbose_log) {
@@ -1734,22 +1735,24 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
     
-    /* Prevent permutation invariance by reordering factors */
-    if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
-        if (final_absorbing_factor)
-            reorder_factors_by_row_norm_prefix(model->L, model->F, k - 1);
-        else
-            reorder_factors_by_row_norm(model->L, model->F);
-    }
-    else {
-        if (final_absorbing_factor)
-            reorder_factors_by_sigma2_latent_prefix(model->L, model->F, model->log_sigma2_latent, k - 1);
-        else
-            reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
-    }
+    if (apply_post_hoc_identifiability) {
+        /* Prevent permutation invariance by reordering factors */
+        if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
+            if (final_absorbing_factor)
+                reorder_factors_by_row_norm_prefix(model->L, model->F, k - 1);
+            else
+                reorder_factors_by_row_norm(model->L, model->F);
+        }
+        else {
+            if (final_absorbing_factor)
+                reorder_factors_by_sigma2_latent_prefix(model->L, model->F, model->log_sigma2_latent, k - 1);
+            else
+                reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
+        }
 
-    /* Prevent sign invariance by making the largest loading of L positive */
-    post_hoc_sign_identifiability(model->L, model->F);
+        /* Prevent sign invariance by making the largest loading of L positive */
+        post_hoc_sign_identifiability(model->L, model->F);
+    }
 
     /* Keep the extra termination metadata in the verbose log only. */
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
