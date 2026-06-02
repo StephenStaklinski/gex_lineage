@@ -1,73 +1,43 @@
 # src/lib/CMakeLists.txt
 
-# List your library sources here (mirror what your Makefile uses)
-add_library(vine_core STATIC
-    adam_scheduler.c
-    backprop.c
-    bitset.c
-    covariance.c
-    crispr.c
-    geometry.c
-    gexadam.c
-    gexbrownian.c
-    gexlatentflow.c
-    gexmatrix.c
-    gexmisc.c
-    gexmodel.c
-    gexparser.c
-    gexpca.c
-    gexphylofilter.c
-    gradients.c
-    heap.c
-    hutchinson.c
-    likelihoods.c
-    migration.c
-    mcmc.c
-    multi_mvn.c
-    multiDAG.c
+add_library(gex_lineage_core STATIC
+    adam.c
+    brownian.c
+    latentflow.c
+    matrix.c
+    misc.c
+    model.c
+    parser.c
+    pca.c
+    phylofilter.c
     mvn.c
-    nj.c
-    nuisance.c
-    planar_flow.c
-    radial_flow.c
-    rf.c
-    sparse_matrix.c
-    sparse_vector.c
-    taylor.c
-    tree_prior.c
-    upgma.c
-    variational.c
 )
 
 find_package(OpenMP)
 
-set_target_properties(vine_core PROPERTIES
-    OUTPUT_NAME vine
-)
-
-target_compile_options(vine_core PUBLIC
+target_compile_options(gex_lineage_core PUBLIC
     -Wall 
     -fno-strict-aliasing
     $<$<CONFIG:Debug>:-g -fno-inline>
 )
 
-target_include_directories(vine_core
+target_include_directories(gex_lineage_core
     PUBLIC
-        "${VINE_INCLUDE_DIR}"     
+        "${GEX_LINEAGE_INCLUDE_DIR}"
 )
 
-target_link_libraries(vine_core
+target_link_libraries(gex_lineage_core
     PUBLIC
         phast::phast_core
 )
 
 if(OpenMP_C_FOUND)
-  target_link_libraries(vine_core PUBLIC OpenMP::OpenMP_C)
-  target_compile_definitions(vine_core PUBLIC VINE_HAS_OPENMP)
+  target_link_libraries(gex_lineage_core PUBLIC OpenMP::OpenMP_C)
+  target_compile_definitions(gex_lineage_core PUBLIC GEX_LINEAGE_HAS_OPENMP)
 endif()
 
 # Install the library
-install(TARGETS vine_core
+install(TARGETS gex_lineage_core
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
 )

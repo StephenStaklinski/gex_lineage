@@ -1,7 +1,7 @@
-# VINE
+# gexLineage
 
-**VINE (Variational Inference with Node Embeddings)** is a program and set
-of supporting libraries for variational inference of phylogenetic trees.
+**gexLineage** is a program and set of supporting libraries for modeling
+gene expression with phylogenetic lineage structure.
 
 ## Requirements
 
@@ -38,23 +38,19 @@ The number of threads can be controlled with the -j option.
 
 ## Usage
 
-For detailed usage of the main vine executable and supporting programs, run them
+For detailed usage of the main `gexLineage` executable and supporting programs, run them
 with `--help`:
 
 ```bash
-vine --help
+gexLineage --help
 ```
-
-The same full usage message for vine is also available
-directly in the source tree:
-[vine.help_src](src/progs/vine.help_src).
 
 ## Support
 
-For questions or bug reports, please use the [GitHub issue tracker](https://github.com/CshlSiepelLab/vine/issues).
+For questions or bug reports, please use the project issue tracker.
 
 ## License
 
-Both PHAST and VINE are distributed under the BSD 3-Clause License, a
+Both PHAST and gexLineage are distributed under the BSD 3-Clause License, a
 permissive academic license that allows redistribution and modification
 provided that attribution is retained. See [LICENSE](LICENSE) for details.

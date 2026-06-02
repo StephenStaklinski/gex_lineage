@@ -1,13 +1,13 @@
 
-#include "gexbrownian.h"
-#include "gex_external_libs.h"
-#include "gexmatrix.h"
-#include "gexmisc.h"
-#include "gexmodel.h"
-#include "gexlatentflow.h"
-#include "gexparser.h"
-#include "gexpca.h"
-#include "gexphylofilter.h"
+#include "brownian.h"
+#include "external_libs.h"
+#include "matrix.h"
+#include "misc.h"
+#include "model.h"
+#include "latentflow.h"
+#include "parser.h"
+#include "pca.h"
+#include "phylofilter.h"
 
 #include <phast/trees.h>
 #include <phast/matrix.h>

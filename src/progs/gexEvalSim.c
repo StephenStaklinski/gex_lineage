@@ -1,5 +1,5 @@
-#include "gexmatrix.h"
-#include "gexparser.h"
+#include "matrix.h"
+#include "parser.h"
 
 #include <phast/matrix.h>
 #include <phast/misc.h>

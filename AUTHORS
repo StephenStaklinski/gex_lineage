@@ -1,21 +1,14 @@
-VINE: Variational Inference with Node Embeddings
+gexLineage
 ------------------------------------------------
 
 Primary Author:
-    Adam Siepel (Cold Spring Harbor Laboratory)
+    Stephen Staklinski (Cold Spring Harbor Laboratory)
 
 Contributors:
     Rebecca Hassett (CSHL)
     Stephen Staklinski (CSHL)
 
 Acknowledgments:
-    VINE makes use of the PHAST software library (BSD license).
+    gexLineage makes use of the PHAST software library (BSD license).
     We also acknowledge contributors to the PHAST project.
-
-Funding:
-    This work has been supported in part by US National Institutes of
-    Health (NIH) National Institute of General Medical Sciences Grant
-    R35-GM127070 and National Cancer Institute (NCI) Grants
-    R01-CA272466 and 5P30CA045508, as well as the Simons Center for
-    Quantitative Biology at CSHL.
     
