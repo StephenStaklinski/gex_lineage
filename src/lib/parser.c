@@ -1,6 +1,6 @@
 #include "parser.h"
 
-#include "matrix.h"
+#include "gexmatrix.h"
 
 #include <phast/trees.h>
 #include <phast/matrix.h>

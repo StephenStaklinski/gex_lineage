@@ -1,4 +1,4 @@
-#include "matrix.h"
+#include "gexmatrix.h"
 #include "parser.h"
 
 #include <phast/matrix.h>

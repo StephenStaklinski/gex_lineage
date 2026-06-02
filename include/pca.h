@@ -1,7 +1,7 @@
 #ifndef GEXPCA_H
 #define GEXPCA_H
 
-#include "matrix.h"
+#include "gexmatrix.h"
 
 #include <phast/matrix.h>
 

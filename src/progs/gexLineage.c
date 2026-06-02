@@ -1,7 +1,7 @@
 
 #include "brownian.h"
 #include "external_libs.h"
-#include "matrix.h"
+#include "gexmatrix.h"
 #include "misc.h"
 #include "model.h"
 #include "latentflow.h"

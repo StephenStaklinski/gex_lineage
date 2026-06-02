@@ -4,7 +4,7 @@ add_library(gex_lineage_core STATIC
     adam.c
     brownian.c
     latentflow.c
-    matrix.c
+    gexmatrix.c
     misc.c
     model.c
     parser.c

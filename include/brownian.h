@@ -1,7 +1,7 @@
 #ifndef GEXBROWNIAN_H
 #define GEXBROWNIAN_H
 
-#include "matrix.h"
+#include "gexmatrix.h"
 #include "phylofilter.h"
 
 #include <phast/matrix.h>

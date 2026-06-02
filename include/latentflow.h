@@ -1,7 +1,7 @@
 #ifndef GEXLATENTFLOW_H
 #define GEXLATENTFLOW_H
 
-#include "matrix.h"
+#include "gexmatrix.h"
 #include "model.h"
 
 #include <phast/trees.h>

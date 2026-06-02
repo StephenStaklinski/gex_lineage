@@ -1,6 +1,6 @@
 #include "latentflow.h"
 
-#include "matrix.h"
+#include "gexmatrix.h"
 #include "misc.h"
 #include "model.h"
 #include "pca.h"

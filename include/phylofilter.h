@@ -1,7 +1,7 @@
 #ifndef GEXPHYLOFILTER_H
 #define GEXPHYLOFILTER_H
 
-#include "matrix.h"
+#include "gexmatrix.h"
 
 #include <phast/matrix.h>
 

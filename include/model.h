@@ -1,7 +1,7 @@
 #ifndef GEXMODEL_H
 #define GEXMODEL_H
 
-#include "matrix.h"
+#include "gexmatrix.h"
 #include "pca.h"
 #include "model.h"
 

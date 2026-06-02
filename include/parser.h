@@ -1,7 +1,7 @@
 #ifndef GEXPARSER_H
 #define GEXPARSER_H
 
-#include "matrix.h"
+#include "gexmatrix.h"
 
 #include <phast/matrix.h>
 #include <phast/trees.h>

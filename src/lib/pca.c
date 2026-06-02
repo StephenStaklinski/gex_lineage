@@ -1,6 +1,6 @@
 #include "pca.h"
 
-#include "matrix.h"
+#include "gexmatrix.h"
 
 #include <phast/matrix.h>
 #include <phast/misc.h>
