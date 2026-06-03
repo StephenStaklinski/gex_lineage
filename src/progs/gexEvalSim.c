@@ -52,6 +52,8 @@ int main(int argc, char *argv[]) {
     double gene_cov_corr = -2.0;
     double F_col_mean_abs_corr = -1.0;
     double L_row_mean_abs_corr = -1.0;
+    double F_col_mean_corr = -2.0;
+    double L_row_mean_corr = -2.0;
 
     FILE *out = NULL;
     int i;
@@ -139,10 +141,16 @@ int main(int argc, char *argv[]) {
     /* Compare learned factors in F */
     F_factor_corr = mat_factor_pearson_correlation(sim_F->X, fit_F->X, 0, 1);
     F_col_mean_abs_corr = mat_diag_mean(F_factor_corr);
+    mat_free(F_factor_corr);
+    F_factor_corr = mat_factor_pearson_correlation(sim_F->X, fit_F->X, 0, 0);
+    F_col_mean_corr = mat_diag_mean(F_factor_corr);
 
     /* Compare learned factors in L */
     L_factor_corr = mat_factor_pearson_correlation(sim_L->X, fit_L->X, 1, 1);
     L_row_mean_abs_corr = mat_diag_mean(L_factor_corr);
+    mat_free(L_factor_corr);
+    L_factor_corr = mat_factor_pearson_correlation(sim_L->X, fit_L->X, 1, 0);
+    L_row_mean_corr = mat_diag_mean(L_factor_corr);
 
     out = fopen(eval_summary_path, "w");
     fprintf(out, "metric\tvalue\n");
@@ -152,6 +160,8 @@ int main(int argc, char *argv[]) {
     fprintf(out, "gene_cov_correlation\t%.17g\n", gene_cov_corr);
     fprintf(out, "F_col_mean_abs_corr\t%.17g\n", F_col_mean_abs_corr);
     fprintf(out, "L_row_mean_abs_corr\t%.17g\n", L_row_mean_abs_corr);
+    fprintf(out, "F_col_mean_corr\t%.17g\n", F_col_mean_corr);
+    fprintf(out, "L_row_mean_corr\t%.17g\n", L_row_mean_corr);
     fclose(out);
     out = NULL;
 
