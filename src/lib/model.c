@@ -905,6 +905,186 @@ static void normalize_L_rows_and_rescale_F(Matrix *L,
     }
 }
 
+typedef struct {
+    int has_state;
+    int step;
+    int steps_since_best;
+    int clipping_on;
+    double objective;
+    double ema_objective;
+    double best_ema_objective;
+    double grad_norm;
+    double grad_F_norm;
+    double grad_L_norm;
+    double grad_log_sigma_obs_norm;
+    double grad_log_sigma_latent_norm;
+    double observation_objective;
+    double brownian_prior_objective;
+    double l1_objective;
+    double l2_objective;
+    double F_orthogonality_objective;
+    double F_correlation_objective;
+    double L_correlation_objective;
+    double FL_frobenius_norm;
+    double F_frobenius_norm;
+    double L_frobenius_norm;
+    double log_sigma2_obs;
+    double *log_sigma2_latent;
+    Matrix *F;
+    Matrix *L;
+} BestLatentBrownianState;
+
+static void init_best_latent_brownian_state(BestLatentBrownianState *best,
+                                            int n_cells,
+                                            int n_genes,
+                                            int k) {
+    memset(best, 0, sizeof(BestLatentBrownianState));
+    best->objective = HUGE_VAL;
+    best->F = mat_new(n_cells, k);
+    best->L = mat_new(k, n_genes);
+    best->log_sigma2_latent = scalloc(k, sizeof(double));
+}
+
+static void free_best_latent_brownian_state(BestLatentBrownianState *best) {
+    if (best == NULL)
+        return;
+    if (best->F != NULL)
+        mat_free(best->F);
+    if (best->L != NULL)
+        mat_free(best->L);
+    if (best->log_sigma2_latent != NULL)
+        free(best->log_sigma2_latent);
+}
+
+static void store_best_latent_brownian_state(BestLatentBrownianState *best,
+                                             GexLatentBrownianModel *model,
+                                             int step,
+                                             double ema_objective,
+                                             double best_ema_objective,
+                                             int steps_since_best,
+                                             int clipping_on,
+                                             double grad_norm,
+                                             double grad_F_norm,
+                                             double grad_L_norm,
+                                             double grad_log_sigma_obs_norm,
+                                             double grad_log_sigma_latent_norm) {
+    int d;
+
+    best->has_state = 1;
+    best->step = step;
+    best->steps_since_best = steps_since_best;
+    best->clipping_on = clipping_on;
+    best->objective = model->objective;
+    best->ema_objective = ema_objective;
+    best->best_ema_objective = best_ema_objective;
+    best->grad_norm = grad_norm;
+    best->grad_F_norm = grad_F_norm;
+    best->grad_L_norm = grad_L_norm;
+    best->grad_log_sigma_obs_norm = grad_log_sigma_obs_norm;
+    best->grad_log_sigma_latent_norm = grad_log_sigma_latent_norm;
+    best->observation_objective = model->observation_objective;
+    best->brownian_prior_objective = model->brownian_prior_objective;
+    best->l1_objective = model->l1_objective;
+    best->l2_objective = model->l2_objective;
+    best->F_orthogonality_objective = model->F_orthogonality_objective;
+    best->F_correlation_objective = model->F_correlation_objective;
+    best->L_correlation_objective = model->L_correlation_objective;
+    best->FL_frobenius_norm = model->FL_frobenius_norm;
+    best->F_frobenius_norm = mat_frobenius_norm(model->F);
+    best->L_frobenius_norm = mat_frobenius_norm(model->L);
+    best->log_sigma2_obs = model->log_sigma2_obs;
+    for (d = 0; d < model->k; d++)
+        best->log_sigma2_latent[d] = model->log_sigma2_latent[d];
+    mat_copy(best->F, model->F);
+    mat_copy(best->L, model->L);
+}
+
+static void restore_best_latent_brownian_state(GexLatentBrownianModel *model,
+                                               BestLatentBrownianState *best) {
+    int d;
+
+    if (best == NULL || !best->has_state)
+        return;
+
+    mat_copy(model->F, best->F);
+    mat_copy(model->L, best->L);
+    for (d = 0; d < model->k; d++)
+        model->log_sigma2_latent[d] = best->log_sigma2_latent[d];
+    model->log_sigma2_obs = best->log_sigma2_obs;
+    model->objective = best->objective;
+    model->observation_objective = best->observation_objective;
+    model->brownian_prior_objective = best->brownian_prior_objective;
+    model->l1_objective = best->l1_objective;
+    model->l2_objective = best->l2_objective;
+    model->F_orthogonality_objective = best->F_orthogonality_objective;
+    model->F_correlation_objective = best->F_correlation_objective;
+    model->L_correlation_objective = best->L_correlation_objective;
+    model->FL_frobenius_norm = best->FL_frobenius_norm;
+    mat_mult_lapack(model->FL, model->F, model->L);
+}
+
+static void write_best_latent_brownian_state(FILE *logf,
+                                             BestLatentBrownianState *best,
+                                             GexLatentBrownianModel *model,
+                                             int verbose_log,
+                                             int restored) {
+    int d;
+
+    if (logf == NULL || best == NULL || !best->has_state)
+        return;
+
+    if (verbose_log) {
+        fprintf(logf, "# best_state\t%d\t%.17g\t%.17g\t%.17g\t%d\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+                best->step,
+                best->objective,
+                best->ema_objective,
+                best->best_ema_objective,
+                best->steps_since_best,
+                best->clipping_on,
+                best->grad_norm,
+                best->grad_F_norm,
+                best->grad_L_norm,
+                best->grad_log_sigma_obs_norm,
+                best->grad_log_sigma_latent_norm,
+                best->observation_objective,
+                best->brownian_prior_objective,
+                best->l1_objective,
+                exp(best->log_sigma2_obs));
+        if (model->final_absorbing_factor)
+            fprintf(logf, "\t%.17g", best->l2_objective);
+        if (model->F_orthogonality_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->F_orthogonality_objective);
+        if (model->F_correlation_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->F_correlation_objective);
+        if (model->L_correlation_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->L_correlation_objective);
+        for (d = 0; d < model->k; d++)
+            fprintf(logf, "\t%.17g", exp(best->log_sigma2_latent[d]));
+        fprintf(logf, "\t%.17g\t%.17g\t%.17g\trestored=%d\n",
+                best->F_frobenius_norm,
+                best->L_frobenius_norm,
+                best->FL_frobenius_norm,
+                restored);
+    }
+    else {
+        fprintf(logf, "# best_state\t%d\t%.17g\t%.17g\t%.17g\t%.17g",
+                best->step,
+                best->objective,
+                best->brownian_prior_objective,
+                best->observation_objective,
+                best->l1_objective);
+        if (model->final_absorbing_factor)
+            fprintf(logf, "\t%.17g", best->l2_objective);
+        if (model->F_orthogonality_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->F_orthogonality_objective);
+        if (model->F_correlation_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->F_correlation_objective);
+        if (model->L_correlation_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->L_correlation_objective);
+        fprintf(logf, "\trestored=%d\n", restored);
+    }
+}
+
 void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
     int d, j;
     int k = L->nrows;
@@ -1377,8 +1557,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Other */
     int i, d;    /* Loop indices */
+    int restored_best_state = 0;
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
+    BestLatentBrownianState best_state;
 
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
@@ -1448,6 +1630,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->F_orthogonality_strength = F_orthogonality_strength;
     model->F_correlation_strength = F_correlation_strength;
     model->L_correlation_strength = L_correlation_strength;
+    init_best_latent_brownian_state(&best_state, n_cells, n_genes, k);
 
     if (pca != NULL) {
         /* L comes from the PCA where the rows of components are the eigenvectors */
@@ -1627,6 +1810,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
         
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
+
+        if (isfinite(model->objective) &&
+            (!best_state.has_state || model->objective < best_state.objective)) {
+            store_best_latent_brownian_state(&best_state, model, step,
+                                             ema_objective, best_ema_objective,
+                                             steps_since_best, clipping_on,
+                                             grad_norm, grad_F_norm, grad_L_norm,
+                                             grad_log_sigma_obs_norm,
+                                             grad_log_sigma_latent_norm);
+        }
         
 
         /* Keep the learning rate fixed while the EMA objective is improving.
@@ -1734,6 +1927,31 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     n_trees, grad_F, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
+    grad_F_norm = mat_frobenius_norm(grad_F);
+    grad_L_norm = mat_frobenius_norm(grad_L);
+    grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
+    grad_log_sigma_latent_norm = 0.0;
+    if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
+        for (d = 0; d < k; d++)
+            grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
+        grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
+    }
+    grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
+    if (isfinite(model->objective) &&
+        (!best_state.has_state || model->objective < best_state.objective)) {
+        int final_step = (step > max_steps ? max_steps : step);
+        store_best_latent_brownian_state(&best_state, model, final_step,
+                                         ema_objective, best_ema_objective,
+                                         steps_since_best, 0,
+                                         grad_norm, grad_F_norm, grad_L_norm,
+                                         grad_log_sigma_obs_norm,
+                                         grad_log_sigma_latent_norm);
+    }
+
+    if (best_state.has_state && best_state.objective < model->objective) {
+        restore_best_latent_brownian_state(model, &best_state);
+        restored_best_state = 1;
+    }
     
     if (apply_post_hoc_identifiability) {
         /* Prevent permutation invariance by reordering factors */
@@ -1754,8 +1972,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         post_hoc_sign_identifiability(model->L, model->F);
     }
 
-    /* Keep the extra termination metadata in the verbose log only. */
+    /* Keep extra optimizer metadata in comment rows so table parsers can skip it. */
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
+    write_best_latent_brownian_state(logf, &best_state, model, verbose_log,
+                                     restored_best_state);
 
     /* Free memory */
     if (grad_log_sigma_latent != NULL) free(grad_log_sigma_latent);
@@ -1767,6 +1987,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (vF != NULL) mat_free(vF);
     if (mL != NULL) mat_free(mL);
     if (vL != NULL) mat_free(vL);
+    free_best_latent_brownian_state(&best_state);
     if (logf != NULL) fclose(logf);
     free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
                                  prune_means, prune_vars,
