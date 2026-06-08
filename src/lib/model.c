@@ -766,6 +766,74 @@ static double correlated_L_rows_term(Matrix *L,
                                           n_l_rows);
 }
 
+/* Penalize reuse of the same high-magnitude genes across loading rows.
+   This is a squared cosine similarity on smooth absolute loadings, so it
+   treats opposite-signed use of the same gene module as overlap. */
+static double overlapping_L_abs_rows_term(Matrix *L,
+                                          Matrix *grad_L,
+                                          double L_lambda_overlap,
+                                          int n_l_rows) {
+    const double eps = 1e-8;
+    double ss = 0.0;
+    int a, b, j;
+
+    if (L == NULL || L_lambda_overlap <= 0.0)
+        return 0.0;
+    if (n_l_rows > L->nrows)
+        n_l_rows = L->nrows;
+    if (n_l_rows <= 1 || L->ncols <= 0)
+        return 0.0;
+
+    for (a = 0; a < n_l_rows; a++) {
+        for (b = a + 1; b < n_l_rows; b++) {
+            double dot = 0.0;
+            double norm_a2 = 0.0;
+            double norm_b2 = 0.0;
+            double denom;
+
+            for (j = 0; j < L->ncols; j++) {
+                double xa = mat_get(L, a, j);
+                double xb = mat_get(L, b, j);
+                double ua = sqrt(xa * xa + eps);
+                double ub = sqrt(xb * xb + eps);
+                dot += ua * ub;
+                norm_a2 += ua * ua;
+                norm_b2 += ub * ub;
+            }
+
+            if (norm_a2 <= eps || norm_b2 <= eps)
+                continue;
+
+            denom = norm_a2 * norm_b2;
+            ss += (dot * dot) / denom;
+
+            if (grad_L != NULL) {
+                double inv_denom = 1.0 / denom;
+                double grad_dot_coef = 2.0 * dot * inv_denom;
+                double grad_norm_a_coef = -2.0 * dot * dot / (norm_a2 * norm_a2 * norm_b2);
+                double grad_norm_b_coef = -2.0 * dot * dot / (norm_a2 * norm_b2 * norm_b2);
+
+                for (j = 0; j < L->ncols; j++) {
+                    double xa = mat_get(L, a, j);
+                    double xb = mat_get(L, b, j);
+                    double ua = sqrt(xa * xa + eps);
+                    double ub = sqrt(xb * xb + eps);
+                    double grad_a = mat_get(grad_L, a, j);
+                    double grad_b = mat_get(grad_L, b, j);
+                    double grad_ua = grad_dot_coef * ub + grad_norm_a_coef * ua;
+                    double grad_ub = grad_dot_coef * ua + grad_norm_b_coef * ub;
+                    grad_a += L_lambda_overlap * grad_ua * xa / ua;
+                    grad_b += L_lambda_overlap * grad_ub * xb / ub;
+                    mat_set(grad_L, a, j, grad_a);
+                    mat_set(grad_L, b, j, grad_b);
+                }
+            }
+        }
+    }
+
+    return L_lambda_overlap * ss;
+}
+
 /* Compute the negative log-posterior objective and its gradients for the
 latent Brownian factor model:
     X ≈ FL + ε,      ε_ij ~ N(0, sigma2_obs)
@@ -795,6 +863,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     double F_lambda_orthogonality = model->F_orthogonality_strength;
     double F_lambda_correlation = model->F_correlation_strength;
     double L_lambda_correlation = model->L_correlation_strength;
+    double L_lambda_loading_overlap = model->L_loading_overlap_strength;
     int final_absorbing_factor = model->final_absorbing_factor;
     int n_l1_rows = final_absorbing_factor ? k - 1 : k;
     int n_l_correlation_rows = final_absorbing_factor ? k - 1 : k;
@@ -838,6 +907,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     model->F_orthogonality_objective = 0.0;
     model->F_correlation_objective = 0.0;
     model->L_correlation_objective = 0.0;
+    model->L_loading_overlap_objective = 0.0;
     if (L_lambda_l1 > 0.0) {
         model->l1_objective = l1_regularized_L_term(model->L, grad_L, L_lambda_l1, n_l1_rows);
         obj += model->l1_objective;
@@ -862,6 +932,12 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
             correlated_L_rows_term(model->L, grad_L, L_lambda_correlation,
                                    n_l_correlation_rows);
         obj += model->L_correlation_objective;
+    }
+    if (L_lambda_loading_overlap > 0.0) {
+        model->L_loading_overlap_objective =
+            overlapping_L_abs_rows_term(model->L, grad_L, L_lambda_loading_overlap,
+                                        n_l_correlation_rows);
+        obj += model->L_loading_overlap_objective;
     }
 
     return obj;
@@ -941,6 +1017,7 @@ typedef struct {
     double F_orthogonality_objective;
     double F_correlation_objective;
     double L_correlation_objective;
+    double L_loading_overlap_objective;
     double FL_frobenius_norm;
     double F_frobenius_norm;
     double L_frobenius_norm;
@@ -1005,6 +1082,7 @@ static void store_best_latent_brownian_state(BestLatentBrownianState *best,
     best->F_orthogonality_objective = model->F_orthogonality_objective;
     best->F_correlation_objective = model->F_correlation_objective;
     best->L_correlation_objective = model->L_correlation_objective;
+    best->L_loading_overlap_objective = model->L_loading_overlap_objective;
     best->FL_frobenius_norm = model->FL_frobenius_norm;
     best->F_frobenius_norm = mat_frobenius_norm(model->F);
     best->L_frobenius_norm = mat_frobenius_norm(model->L);
@@ -1035,6 +1113,7 @@ static void restore_best_latent_brownian_state(GexLatentBrownianModel *model,
     model->F_orthogonality_objective = best->F_orthogonality_objective;
     model->F_correlation_objective = best->F_correlation_objective;
     model->L_correlation_objective = best->L_correlation_objective;
+    model->L_loading_overlap_objective = best->L_loading_overlap_objective;
     model->FL_frobenius_norm = best->FL_frobenius_norm;
     mat_mult_lapack(model->FL, model->F, model->L);
 }
@@ -1074,6 +1153,8 @@ static void write_best_latent_brownian_state(FILE *logf,
             fprintf(logf, "\t%.17g", best->F_correlation_objective);
         if (model->L_correlation_strength > 0.0)
             fprintf(logf, "\t%.17g", best->L_correlation_objective);
+        if (model->L_loading_overlap_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->L_loading_overlap_objective);
         for (d = 0; d < model->k; d++)
             fprintf(logf, "\t%.17g", exp(best->log_sigma2_latent[d]));
         fprintf(logf, "\t%.17g\t%.17g\t%.17g\trestored=%d\n",
@@ -1097,6 +1178,8 @@ static void write_best_latent_brownian_state(FILE *logf,
             fprintf(logf, "\t%.17g", best->F_correlation_objective);
         if (model->L_correlation_strength > 0.0)
             fprintf(logf, "\t%.17g", best->L_correlation_objective);
+        if (model->L_loading_overlap_strength > 0.0)
+            fprintf(logf, "\t%.17g", best->L_loading_overlap_objective);
         fprintf(logf, "\trestored=%d\n", restored);
     }
 }
@@ -1530,6 +1613,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       double F_orthogonality_strength,
                                                       double F_correlation_strength,
                                                       double L_correlation_strength,
+                                                      double L_loading_overlap_strength,
                                                       int apply_post_hoc_identifiability,
                                                       const char *outprefix,
                                                       int max_iter,
@@ -1591,6 +1675,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             fprintf(logf, "\tF_correlation_penalty");
         if (L_correlation_strength > 0.0)
             fprintf(logf, "\tL_correlation_penalty");
+        if (L_loading_overlap_strength > 0.0)
+            fprintf(logf, "\tL_loading_overlap_penalty");
         for (i = 0; i < k; i++)
             fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
         fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
@@ -1605,6 +1691,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             fprintf(logf, "\tF_correlation_penalty");
         if (L_correlation_strength > 0.0)
             fprintf(logf, "\tL_correlation_penalty");
+        if (L_loading_overlap_strength > 0.0)
+            fprintf(logf, "\tL_loading_overlap_penalty");
         fprintf(logf, "\n");
     }
 
@@ -1646,6 +1734,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->F_orthogonality_strength = F_orthogonality_strength;
     model->F_correlation_strength = F_correlation_strength;
     model->L_correlation_strength = L_correlation_strength;
+    model->L_loading_overlap_strength = L_loading_overlap_strength;
     init_best_latent_brownian_state(&best_state, n_cells, n_genes, k);
 
     if (pca != NULL) {
@@ -1716,7 +1805,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     mat_zero(mF); mat_zero(vF); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
 
     /* Adam hyperparameters */
-    double base_lr = 0.1;   /* Base learning rate for Adam */
+    double base_lr = 0.01;   /* Base learning rate for Adam */
     double min_lr = 1e-6;   /* Floor for learning rate to prevent it from going to zero */
     double lr_decay_factor = 0.5; /* Multiplicative decay used when the EMA objective plateaus */
     double lr = base_lr;
@@ -1905,6 +1994,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 fprintf(logf, "\t%.17g", model->F_correlation_objective);
             if (L_correlation_strength > 0.0)
                 fprintf(logf, "\t%.17g", model->L_correlation_objective);
+            if (L_loading_overlap_strength > 0.0)
+                fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
             for (d = 0; d < k; d++)
                 fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
             fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
@@ -1927,6 +2018,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 fprintf(logf, "\t%.17g", model->F_correlation_objective);
             if (L_correlation_strength > 0.0)
                 fprintf(logf, "\t%.17g", model->L_correlation_objective);
+            if (L_loading_overlap_strength > 0.0)
+                fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
             fprintf(logf, "\n");
         }
 
