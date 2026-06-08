@@ -664,7 +664,7 @@ static double orthogonal_F_columns_term(Matrix *F,
     return F_lambda_orthogonality * ss;
 }
 
-/* Add a soft penalty on squared cosine similarities between matrix vectors.
+/* Add a soft penalty on squared Pearson correlations between matrix vectors.
    If use_rows is nonzero, compare rows; otherwise compare columns. */
 static double correlated_matrix_vectors_term(Matrix *M,
                                              Matrix *grad_M,
@@ -684,9 +684,13 @@ static double correlated_matrix_vectors_term(Matrix *M,
     dim = use_rows ? M->ncols : M->nrows;
     if (n_vectors > max_vectors)
         n_vectors = max_vectors;
+    if (n_vectors <= 1 || dim <= 1)
+        return 0.0;
 
     for (a = 0; a < n_vectors; a++) {
         for (b = a + 1; b < n_vectors; b++) {
+            double mean_a = 0.0;
+            double mean_b = 0.0;
             double dot = 0.0;
             double norm_a2 = 0.0;
             double norm_b2 = 0.0;
@@ -695,6 +699,15 @@ static double correlated_matrix_vectors_term(Matrix *M,
             for (i = 0; i < dim; i++) {
                 double fa = use_rows ? mat_get(M, a, i) : mat_get(M, i, a);
                 double fb = use_rows ? mat_get(M, b, i) : mat_get(M, i, b);
+                mean_a += fa;
+                mean_b += fb;
+            }
+            mean_a /= (double)dim;
+            mean_b /= (double)dim;
+
+            for (i = 0; i < dim; i++) {
+                double fa = (use_rows ? mat_get(M, a, i) : mat_get(M, i, a)) - mean_a;
+                double fb = (use_rows ? mat_get(M, b, i) : mat_get(M, i, b)) - mean_b;
                 dot += fa * fb;
                 norm_a2 += fa * fa;
                 norm_b2 += fb * fb;
@@ -713,8 +726,8 @@ static double correlated_matrix_vectors_term(Matrix *M,
                 double grad_norm_b_coef = -2.0 * dot * dot / (norm_a2 * norm_b2 * norm_b2);
 
                 for (i = 0; i < dim; i++) {
-                    double fa = use_rows ? mat_get(M, a, i) : mat_get(M, i, a);
-                    double fb = use_rows ? mat_get(M, b, i) : mat_get(M, i, b);
+                    double fa = (use_rows ? mat_get(M, a, i) : mat_get(M, i, a)) - mean_a;
+                    double fb = (use_rows ? mat_get(M, b, i) : mat_get(M, i, b)) - mean_b;
                     double grad_a = use_rows ? mat_get(grad_M, a, i) : mat_get(grad_M, i, a);
                     double grad_b = use_rows ? mat_get(grad_M, b, i) : mat_get(grad_M, i, b);
                     grad_a += lambda_correlation * (grad_dot_coef * fb + grad_norm_a_coef * fa);
@@ -738,9 +751,10 @@ static double correlated_matrix_vectors_term(Matrix *M,
 /* Add a soft penalty on squared correlations between columns of F. */
 static double correlated_F_columns_term(Matrix *F,
                                         Matrix *grad_F,
-                                        double F_lambda_correlation) {
+                                        double F_lambda_correlation,
+                                        int n_f_cols) {
     return correlated_matrix_vectors_term(F, grad_F, F_lambda_correlation, 0,
-                                          F != NULL ? F->ncols : 0);
+                                          n_f_cols);
 }
 
 /* Add a soft penalty on squared correlations between rows of L. */
@@ -784,6 +798,7 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     int final_absorbing_factor = model->final_absorbing_factor;
     int n_l1_rows = final_absorbing_factor ? k - 1 : k;
     int n_l_correlation_rows = final_absorbing_factor ? k - 1 : k;
+    int n_f_correlation_cols = final_absorbing_factor ? k - 1 : k;
     double obj = 0.0;   /* Objective function value */
 
     /* Zero gradients */
@@ -838,7 +853,8 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     }
     if (F_lambda_correlation > 0.0) {
         model->F_correlation_objective =
-            correlated_F_columns_term(model->F, grad_F, F_lambda_correlation);
+            correlated_F_columns_term(model->F, grad_F, F_lambda_correlation,
+                                      n_f_correlation_cols);
         obj += model->F_correlation_objective;
     }
     if (L_lambda_correlation > 0.0) {
