@@ -112,6 +112,7 @@ static void usage(const char *progname) {
         "[--no-write-latent-flow] "
         "[--no-filter] "
         "[--no-preprocess] "
+        "[--remove-ribo-mito-genes] "
         "[--varimax] "
         "[--verbose] "
         "[--verbose-log] "
@@ -146,6 +147,7 @@ int main(int argc, char *argv[]) {
     int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
+    int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before modeling. */
     int varimax = 0;    /* If nonzero, rotate fitted factors with varimax before writing outputs. */
     int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
@@ -348,6 +350,9 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--no-preprocess") == 0) {
             preprocess = 0;
         }
+        else if (strcmp(argv[i], "--remove-ribo-mito-genes") == 0) {
+            remove_ribo_mito_genes = 1;
+        }
         else if (strcmp(argv[i], "--varimax") == 0) {
             varimax = 1;
         }
@@ -458,6 +463,16 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
+
+    if (remove_ribo_mito_genes) {
+        int n_removed = gex_remove_ribo_mito_genes(gex);
+        if (n_removed < 0) {
+            fprintf(stderr, "ERROR: ribosomal/mitochondrial gene filtering removed all genes.\n");
+            return 1;
+        }
+        printf("Removed %d ribosomal/mitochondrial gene(s); matrix now has %d gene(s).\n",
+               n_removed, gex->X->ncols);
+    }
 
     if (verbose) {
         /* Print input/output summary for user verification */
