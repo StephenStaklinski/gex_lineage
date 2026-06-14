@@ -272,6 +272,27 @@ TreeNode **read_nexus(const char *filename, int *n_trees) {
     return trees;
 }
 
+int keep_one_tree(TreeNode **trees, int *n_trees, int tree_index) {
+    TreeNode *selected;
+    int i;
+
+    if (trees == NULL || n_trees == NULL || *n_trees < 1)
+        return -1;
+    if (tree_index < 1 || tree_index > *n_trees)
+        return -1;
+
+    selected = trees[tree_index - 1];
+    for (i = 0; i < *n_trees; i++) {
+        if (i != tree_index - 1 && trees[i] != NULL) {
+            tr_free(trees[i]);
+            trees[i] = NULL;
+        }
+    }
+    trees[0] = selected;
+    *n_trees = 1;
+    return 0;
+}
+
 static int is_leaf(TreeNode *node) {
     return (node != NULL && node->lchild == NULL && node->rchild == NULL);
 }

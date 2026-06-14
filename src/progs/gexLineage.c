@@ -88,6 +88,7 @@ static void usage(const char *progname) {
         "--expr <matrix.tsv> "
         "--outprefix <prefix> "
         "[--tree-total-time T] "
+        "[--tree-index N] "
         "[--filter-covariance average|all] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
@@ -134,6 +135,7 @@ int main(int argc, char *argv[]) {
     PcaMethod pca_method = PCA_METHOD_MAX_PHYLOPCA;  /* Method for performing PCA to initialize latent model fitting */
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
+    int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double F_orthogonality_strength = 0.0;  /* Strength of F-column orthogonality penalty; 0 disables it. */
     double F_correlation_strength = 0.0;  /* Strength of F-column correlation penalty; 0 disables it. */
@@ -200,6 +202,17 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             tree_total_time = atof(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--tree-index") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            tree_index = atoi(argv[++i]);
+            if (tree_index <= 0) {
+                fprintf(stderr, "ERROR: --tree-index must be a positive 1-based integer.\n");
+                return 1;
+            }
         }
         else if (strcmp(argv[i], "--filter-covariance") == 0) {
             if (i + 1 >= argc) {
@@ -421,6 +434,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("Loaded %d tree(s).\n", n_trees);
+    if (tree_index > 0) {
+        int loaded_trees = n_trees;
+        if (keep_one_tree(trees, &n_trees, tree_index) != 0) {
+            fprintf(stderr, "ERROR: --tree-index %d is out of range for %d loaded tree(s).\n",
+                    tree_index, loaded_trees);
+            return 1;
+        }
+        printf("Keeping only tree %d from the input NEXUS.\n", tree_index);
+    }
 
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");

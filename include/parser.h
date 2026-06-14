@@ -9,6 +9,8 @@
 
 TreeNode **read_nexus(const char *filename, int *n_trees);
 
+int keep_one_tree(TreeNode **trees, int *n_trees, int tree_index);
+
 int check_trees_ultrametric(TreeNode **trees, int n_trees);
 
 void uniform_rescale_trees(TreeNode **trees, int n_trees, double target_height);
