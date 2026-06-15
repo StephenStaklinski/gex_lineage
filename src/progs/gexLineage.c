@@ -100,7 +100,7 @@ static void usage(const char *progname) {
         "[--F-correlation-strength S] "
         "[--L-correlation-strength S] "
         "[--L-loading-overlap-strength S] "
-        "[--regularization-scale raw|normalized] "
+        "[--normalize-regularization-scale] "
         "[--final-absorbing-factor] "
         "[--final-absorbing-L-l2-strength S] "
         "[--max-iter N] "
@@ -305,22 +305,8 @@ int main(int argc, char *argv[]) {
             }
             L_loading_overlap_strength = atof(argv[++i]);
         }
-        else if (strcmp(argv[i], "--regularization-scale") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            i++;
-            if (strcmp(argv[i], "raw") == 0) {
-                normalize_regularization = 0;
-            }
-            else if (strcmp(argv[i], "normalized") == 0) {
-                normalize_regularization = 1;
-            }
-            else {
-                fprintf(stderr, "ERROR: --regularization-scale must be one of raw or normalized\n");
-                return 1;
-            }
+        else if (strcmp(argv[i], "--normalize-regularization-scale") == 0) {
+            normalize_regularization = 1;
         }
         else if (strcmp(argv[i], "--final-absorbing-factor") == 0) {
             final_absorbing_factor = 1;
