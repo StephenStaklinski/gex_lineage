@@ -137,7 +137,7 @@ int main(int argc, char *argv[]) {
     double pca_var_threshold = 0.95;    /* Threshold of variance explained to retain PCA components up to */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
-    double L_l1_strength = 0.1;  /* L1 regularization strength for loadings; 0 disables the penalty. */
+    double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double F_orthogonality_strength = 0.0;  /* Strength of F-column orthogonality penalty; 0 disables it. */
     double F_correlation_strength = 0.0;  /* Strength of F-column correlation penalty; 0 disables it. */
     double L_correlation_strength = 0.0;  /* Strength of L-row correlation penalty; 0 disables it. */
