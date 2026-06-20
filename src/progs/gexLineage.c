@@ -696,6 +696,10 @@ int main(int argc, char *argv[]) {
                                           normalize_regularization,
                                           apply_post_hoc_identifiability,
                                           outprefix, max_iter, verbose_log);
+    if (model == NULL) {
+        fprintf(stderr, "ERROR: failed to fit latent Brownian model.\n");
+        return 1;
+    }
 
     if (varimax) {
         printf("Applying varimax rotation to fitted factors before writing outputs...\n");

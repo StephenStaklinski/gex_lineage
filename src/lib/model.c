@@ -1,9 +1,11 @@
 #include "model.h"
 
 #include "adam.h"
+#include "brownian.h"
 #include "pca.h"
 #include "misc.h"
 
+#include <phast/eigen.h>
 #include <phast/matrix.h>
 #include <phast/misc.h>
 
@@ -944,6 +946,97 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
+static int update_F_closed_form(GexLatentBrownianModel *model,
+                                Matrix *Xc,
+                                TreeNode *tree,
+                                char **cell_names) {
+    int i, a, b, d;
+    int n;
+    int k;
+    double sigma2_obs;
+    const double eig_floor = 1e-12;
+    Matrix *K = NULL;
+    Matrix *U = NULL;
+    Matrix *Ut = NULL;
+    Matrix *A = NULL;
+    Matrix *C = NULL;
+    Matrix *R = NULL;
+    Matrix *Y = NULL;
+    Matrix *M = NULL;
+    Matrix *M_inv = NULL;
+    Vector *eval = NULL;
+
+    if (model == NULL || Xc == NULL || tree == NULL || cell_names == NULL)
+        return -1;
+
+    n = model->n_cells;
+    k = model->k;
+    sigma2_obs = exp(model->log_sigma2_obs);
+
+    K = covariance_from_tree(tree, cell_names, n);
+    if (K == NULL)
+        return -1;
+
+    U = mat_new(n, n);
+    eval = vec_new(n);
+    if (mat_diagonalize_sym(K, eval, U) != 0)
+        return -1;
+
+    Ut = mat_transpose(U);
+    A = mat_new(k, k);
+    C = mat_new(n, k);
+    R = mat_new(n, k);
+    Y = mat_new(n, k);
+    M = mat_new(k, k);
+    M_inv = mat_new(k, k);
+
+    mat_mult_lapack_transpose(A, model->L, 0, model->L, 1);
+    mat_mult_lapack_transpose(C, Xc, 0, model->L, 1);
+    mat_mult_lapack(R, Ut, C);
+
+    for (i = 0; i < n; i++) {
+        double lambda = vec_get(eval, i);
+        double coef;
+
+        if (lambda < eig_floor)
+            lambda = eig_floor;
+        coef = lambda / sigma2_obs;
+
+        for (a = 0; a < k; a++) {
+            for (b = 0; b < k; b++) {
+                double val = coef * mat_get(A, a, b);
+                if (a == b)
+                    val += exp(-model->log_sigma2_latent[a]);
+                mat_set(M, a, b, val);
+            }
+        }
+
+        if (mat_invert(M_inv, M) != 0)
+            return -1;
+
+        for (d = 0; d < k; d++) {
+            double val = 0.0;
+            for (a = 0; a < k; a++)
+                val += mat_get(M_inv, d, a) * coef * mat_get(R, i, a);
+            mat_set(Y, i, d, val);
+        }
+    }
+
+    mat_mult_lapack(model->F, U, Y);
+
+    mat_free(K);
+    mat_free(U);
+    mat_free(Ut);
+    mat_free(A);
+    mat_free(C);
+    mat_free(R);
+    mat_free(Y);
+    mat_free(M);
+    mat_free(M_inv);
+    vec_free(eval);
+    return 0;
+}
+
 static void normalize_L_rows_and_rescale_F(Matrix *L,
                                            Matrix *F,
                                            Matrix *mL,
@@ -1658,7 +1751,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     Matrix *grad_F = NULL, *grad_L = NULL, *mF = NULL, *vF = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
 
     /* Other */
-    int i, d;    /* Loop indices */
+    int i, j, d;    /* Loop indices */
     int restored_best_state = 0;
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
@@ -1770,15 +1863,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         mat_add_gaussian_noise(model->L, 1);
     }
 
-    /* Initialize F = X * L^T */
-    Matrix *Lt = mat_transpose(model->L);
-    mat_mult_lapack(model->F, gex->X, Lt);
-    mat_free(Lt);
-
-    /* Initialize sigma2_obs from the residual sum of squares */
-    mat_mult_lapack(model->FL, model->F, model->L);
-    double sse = mat_sum_squared_entries(model->FL);
-
+    /* Bootstrap sigma2_obs from the centered expression scale before the
+       closed-form F initializer has an FL residual available. */
+    double sse = mat_sum_squared_entries(gex->X);
     model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
     model->log_sigma2_obs = max(model->log_sigma2_obs, log(1e-6));
 
@@ -1791,7 +1878,14 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             model->log_sigma2_latent[d] = 0.0;
     }
     else {
-        /* Initialize latent variances based on the PCA initialization of F */
+        Matrix *Lt;
+
+        /* Initialize provisional F = X * L^T only to estimate latent variances. */
+        Lt = mat_transpose(model->L);
+        mat_mult_lapack(model->F, gex->X, Lt);
+        mat_free(Lt);
+
+        /* Initialize latent variances based on the provisional F. */
         double tip_var_scale = tree_tip_variance(trees[0]);
         double log_sigma2_latent_init;
         for (d = 0; d < k; d++) {
@@ -1813,6 +1907,30 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             model->log_sigma2_latent[d] = max(model->log_sigma2_latent[d], log(1e-6));
         }
     }
+
+    if (update_F_closed_form(model, gex->X, trees[0], gex->cell_names) != 0) {
+        fprintf(stderr, "ERROR: failed to initialize F in closed form.\n");
+        gex_free_latent_brownian_model(model);
+        free_best_latent_brownian_state(&best_state);
+        if (logf != NULL) fclose(logf);
+        free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
+                                     prune_means, prune_vars,
+                                     prune_adjoints, tree_grads, n_trees);
+        return NULL;
+    }
+
+    /* Reinitialize sigma2_obs from the residual sum of squares for the
+       closed-form initial F and current L. */
+    mat_mult_lapack(model->FL, model->F, model->L);
+    sse = 0.0;
+    for (i = 0; i < model->n_cells; i++) {
+        for (j = 0; j < model->n_genes; j++) {
+            double resid = mat_get(gex->X, i, j) - mat_get(model->FL, i, j);
+            sse += resid * resid;
+        }
+    }
+    model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
+    model->log_sigma2_obs = max(model->log_sigma2_obs, log(1e-6));
 
     /* Allocate gradients, moments, and variances for Adam */
     if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
