@@ -158,7 +158,7 @@ int main(int argc, char *argv[]) {
     int verbose_log = 0;    /* If nonzero, write the full optimization log. */
     int nthreads = 1;   /* Number of OpenMP threads to use */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
-    GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_SIGMA2S; /* Which constraint to use for counteracting scale invariance */
+    GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_LROWS; /* Which constraint to use for counteracting scale invariance */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */

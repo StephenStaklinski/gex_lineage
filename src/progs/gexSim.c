@@ -64,6 +64,7 @@ int main(int argc, char *argv[]) {
     Vector *input_L_l2_norms = NULL; /* Raw L l2 norms input from CLI */
     Vector *input_tip_vars = NULL; /* Raw desired tip variance input from CLI */
     Vector *input_sigma2s = NULL; /* Raw sigma2 input from CLI */
+    int scale_input_mode = 0; /* 1=L row norms, 2=tip variances, 3=sigma2 */
     GexMatrix *gex = scalloc(1, sizeof(GexMatrix));  /* Simulated expression matrix */
     int i;
     int n_cells;
@@ -167,7 +168,7 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
         return 1;
     }
-    if (input_L_l2_norms != NULL && input_tip_vars != NULL && input_sigma2s != NULL) {
+    if ((input_L_l2_norms != NULL) + (input_tip_vars != NULL) + (input_sigma2s != NULL) > 1) {
         fprintf(stderr, "ERROR: specify only one of --L-l2-norm or --desired-tip-var or --sigma2\n");
         return 1;
     }
@@ -256,6 +257,12 @@ int main(int argc, char *argv[]) {
         input_L_l2_norms = vec_new(1);
         vec_set(input_L_l2_norms, 0, desired_L_l2_norm);
     }
+    if (input_L_l2_norms != NULL)
+        scale_input_mode = 1;
+    else if (input_tip_vars != NULL)
+        scale_input_mode = 2;
+    else if (input_sigma2s != NULL)
+        scale_input_mode = 3;
 
     /* Otherwise read in what what provided for the Brownian sigma2s
     either directly from input or calculated from input desired tip variances */
@@ -291,6 +298,7 @@ int main(int argc, char *argv[]) {
 
         /* Free memory */
         vec_free(input_sigma2s);
+        input_sigma2s = NULL;
 
         /* All row norms set to 1.0 */
         L_row_norms = vec_new(sim_dim);
@@ -333,7 +341,7 @@ int main(int argc, char *argv[]) {
         for (i = 0; i < k; i++)
             log_sigma2_latent[i] = log(vec_get(sigma2s, i));
 
-        if (input_L_l2_norms != NULL) {
+        if (scale_input_mode == 1) {
             reorder_factors_by_row_norm(L, gex->X);
         }
         else {
@@ -380,9 +388,12 @@ int main(int argc, char *argv[]) {
     printf("Wrote output to %s\n", outprefix);
 
     /* Free memory */
-    vec_free(input_L_l2_norms);
-    vec_free(mu);
-    vec_free(sigma2s);
+    if (input_L_l2_norms != NULL)
+        vec_free(input_L_l2_norms);
+    if (mu != NULL)
+        vec_free(mu);
+    if (sigma2s != NULL)
+        vec_free(sigma2s);
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
     if (Sigmas != NULL) {
