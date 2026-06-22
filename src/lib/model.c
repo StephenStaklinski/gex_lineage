@@ -624,48 +624,6 @@ static double l2_regularized_L_row_term(Matrix *L,
     return L_lambda_l2 * ss;
 }
 
-/* Add a soft orthogonality penalty on columns of F. Returns the contribution
-   lambda * ||F^T F - I||_F^2 and fills grad_F with
-   4 * lambda * F * (F^T F - I). */
-static double orthogonal_F_columns_term(Matrix *F,
-                                        Matrix *grad_F,
-                                        double F_lambda_orthogonality) {
-    Matrix *FtF = NULL;
-    Matrix *pen_grad = NULL;
-    double ss = 0.0;
-    int i, a, b;
-
-    if (F == NULL || F_lambda_orthogonality <= 0.0)
-        return 0.0;
-
-    FtF = mat_new(F->ncols, F->ncols);
-    mat_mult_lapack_transpose(FtF, F, 1, F, 0);
-
-    for (a = 0; a < FtF->nrows; a++) {
-        for (b = 0; b < FtF->ncols; b++) {
-            double diff = mat_get(FtF, a, b) - (a == b ? 1.0 : 0.0);
-            mat_set(FtF, a, b, diff);
-            ss += diff * diff;
-        }
-    }
-
-    if (grad_F != NULL) {
-        pen_grad = mat_new(F->nrows, F->ncols);
-        mat_mult_lapack(pen_grad, F, FtF);
-        for (i = 0; i < grad_F->nrows; i++) {
-            for (a = 0; a < grad_F->ncols; a++) {
-                double grad = mat_get(grad_F, i, a);
-                grad += 4.0 * F_lambda_orthogonality * mat_get(pen_grad, i, a);
-                mat_set(grad_F, i, a, grad);
-            }
-        }
-        mat_free(pen_grad);
-    }
-
-    mat_free(FtF);
-    return F_lambda_orthogonality * ss;
-}
-
 /* Add a soft penalty on squared Pearson correlations between matrix vectors.
    If use_rows is nonzero, compare rows; otherwise compare columns. */
 static double correlated_matrix_vectors_term(Matrix *M,
@@ -748,15 +706,6 @@ static double correlated_matrix_vectors_term(Matrix *M,
     }
 
     return lambda_correlation * ss;
-}
-
-/* Add a soft penalty on squared correlations between columns of F. */
-static double correlated_F_columns_term(Matrix *F,
-                                        Matrix *grad_F,
-                                        double F_lambda_correlation,
-                                        int n_f_cols) {
-    return correlated_matrix_vectors_term(F, grad_F, F_lambda_correlation, 0,
-                                          n_f_cols);
 }
 
 /* Add a soft penalty on squared correlations between rows of L. */
@@ -863,7 +812,6 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     int final_absorbing_factor = model->final_absorbing_factor;
     int n_l1_rows = final_absorbing_factor ? k - 1 : k;
     int n_l_correlation_rows = final_absorbing_factor ? k - 1 : k;
-    int n_f_correlation_cols = final_absorbing_factor ? k - 1 : k;
     double obj = 0.0;   /* Objective function value */
 
     /* Zero gradients */
@@ -900,8 +848,6 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add loading regularization and compute the gradient w.r.t. L. */
     model->l1_objective = 0.0;
     model->l2_objective = 0.0;
-    model->F_orthogonality_objective = 0.0;
-    model->F_correlation_objective = 0.0;
     model->L_correlation_objective = 0.0;
     model->L_loading_overlap_objective = 0.0;
     if (model->l1_strength > 0.0) {
@@ -914,19 +860,6 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
         model->l2_objective = l2_regularized_L_row_term(model->L, grad_L, k - 1,
                                                         model->absorbing_l2_strength);
         obj += model->l2_objective;
-    }
-    if (model->F_orthogonality_strength > 0.0) {
-        model->F_orthogonality_objective =
-            orthogonal_F_columns_term(model->F, grad_F,
-                                      model->F_orthogonality_strength);
-        obj += model->F_orthogonality_objective;
-    }
-    if (model->F_correlation_strength > 0.0) {
-        model->F_correlation_objective =
-            correlated_F_columns_term(model->F, grad_F,
-                                      model->F_correlation_strength,
-                                      n_f_correlation_cols);
-        obj += model->F_correlation_objective;
     }
     if (model->L_correlation_strength > 0.0) {
         model->L_correlation_objective =
@@ -1108,8 +1041,6 @@ typedef struct {
     double brownian_prior_objective;
     double l1_objective;
     double l2_objective;
-    double F_orthogonality_objective;
-    double F_correlation_objective;
     double L_correlation_objective;
     double L_loading_overlap_objective;
     double FL_frobenius_norm;
@@ -1173,8 +1104,6 @@ static void store_best_latent_brownian_state(BestLatentBrownianState *best,
     best->brownian_prior_objective = model->brownian_prior_objective;
     best->l1_objective = model->l1_objective;
     best->l2_objective = model->l2_objective;
-    best->F_orthogonality_objective = model->F_orthogonality_objective;
-    best->F_correlation_objective = model->F_correlation_objective;
     best->L_correlation_objective = model->L_correlation_objective;
     best->L_loading_overlap_objective = model->L_loading_overlap_objective;
     best->FL_frobenius_norm = model->FL_frobenius_norm;
@@ -1204,8 +1133,6 @@ static void restore_best_latent_brownian_state(GexLatentBrownianModel *model,
     model->brownian_prior_objective = best->brownian_prior_objective;
     model->l1_objective = best->l1_objective;
     model->l2_objective = best->l2_objective;
-    model->F_orthogonality_objective = best->F_orthogonality_objective;
-    model->F_correlation_objective = best->F_correlation_objective;
     model->L_correlation_objective = best->L_correlation_objective;
     model->L_loading_overlap_objective = best->L_loading_overlap_objective;
     model->FL_frobenius_norm = best->FL_frobenius_norm;
@@ -1241,10 +1168,6 @@ static void write_best_latent_brownian_state(FILE *logf,
                 exp(best->log_sigma2_obs));
         if (model->final_absorbing_factor)
             fprintf(logf, "\t%.17g", best->l2_objective);
-        if (model->F_orthogonality_strength > 0.0)
-            fprintf(logf, "\t%.17g", best->F_orthogonality_objective);
-        if (model->F_correlation_strength > 0.0)
-            fprintf(logf, "\t%.17g", best->F_correlation_objective);
         if (model->L_correlation_strength > 0.0)
             fprintf(logf, "\t%.17g", best->L_correlation_objective);
         if (model->L_loading_overlap_strength > 0.0)
@@ -1266,10 +1189,6 @@ static void write_best_latent_brownian_state(FILE *logf,
                 best->l1_objective);
         if (model->final_absorbing_factor)
             fprintf(logf, "\t%.17g", best->l2_objective);
-        if (model->F_orthogonality_strength > 0.0)
-            fprintf(logf, "\t%.17g", best->F_orthogonality_objective);
-        if (model->F_correlation_strength > 0.0)
-            fprintf(logf, "\t%.17g", best->F_correlation_objective);
         if (model->L_correlation_strength > 0.0)
             fprintf(logf, "\t%.17g", best->L_correlation_objective);
         if (model->L_loading_overlap_strength > 0.0)
@@ -1704,8 +1623,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       double L_l1_strength,
                                                       int final_absorbing_factor,
                                                       double L_absorbing_l2_strength,
-                                                      double F_orthogonality_strength,
-                                                      double F_correlation_strength,
                                                       double L_correlation_strength,
                                                       double L_loading_overlap_strength,
                                                       int normalize_regularization,
@@ -1764,10 +1681,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "step\tobjective\tema_objective\tbest_ema_objective\tsteps_since_best\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
         if (final_absorbing_factor)
             fprintf(logf, "\tl2_penalty");
-        if (F_orthogonality_strength > 0.0)
-            fprintf(logf, "\tF_orthogonality_penalty");
-        if (F_correlation_strength > 0.0)
-            fprintf(logf, "\tF_correlation_penalty");
         if (L_correlation_strength > 0.0)
             fprintf(logf, "\tL_correlation_penalty");
         if (L_loading_overlap_strength > 0.0)
@@ -1780,10 +1693,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         fprintf(logf, "step\tobjective\tbrownian_neglprior\tobservation_negll\tl1_penalty");
         if (final_absorbing_factor)
             fprintf(logf, "\tl2_penalty");
-        if (F_orthogonality_strength > 0.0)
-            fprintf(logf, "\tF_orthogonality_penalty");
-        if (F_correlation_strength > 0.0)
-            fprintf(logf, "\tF_correlation_penalty");
         if (L_correlation_strength > 0.0)
             fprintf(logf, "\tL_correlation_penalty");
         if (L_loading_overlap_strength > 0.0)
@@ -1826,27 +1735,18 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->final_absorbing_factor = final_absorbing_factor;
     model->l1_strength = L_l1_strength;
     model->absorbing_l2_strength = L_absorbing_l2_strength;
-    model->F_orthogonality_strength = F_orthogonality_strength;
-    model->F_correlation_strength = F_correlation_strength;
     model->L_correlation_strength = L_correlation_strength;
     model->L_loading_overlap_strength = L_loading_overlap_strength;
     if (normalize_regularization) {
         int n_l_rows = final_absorbing_factor ? k - 1 : k;
-        int n_f_cols = final_absorbing_factor ? k - 1 : k;
         double objective_entries = (double)n_cells * (double)n_genes;
         double n_l_pairs = (double)n_l_rows * (double)(n_l_rows - 1) / 2.0;
-        double n_f_pairs = (double)n_f_cols * (double)(n_f_cols - 1) / 2.0;
 
         if (n_l_rows > 0)
             model->l1_strength *= objective_entries /
                                   ((double)n_l_rows * (double)n_genes);
         if (n_genes > 0)
             model->absorbing_l2_strength *= objective_entries / (double)n_genes;
-        if (k > 0)
-            model->F_orthogonality_strength *= objective_entries /
-                                               ((double)k * (double)k);
-        if (n_f_pairs > 0.0)
-            model->F_correlation_strength *= objective_entries / n_f_pairs;
         if (n_l_pairs > 0.0) {
             model->L_correlation_strength *= objective_entries / n_l_pairs;
             model->L_loading_overlap_strength *= objective_entries / n_l_pairs;
@@ -2136,10 +2036,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     exp(model->log_sigma2_obs));
             if (final_absorbing_factor)
                 fprintf(logf, "\t%.17g", model->l2_objective);
-            if (F_orthogonality_strength > 0.0)
-                fprintf(logf, "\t%.17g", model->F_orthogonality_objective);
-            if (F_correlation_strength > 0.0)
-                fprintf(logf, "\t%.17g", model->F_correlation_objective);
             if (L_correlation_strength > 0.0)
                 fprintf(logf, "\t%.17g", model->L_correlation_objective);
             if (L_loading_overlap_strength > 0.0)
@@ -2160,10 +2056,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                     model->l1_objective);
             if (final_absorbing_factor)
                 fprintf(logf, "\t%.17g", model->l2_objective);
-            if (F_orthogonality_strength > 0.0)
-                fprintf(logf, "\t%.17g", model->F_orthogonality_objective);
-            if (F_correlation_strength > 0.0)
-                fprintf(logf, "\t%.17g", model->F_correlation_objective);
             if (L_correlation_strength > 0.0)
                 fprintf(logf, "\t%.17g", model->L_correlation_objective);
             if (L_loading_overlap_strength > 0.0)
