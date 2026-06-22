@@ -28,13 +28,6 @@ foreach(tgt gexLineage gexSim gexEvalSim)
     endif()
 endforeach()
 
-if(GEX_LINEAGE_HAS_OPENBLAS_THREAD_CONTROL)
-    target_compile_definitions(gexLineage PRIVATE GEX_LINEAGE_HAS_OPENBLAS_THREAD_CONTROL)
-endif()
-if(GEX_LINEAGE_HAS_MKL_THREAD_CONTROL)
-    target_compile_definitions(gexLineage PRIVATE GEX_LINEAGE_HAS_MKL_THREAD_CONTROL)
-endif()
-
 # Read version file and strip whitespace
 file(READ "${CMAKE_SOURCE_DIR}/version" GEX_LINEAGE_VERSION_RAW)
 string(STRIP "${GEX_LINEAGE_VERSION_RAW}" GEX_LINEAGE_VERSION)

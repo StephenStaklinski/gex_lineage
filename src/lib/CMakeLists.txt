@@ -36,6 +36,13 @@ if(OpenMP_C_FOUND)
   target_compile_definitions(gex_lineage_core PUBLIC GEX_LINEAGE_HAS_OPENMP)
 endif()
 
+if(GEX_LINEAGE_HAS_OPENBLAS_THREAD_CONTROL)
+  target_compile_definitions(gex_lineage_core PUBLIC GEX_LINEAGE_HAS_OPENBLAS_THREAD_CONTROL)
+endif()
+if(GEX_LINEAGE_HAS_MKL_THREAD_CONTROL)
+  target_compile_definitions(gex_lineage_core PUBLIC GEX_LINEAGE_HAS_MKL_THREAD_CONTROL)
+endif()
+
 # Install the library
 install(TARGETS gex_lineage_core
   ARCHIVE DESTINATION lib
