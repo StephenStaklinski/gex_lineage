@@ -28,14 +28,12 @@ typedef struct {
     double l1_strength;
     int final_absorbing_factor;
     double absorbing_l2_strength;
-    double L_correlation_strength;
     double L_loading_overlap_strength;
     double objective;
     double observation_objective;
     double brownian_prior_objective;
     double l1_objective;
     double l2_objective;
-    double L_correlation_objective;
     double L_loading_overlap_objective;
     double FL_frobenius_norm;
     MVN *latent_mvn;
@@ -50,7 +48,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         double L_l1_strength,
                                                         int final_absorbing_factor,
                                                         double L_absorbing_l2_strength,
-                                                        double L_correlation_strength,
                                                         double L_loading_overlap_strength,
                                                         int normalize_regularization,
                                                         int apply_post_hoc_identifiability,

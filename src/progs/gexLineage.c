@@ -95,7 +95,6 @@ static void usage(const char *progname) {
         "[--scale-invar-constraint sigma2s|Lrows|none] "
         "[--no-post-hoc-identifiability] "
         "[--L-l1-strength S] "
-        "[--L-correlation-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--normalize-regularization-scale] "
         "[--final-absorbing-factor] "
@@ -135,7 +134,6 @@ int main(int argc, char *argv[]) {
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
-    double L_correlation_strength = 0.0;  /* Strength of L-row correlation penalty; 0 disables it. */
     double L_loading_overlap_strength = 0.0;  /* Strength of absolute L-row loading-overlap penalty; 0 disables it. */
     int normalize_regularization = 0; /* If nonzero, scale optional penalties by dataset size. */
     int final_absorbing_factor = 0; /* If nonzero, use the final factor as dense absorbing background. */
@@ -271,13 +269,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             L_l1_strength = atof(argv[++i]);
-        }
-        else if (strcmp(argv[i], "--L-correlation-strength") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            L_correlation_strength = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--L-loading-overlap-strength") == 0) {
             if (i + 1 >= argc) {
@@ -432,10 +423,6 @@ int main(int argc, char *argv[]) {
 
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
-        return 1;
-    }
-    if (L_correlation_strength < 0.0) {
-        fprintf(stderr, "ERROR: --L-correlation-strength must be nonnegative (0 disables L correlation regularization)\n");
         return 1;
     }
     if (L_loading_overlap_strength < 0.0) {
@@ -663,7 +650,6 @@ int main(int argc, char *argv[]) {
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
                                           final_absorbing_factor, L_absorbing_l2_strength,
-                                          L_correlation_strength,
                                           L_loading_overlap_strength,
                                           normalize_regularization,
                                           apply_post_hoc_identifiability,
