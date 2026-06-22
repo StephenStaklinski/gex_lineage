@@ -1996,12 +1996,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         else
             ema_objective = ema_beta * ema_objective + (1.0 - ema_beta) * model->objective;
 
-        if (ema_objective < best_ema_objective * (1.0 - objective_tol)) {
-            best_ema_objective = ema_objective;
-            steps_since_best = 0;
+        if (step >= min_steps) {
+            if (ema_objective < best_ema_objective * (1.0 - objective_tol)) {
+                best_ema_objective = ema_objective;
+                steps_since_best = 0;
+            }
+            else {
+                steps_since_best++;
+            }
         }
         else {
-            steps_since_best++;
+            steps_since_best = 0;
         }
         
         /* Compute the gradient l2 norms */
@@ -2058,7 +2063,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
-        if (isfinite(model->objective) &&
+        if (step >= min_steps &&
+            isfinite(model->objective) &&
             (!best_state.has_state || model->objective < best_state.objective)) {
             store_best_latent_brownian_state(&best_state, model, step,
                                              ema_objective, best_ema_objective,
@@ -2188,7 +2194,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
     }
     grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
-    if (isfinite(model->objective) &&
+    if (step >= min_steps &&
+        isfinite(model->objective) &&
         (!best_state.has_state || model->objective < best_state.objective)) {
         int final_step = (step > max_steps ? max_steps : step);
         store_best_latent_brownian_state(&best_state, model, final_step,
