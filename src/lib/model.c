@@ -598,32 +598,6 @@ static double l1_regularized_L_term(Matrix *L,
     return L_lambda_l1 * abs_sum;
 }
 
-/* Add the L2 regularization penalty on one row of L. Returns the contribution
-   lambda * ||L_row||^2 and fills grad_L with 2 * lambda * L_row. */
-static double l2_regularized_L_row_term(Matrix *L,
-                                        Matrix *grad_L,
-                                        int row,
-                                        double L_lambda_l2) {
-    int j;
-    int p = L->ncols;
-    double ss = 0.0;
-
-    if (row < 0 || row >= L->nrows || L_lambda_l2 <= 0.0)
-        return 0.0;
-
-    for (j = 0; j < p; j++) {
-        double val = mat_get(L, row, j);
-        ss += val * val;
-        if (grad_L != NULL) {
-            double grad = mat_get(grad_L, row, j);
-            grad += 2.0 * L_lambda_l2 * val;
-            mat_set(grad_L, row, j, grad);
-        }
-    }
-
-    return L_lambda_l2 * ss;
-}
-
 /* Penalize reuse of the same high-magnitude genes across loading rows.
    This is a squared cosine similarity on smooth absolute loadings, so it
    treats opposite-signed use of the same gene module as overlap. */
@@ -716,9 +690,6 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            double *grad_log_sigma_obs) {
     int d;
     int k = model->k;   /* Number of latent factors */
-    int final_absorbing_factor = model->final_absorbing_factor;
-    int n_l1_rows = final_absorbing_factor ? k - 1 : k;
-    int n_l_overlap_rows = final_absorbing_factor ? k - 1 : k;
     double obj = 0.0;   /* Objective function value */
 
     /* Zero gradients */
@@ -754,24 +725,18 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
 
     /* Add loading regularization and compute the gradient w.r.t. L. */
     model->l1_objective = 0.0;
-    model->l2_objective = 0.0;
     model->L_loading_overlap_objective = 0.0;
     if (model->l1_strength > 0.0) {
         model->l1_objective = l1_regularized_L_term(model->L, grad_L,
                                                     model->l1_strength,
-                                                    n_l1_rows);
+                                                    k);
         obj += model->l1_objective;
-    }
-    if (final_absorbing_factor && model->absorbing_l2_strength > 0.0) {
-        model->l2_objective = l2_regularized_L_row_term(model->L, grad_L, k - 1,
-                                                        model->absorbing_l2_strength);
-        obj += model->l2_objective;
     }
     if (model->L_loading_overlap_strength > 0.0) {
         model->L_loading_overlap_objective =
             overlapping_L_abs_rows_term(model->L, grad_L,
                                         model->L_loading_overlap_strength,
-                                        n_l_overlap_rows);
+                                        k);
         obj += model->L_loading_overlap_objective;
     }
 
@@ -936,7 +901,6 @@ typedef struct {
     double observation_objective;
     double brownian_prior_objective;
     double l1_objective;
-    double l2_objective;
     double L_loading_overlap_objective;
     double FL_frobenius_norm;
     double F_frobenius_norm;
@@ -992,7 +956,6 @@ static void store_best_latent_brownian_state(BestLatentBrownianState *best,
     best->observation_objective = model->observation_objective;
     best->brownian_prior_objective = model->brownian_prior_objective;
     best->l1_objective = model->l1_objective;
-    best->l2_objective = model->l2_objective;
     best->L_loading_overlap_objective = model->L_loading_overlap_objective;
     best->FL_frobenius_norm = model->FL_frobenius_norm;
     best->F_frobenius_norm = mat_frobenius_norm(model->F);
@@ -1020,7 +983,6 @@ static void restore_best_latent_brownian_state(GexLatentBrownianModel *model,
     model->observation_objective = best->observation_objective;
     model->brownian_prior_objective = best->brownian_prior_objective;
     model->l1_objective = best->l1_objective;
-    model->l2_objective = best->l2_objective;
     model->L_loading_overlap_objective = best->L_loading_overlap_objective;
     model->FL_frobenius_norm = best->FL_frobenius_norm;
     mat_mult_lapack(model->FL, model->F, model->L);
@@ -1048,8 +1010,6 @@ static void write_best_latent_brownian_state(FILE *logf,
             best->brownian_prior_objective,
             best->l1_objective,
             exp(best->log_sigma2_obs));
-    if (model->final_absorbing_factor)
-        fprintf(logf, "\t%.17g", best->l2_objective);
     if (model->L_loading_overlap_strength > 0.0)
         fprintf(logf, "\t%.17g", best->L_loading_overlap_objective);
     for (d = 0; d < model->k; d++)
@@ -1123,11 +1083,14 @@ static void selection_sort_decreasing(double *arr, int *indices, int n) {
     }
 }
 
+static void reorder_factors_by_row_norm_prefix(Matrix *L, Matrix *F, int n_reorder);
+static void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_sigma2_latent, int n_reorder);
+
 void reorder_factors_by_row_norm(Matrix *L, Matrix *F) {
     reorder_factors_by_row_norm_prefix(L, F, L->nrows);
 }
 
-void reorder_factors_by_row_norm_prefix(Matrix *L, Matrix *F, int n_reorder) {
+static void reorder_factors_by_row_norm_prefix(Matrix *L, Matrix *F, int n_reorder) {
     int d, j, i;
     int k = L->nrows;
     int p = L->ncols;
@@ -1195,7 +1158,7 @@ void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_l
     reorder_factors_by_sigma2_latent_prefix(L, F, log_sigma2_latent, L->nrows);
 }
 
-void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_sigma2_latent, int n_reorder) {
+static void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_sigma2_latent, int n_reorder) {
     int d, j, i;
     int k = L->nrows;
     int p = L->ncols;
@@ -1261,8 +1224,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       PCA *pca,
                                                       GexScaleInvarConstraint scale_invar_constraint,
                                                       double L_l1_strength,
-                                                      int final_absorbing_factor,
-                                                      double L_absorbing_l2_strength,
                                                       double L_loading_overlap_strength,
                                                       int normalize_regularization,
                                                       int apply_post_hoc_identifiability,
@@ -1310,8 +1271,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
     fprintf(logf, "step\tobjective\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
-    if (final_absorbing_factor)
-        fprintf(logf, "\tl2_penalty");
     if (L_loading_overlap_strength > 0.0)
         fprintf(logf, "\tL_loading_overlap_penalty");
     for (i = 0; i < k; i++)
@@ -1350,20 +1309,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->F = mat_new(n_cells, k); /* Allocate the latent factors matrix: cells × latent factors */
     model->L = mat_new(k, n_genes); /* Allocate the factor loading matrix: latent factors × genes */
     model->FL = mat_new(n_cells, n_genes); /* Allocate the product FL for efficient likelihood computation */
-    model->final_absorbing_factor = final_absorbing_factor;
     model->l1_strength = L_l1_strength;
-    model->absorbing_l2_strength = L_absorbing_l2_strength;
     model->L_loading_overlap_strength = L_loading_overlap_strength;
     if (normalize_regularization) {
-        int n_l_rows = final_absorbing_factor ? k - 1 : k;
+        int n_l_rows = k;
         double objective_entries = (double)n_cells * (double)n_genes;
         double n_l_pairs = (double)n_l_rows * (double)(n_l_rows - 1) / 2.0;
 
         if (n_l_rows > 0)
             model->l1_strength *= objective_entries /
                                   ((double)n_l_rows * (double)n_genes);
-        if (n_genes > 0)
-            model->absorbing_l2_strength *= objective_entries / (double)n_genes;
         if (n_l_pairs > 0.0) {
             model->L_loading_overlap_strength *= objective_entries / n_l_pairs;
         }
@@ -1624,8 +1579,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 model->brownian_prior_objective,
                 model->l1_objective,
                 exp(model->log_sigma2_obs));
-        if (final_absorbing_factor)
-            fprintf(logf, "\t%.17g", model->l2_objective);
         if (L_loading_overlap_strength > 0.0)
             fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
         for (d = 0; d < k; d++)
@@ -1673,16 +1626,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (apply_post_hoc_identifiability) {
         /* Prevent permutation invariance by reordering factors */
         if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
-            if (final_absorbing_factor)
-                reorder_factors_by_row_norm_prefix(model->L, model->F, k - 1);
-            else
-                reorder_factors_by_row_norm(model->L, model->F);
+            reorder_factors_by_row_norm(model->L, model->F);
         }
         else {
-            if (final_absorbing_factor)
-                reorder_factors_by_sigma2_latent_prefix(model->L, model->F, model->log_sigma2_latent, k - 1);
-            else
-                reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
+            reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
         }
 
         /* Prevent sign invariance by making the largest loading of L positive */

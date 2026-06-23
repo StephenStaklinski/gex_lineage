@@ -97,8 +97,6 @@ static void usage(const char *progname) {
         "[--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--normalize-regularization-scale] "
-        "[--final-absorbing-factor] "
-        "[--final-absorbing-L-l2-strength S] "
         "[--remove-ribo-mito-genes] "
         "[--dim K] "
         "[--pca-method maxphylopca|phylopca|pca|none] "
@@ -132,8 +130,6 @@ int main(int argc, char *argv[]) {
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double L_loading_overlap_strength = 0.0;  /* Strength of absolute L-row loading-overlap penalty; 0 disables it. */
     int normalize_regularization = 0; /* If nonzero, scale optional penalties by dataset size. */
-    int final_absorbing_factor = 0; /* If nonzero, use the final factor as dense absorbing background. */
-    double L_absorbing_l2_strength = 1e-4; /* L2 strength for the final absorbing factor. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
@@ -272,16 +268,6 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--normalize-regularization-scale") == 0) {
             normalize_regularization = 1;
         }
-        else if (strcmp(argv[i], "--final-absorbing-factor") == 0) {
-            final_absorbing_factor = 1;
-        }
-        else if (strcmp(argv[i], "--final-absorbing-L-l2-strength") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            L_absorbing_l2_strength = atof(argv[++i]);
-        }
         else if (strcmp(argv[i], "--dim") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -403,10 +389,6 @@ int main(int argc, char *argv[]) {
     }
     if (L_loading_overlap_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-loading-overlap-strength must be nonnegative (0 disables L loading-overlap regularization)\n");
-        return 1;
-    }
-    if (L_absorbing_l2_strength < 0.0) {
-        fprintf(stderr, "ERROR: --final-absorbing-L-l2-strength must be nonnegative.\n");
         return 1;
     }
     /* Check that the input trees are ultrametric (required for cell lineage) */
@@ -610,7 +592,6 @@ int main(int argc, char *argv[]) {
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
                                           k, pca, scale_invar_constraint, L_l1_strength,
-                                          final_absorbing_factor, L_absorbing_l2_strength,
                                           L_loading_overlap_strength,
                                           normalize_regularization,
                                           apply_post_hoc_identifiability,
