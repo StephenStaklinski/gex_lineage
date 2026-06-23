@@ -1289,7 +1289,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int min_steps = 200;    /* Minimum number of optimization steps before allowing convergence */
     int convergence_window = 50; /* Number of steps to average when assessing convergence */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
-    double objective_tol = 1e-3; /* Relative window-average improvement needed to continue */
+    double objective_tol = 1e-4; /* Relative window-average improvement needed to continue */
     double window_objective_sum = 0.0; /* Running objective sum for convergence windows */
     double last_window_objective_avg = HUGE_VAL; /* Previous convergence-window mean objective */
 
@@ -1512,8 +1512,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double grad_log_sigma_latent_norm = 0.0;
     double pow_beta1;
     double pow_beta2;
-    double rel_L_lr;
-    double rel_sigma2_lr;
 
     /* Run Adam */
     for (step = 1; ; step++) {
@@ -1622,18 +1620,16 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
-        rel_L_lr = lr;
-        adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, rel_L_lr);
-        rel_sigma2_lr = lr * 0.01;
+        adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, lr);
         if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
             /* Step Brownian variance parameters if they are not fixed for scale invariance */
             adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
                              m_log_sigma_latent, v_log_sigma_latent,
-                             k, pow_beta1, pow_beta2, rel_sigma2_lr);
+                             k, pow_beta1, pow_beta2, lr);
         }
         adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
                          &m_log_sigma_obs, &v_log_sigma_obs,
-                         pow_beta1, pow_beta2, rel_sigma2_lr);
+                         pow_beta1, pow_beta2, lr);
         
         if (scale_invar_constraint == GEX_SCALE_INVAR_LROWS) {
             /* Normalize L rows and rescale F to prevent scale invariance */
