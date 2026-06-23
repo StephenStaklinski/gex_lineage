@@ -1273,230 +1273,6 @@ void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_s
     free(order);
 }
 
-/* Performs varimax rotation on the fitted model factors to find a 
-more interpretable and sparse basis by maximizing the variance of the 
-squared loadings (cols of L; rows of F; how genes are loaded across a factor) */
-void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, int max_iter, double tol) {
-    if (L == NULL)
-        return;
-    varimax_rotate_model_factors_prefix(L, F, L->nrows, outprefix, max_iter, tol);
-}
-
-void varimax_rotate_model_factors_prefix(Matrix *L, Matrix *F, int n_rotate, const char *outprefix, int max_iter, double tol) {
-    int i, j, a, b, c, iter;
-    int k;
-    int p;
-    Matrix *R = NULL;
-    Matrix *R_new = NULL;
-    Matrix *Lambda = NULL;
-    Matrix *B = NULL;
-    Matrix *U = NULL;
-    Matrix *VT = NULL;
-    Matrix *Rt = NULL;
-    Matrix *L_new = NULL;
-    Matrix *F_new = NULL;
-    Matrix *L_before = NULL;
-    Matrix *F_before = NULL;
-    Matrix *FL_before = NULL;
-    Matrix *FL_after = NULL;
-    Vector *S = NULL;
-    double *col_ss = NULL;
-    double prev_d = 0.0;
-    double gamma = 1.0;
-    int min_iter = 10;
-
-    if (L == NULL || F == NULL || L->nrows != F->ncols)
-        return;
-
-    if (n_rotate > L->nrows)
-        n_rotate = L->nrows;
-    if (n_rotate <= 1)
-        return;
-
-    k = n_rotate;
-    p = L->ncols;
-    if (p <= 1)
-        return;
-    if (max_iter <= 0)
-        max_iter = 100;
-    if (tol <= 0.0)
-        tol = 1e-6;
-
-    if (outprefix != NULL) {
-        L_before = mat_create_copy(L);
-        F_before = mat_create_copy(F);
-        FL_before = mat_new(F->nrows, L->ncols);
-        mat_mult_lapack(FL_before, F, L);
-    }
-
-    R = mat_new(k, k);
-    R_new = mat_new(k, k);
-    Lambda = mat_new(p, k);
-    B = mat_new(k, k);
-    col_ss = scalloc(k, sizeof(double));
-    mat_set_identity(R);
-
-    for (iter = 0; iter < max_iter; iter++) {
-        double d = 0.0;
-
-        for (j = 0; j < p; j++) {
-            for (b = 0; b < k; b++) {
-                double val = 0.0;
-                for (c = 0; c < k; c++)
-                    val += mat_get(L, c, j) * mat_get(R, c, b);
-                mat_set(Lambda, j, b, val);
-            }
-        }
-
-        for (b = 0; b < k; b++) {
-            col_ss[b] = 0.0;
-            for (j = 0; j < p; j++) {
-                double val = mat_get(Lambda, j, b);
-                col_ss[b] += val * val;
-            }
-        }
-
-        for (a = 0; a < k; a++) {
-            for (b = 0; b < k; b++) {
-                double val = 0.0;
-                for (j = 0; j < p; j++) {
-                    double lambda = mat_get(Lambda, j, b);
-                    double phi = mat_get(L, a, j);
-                    val += phi * (lambda * lambda * lambda -
-                                  (gamma / (double)p) * lambda * col_ss[b]);
-                }
-                mat_set(B, a, b, val);
-            }
-        }
-
-        mat_svd_lapack(B, &U, &S, &VT);
-        mat_mult_lapack(R_new, U, VT);
-        for (i = 0; i < S->size; i++)
-            d += vec_get(S, i);
-
-        mat_copy(R, R_new);
-
-        if (U != NULL) mat_free(U);
-        if (VT != NULL) mat_free(VT);
-        if (S != NULL) vec_free(S);
-        U = NULL;
-        VT = NULL;
-        S = NULL;
-
-        if (iter > min_iter && prev_d > 0.0 && d < prev_d * (1.0 + tol))
-            break;
-        prev_d = d;
-    }
-
-    Rt = mat_transpose(R);
-    L_new = mat_new(L->nrows, L->ncols);
-    F_new = mat_new(F->nrows, F->ncols);
-    if (k == L->nrows) {
-        mat_mult_lapack(L_new, Rt, L);
-        mat_mult_lapack(F_new, F, R);
-    }
-    else {
-        for (a = 0; a < L->nrows; a++) {
-            for (j = 0; j < L->ncols; j++) {
-                double val = mat_get(L, a, j);
-                if (a < k) {
-                    val = 0.0;
-                    for (c = 0; c < k; c++)
-                        val += mat_get(Rt, a, c) * mat_get(L, c, j);
-                }
-                mat_set(L_new, a, j, val);
-            }
-        }
-        for (i = 0; i < F->nrows; i++) {
-            for (b = 0; b < F->ncols; b++) {
-                double val = mat_get(F, i, b);
-                if (b < k) {
-                    val = 0.0;
-                    for (c = 0; c < k; c++)
-                        val += mat_get(F, i, c) * mat_get(R, c, b);
-                }
-                mat_set(F_new, i, b, val);
-            }
-        }
-    }
-    mat_copy(L, L_new);
-    mat_copy(F, F_new);
-
-    if (outprefix != NULL) {
-        FL_after = mat_new(F->nrows, L->ncols);
-        mat_mult_lapack(FL_after, F, L);
-        write_varimax_summary_tsv(outprefix, L_before, F_before, FL_before, L, F, FL_after, iter);
-    }
-
-    if (R != NULL) mat_free(R);
-    if (R_new != NULL) mat_free(R_new);
-    if (Lambda != NULL) mat_free(Lambda);
-    if (B != NULL) mat_free(B);
-    if (Rt != NULL) mat_free(Rt);
-    if (L_new != NULL) mat_free(L_new);
-    if (F_new != NULL) mat_free(F_new);
-    if (L_before != NULL) mat_free(L_before);
-    if (F_before != NULL) mat_free(F_before);
-    if (FL_before != NULL) mat_free(FL_before);
-    if (FL_after != NULL) mat_free(FL_after);
-    if (col_ss != NULL) free(col_ss);
-}
-
-void write_varimax_summary_tsv(const char *outprefix,
-                               Matrix *L_before,
-                               Matrix *F_before,
-                               Matrix *FL_before,
-                               Matrix *L_after,
-                               Matrix *F_after,
-                               Matrix *FL_after,
-                               int n_iters
-                            ) {
-    char path[4096];
-    FILE *out = NULL;
-    Matrix *L_corr = NULL;
-    Matrix *F_corr = NULL;
-    double L_before_norm;
-    double L_after_norm;
-    double F_before_norm;
-    double F_after_norm;
-
-    if (outprefix == NULL || L_before == NULL || F_before == NULL || FL_before == NULL ||
-        L_after == NULL || F_after == NULL || FL_after == NULL)
-        return;
-
-    L_corr = mat_factor_pearson_correlation(L_before, L_after, 1, 1);
-    F_corr = mat_factor_pearson_correlation(F_before, F_after, 0, 1);
-    L_before_norm = mat_frobenius_norm(L_before);
-    L_after_norm = mat_frobenius_norm(L_after);
-    F_before_norm = mat_frobenius_norm(F_before);
-    F_after_norm = mat_frobenius_norm(F_after);
-
-    snprintf(path, sizeof(path), "%s.varimax.summary.tsv", outprefix);
-    out = fopen(path, "w");
-
-    fprintf(out, "metric\tvalue\n");
-    fprintf(out, "n_iters\t%d\n", n_iters);
-    fprintf(out, "L_rmse_before_after\t%.17g\n", mat_rmse(L_before, L_after));
-    fprintf(out, "F_rmse_before_after\t%.17g\n", mat_rmse(F_before, F_after));
-    fprintf(out, "FL_rmse_before_after\t%.17g\n", mat_rmse(FL_before, FL_after));
-    fprintf(out, "L_mean_abs_matched_factor_pearson\t%.17g\n", mat_diag_mean(L_corr));
-    fprintf(out, "F_mean_abs_matched_factor_pearson\t%.17g\n", mat_diag_mean(F_corr));
-    fprintf(out, "L_frobenius_before\t%.17g\n", L_before_norm);
-    fprintf(out, "L_frobenius_after\t%.17g\n", L_after_norm);
-    fprintf(out, "L_frobenius_relative_change\t%.17g\n",
-            L_before_norm > 0.0 ? fabs(L_after_norm - L_before_norm) / L_before_norm : NAN);
-    fprintf(out, "F_frobenius_before\t%.17g\n", F_before_norm);
-    fprintf(out, "F_frobenius_after\t%.17g\n", F_after_norm);
-    fprintf(out, "F_frobenius_relative_change\t%.17g\n",
-            F_before_norm > 0.0 ? fabs(F_after_norm - F_before_norm) / F_before_norm : NAN);
-    fclose(out);
-
-    if (L_corr != NULL) 
-        mat_free(L_corr);
-    if (F_corr != NULL) 
-        mat_free(F_corr);
-}
-
 /* Main model entry point. Fit a low-rank factorization of the centered gene
 expression matrix that is regularized by a phylogenetic Brownian-motion prior.
 The data are modeled as X ≈ FL + E, where F (cells × latent factors) contains
@@ -1519,21 +1295,19 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       int normalize_regularization,
                                                       int apply_post_hoc_identifiability,
                                                       const char *outprefix,
-                                                      int max_iter,
                                                       int verbose_log) {
     /* Optimization related */
     int step;   /* Optimization step */
-    int max_steps = max_iter;   /* Maximum number of optimization steps to prevent infinite run */
-    int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
-    int patience = 100;     /* Number of steps without meaningful smoothed improvement before stopping */
+    int min_steps = 200;    /* Minimum number of optimization steps before allowing convergence */
+    int convergence_window = 50; /* Number of steps to average when assessing convergence */
     int steps_since_best = 0; /* Number of steps since the best EMA objective improved meaningfully */
-    int lr_reductions = 0;  /* Number of plateau-triggered learning-rate reductions used so far */
-    int max_lr_reductions = 5; /* Number of learning-rate reductions to try before declaring convergence */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
-    double objective_tol = 1e-3; /* Relative EMA improvement needed to reset patience */
+    double objective_tol = 1e-3; /* Relative window-average improvement needed to continue */
     double ema_beta = 0.99;  /* Exponential smoothing coefficient for the objective */
     double ema_objective = HUGE_VAL; /* Exponentially smoothed objective */
     double best_ema_objective = HUGE_VAL; /* Best smoothed objective seen so far */
+    double window_objective_sum = 0.0; /* Running objective sum for convergence windows */
+    double last_window_objective_avg = HUGE_VAL; /* Previous convergence-window mean objective */
 
     /* Model related */
     int n_cells = gex->X->nrows;
@@ -1732,14 +1506,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     mat_zero(mF); mat_zero(vF); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
 
     /* Adam hyperparameters */
-    double base_lr = 0.01;   /* Base learning rate for Adam */
-    double min_lr = 1e-6;   /* Floor for learning rate to prevent it from going to zero */
-    double lr_decay_factor = 0.5; /* Multiplicative decay used when the EMA objective plateaus */
+    double base_lr = 0.05;   /* Base learning rate for Adam, matching VINE's default */
     double lr = base_lr;
     double clip_beta = 0.98;
     double clip_factor = 2.0;
-    double clip_floor = 1.0;
-    int clip_warmup = 100;
+    double clip_floor = 7.0;
+    int clip_warmup = 30;
     double clip_F = 0.0;
     double clip_L = 0.0;
     double clip_sigma_obs = 0.0;
@@ -1760,7 +1532,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double rel_sigma2_lr;
 
     /* Run Adam */
-    for (step = 1; step <= max_steps; step++) {
+    for (step = 1; ; step++) {
         int d;
 
         /* Reset clipping flag */
@@ -1781,17 +1553,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         else
             ema_objective = ema_beta * ema_objective + (1.0 - ema_beta) * model->objective;
 
-        if (step >= min_steps) {
-            if (ema_objective < best_ema_objective * (1.0 - objective_tol)) {
-                best_ema_objective = ema_objective;
-                steps_since_best = 0;
-            }
-            else {
-                steps_since_best++;
-            }
+        if (ema_objective < best_ema_objective) {
+            best_ema_objective = ema_objective;
+            steps_since_best = 0;
         }
         else {
-            steps_since_best = 0;
+            steps_since_best++;
         }
         
         /* Compute the gradient l2 norms */
@@ -1860,23 +1627,27 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
         
 
-        /* Keep the learning rate fixed while the EMA objective is improving.
-           When it plateaus for patience steps, try a multiplicative reduction
-           before allowing the same plateau rule to terminate optimization. */
-        if (step >= min_steps && steps_since_best >= patience) {
-            if (lr_reductions < max_lr_reductions && lr > min_lr) {
-                lr *= lr_decay_factor;
-                if (lr < min_lr)
-                    lr = min_lr;
-                lr_reductions++;
-                steps_since_best = 0;
+        /* VINE-style convergence: compare mean objectives over fixed windows.
+           Here lower is better, so stop when the window mean fails to decrease
+           by about objective_tol relative to the previous window. */
+        window_objective_sum += model->objective;
+        if (step >= min_steps && step % convergence_window == 0) {
+            double window_objective_avg =
+                window_objective_sum / (double)convergence_window;
+            if (last_window_objective_avg < HUGE_VAL) {
+                double improvement_scale = fmax(1.0, fabs(last_window_objective_avg));
+                double improvement_tol = objective_tol * improvement_scale;
+                if (window_objective_avg >= last_window_objective_avg - improvement_tol) {
+                    converged = 1;
+                    break;
+                }
             }
-            else {
-                converged = 1;
-                break;
-            }
+            last_window_objective_avg = window_objective_avg;
+            window_objective_sum = 0.0;
         }
-
+        else if (step % convergence_window == 0) {
+            window_objective_sum = 0.0;
+        }
         /* Perturb the model parameters */
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
@@ -1970,8 +1741,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (step >= min_steps &&
         isfinite(model->objective) &&
         (!best_state.has_state || model->objective < best_state.objective)) {
-        int final_step = (step > max_steps ? max_steps : step);
-        store_best_latent_brownian_state(&best_state, model, final_step,
+        store_best_latent_brownian_state(&best_state, model, step,
                                          ema_objective, best_ema_objective,
                                          steps_since_best, 0,
                                          grad_norm, grad_F_norm, grad_L_norm,
@@ -2004,7 +1774,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
 
     /* Keep extra optimizer metadata in comment rows so table parsers can skip it. */
-    fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "max_steps_reached"));
+    fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "stopped"));
     write_best_latent_brownian_state(logf, &best_state, model, verbose_log,
                                      restored_best_state);
 

@@ -52,7 +52,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         int normalize_regularization,
                                                         int apply_post_hoc_identifiability,
                                                         const char *outprefix,
-                                                        int max_iter,
                                                         int verbose_log);
 
 void gex_free_latent_brownian_model(GexLatentBrownianModel *model);
@@ -66,19 +65,6 @@ void reorder_factors_by_row_norm_prefix(Matrix *L, Matrix *F, int n_reorder);
 void reorder_factors_by_sigma2_latent(Matrix *L, Matrix *F, double *log_sigma2_latent);
 
 void reorder_factors_by_sigma2_latent_prefix(Matrix *L, Matrix *F, double *log_sigma2_latent, int n_reorder);
-
-void varimax_rotate_model_factors(Matrix *L, Matrix *F, const char *outprefix, int max_iter, double tol);
-
-void varimax_rotate_model_factors_prefix(Matrix *L, Matrix *F, int n_rotate, const char *outprefix, int max_iter, double tol);
-
-void write_varimax_summary_tsv(const char *outprefix,
-                                Matrix *L_before,
-                                Matrix *F_before,
-                                Matrix *FL_before,
-                                Matrix *L_after,
-                                Matrix *F_after,
-                                Matrix *FL_after,
-                                int n_iters);
 
 double gaussian_observation_term(Matrix *FL,
                                         Matrix *F,

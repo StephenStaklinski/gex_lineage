@@ -100,7 +100,6 @@ static void usage(const char *progname) {
         "[--final-absorbing-factor] "
         "[--final-absorbing-L-l2-strength S] "
         "[--remove-ribo-mito-genes] "
-        "[--max-iter N] "
         "[--dim K] "
         "[--pca-method maxphylopca|phylopca|pca|none] "
         "[--pca-var-threshold V] "
@@ -111,7 +110,6 @@ static void usage(const char *progname) {
         "[--no-write-latent-flow] "
         "[--no-filter] "
         "[--no-preprocess] "
-        "[--varimax] "
         "[--verbose] "
         "[--verbose-log] "
         "[--seed S] "
@@ -138,14 +136,12 @@ int main(int argc, char *argv[]) {
     int normalize_regularization = 0; /* If nonzero, scale optional penalties by dataset size. */
     int final_absorbing_factor = 0; /* If nonzero, use the final factor as dense absorbing background. */
     double L_absorbing_l2_strength = 1e-4; /* L2 strength for the final absorbing factor. */
-    int max_iter = 100000;  /* Maximum number of optimization iterations for latent model fitting. */
     int k = 0;  /* Number of latent factors to fit; if 0, will be determined by pca_var_threshold */
     int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before modeling. */
-    int varimax = 0;    /* If nonzero, rotate fitted factors with varimax before writing outputs. */
     int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
     int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
     int verbose_log = 0;    /* If nonzero, write the full optimization log. */
@@ -290,13 +286,6 @@ int main(int argc, char *argv[]) {
             }
             L_absorbing_l2_strength = atof(argv[++i]);
         }
-        else if (strcmp(argv[i], "--max-iter") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            max_iter = atoi(argv[++i]);
-        }
         else if (strcmp(argv[i], "--dim") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -342,9 +331,6 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--remove-ribo-mito-genes") == 0) {
             remove_ribo_mito_genes = 1;
-        }
-        else if (strcmp(argv[i], "--varimax") == 0) {
-            varimax = 1;
         }
         else if (strcmp(argv[i], "--no-post-hoc-identifiability") == 0) {
             apply_post_hoc_identifiability = 0;
@@ -433,11 +419,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --final-absorbing-L-l2-strength must be nonnegative.\n");
         return 1;
     }
-    if (max_iter <= 0) {
-        fprintf(stderr, "ERROR: --max-iter must be positive.\n");
-        return 1;
-    }
-
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
@@ -653,21 +634,10 @@ int main(int argc, char *argv[]) {
                                           L_loading_overlap_strength,
                                           normalize_regularization,
                                           apply_post_hoc_identifiability,
-                                          outprefix, max_iter, verbose_log);
+                                          outprefix, verbose_log);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian model.\n");
         return 1;
-    }
-
-    if (varimax) {
-        printf("Applying varimax rotation to fitted factors before writing outputs...\n");
-        if (final_absorbing_factor)
-            varimax_rotate_model_factors_prefix(model->L, model->F, k - 1, outprefix, 1000, 1e-6);
-        else
-            varimax_rotate_model_factors(model->L, model->F, outprefix, 1000, 1e-6);
-        if (apply_post_hoc_identifiability)
-            post_hoc_sign_identifiability(model->L, model->F);
-        mat_mult_lapack(model->FL, model->F, model->L);
     }
 
     if (write_latent_flow) {
