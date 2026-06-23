@@ -10,12 +10,6 @@
 #include <phast/matrix.h>
 #include <phast/trees.h>
 
-typedef enum {
-    GEX_SCALE_INVAR_SIGMA2S = 0,
-    GEX_SCALE_INVAR_LROWS = 1,
-    GEX_SCALE_INVAR_NONE = 2
-} GexScaleInvarConstraint;
-
 typedef struct {
     int n_cells;
     int n_genes;
@@ -41,7 +35,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         int n_trees,
                                                         int k,
                                                         PCA *pca,
-                                                        GexScaleInvarConstraint scale_invar_constraint,
+                                                        int constrain_L_scale,
                                                         double L_l1_strength,
                                                         double L_loading_overlap_strength,
                                                         int apply_post_hoc_identifiability,

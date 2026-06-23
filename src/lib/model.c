@@ -834,57 +834,42 @@ static int update_F_closed_form(GexLatentBrownianModel *model,
     return 0;
 }
 
-static void normalize_L_rows_and_rescale_F(Matrix *L,
-                                           Matrix *F,
-                                           Matrix *mL,
-                                           Matrix *vL,
-                                           Matrix *mF,
-                                           Matrix *vF,
-                                           double target_row_norm) {
-    int d, i, j;
+static void normalize_L_rows(Matrix *L) {
+    int d, j;
     int k = L->nrows;
     int p = L->ncols;
-    int n = F->nrows;
     const double eps = 1e-12;
 
     for (d = 0; d < k; d++) {
         double ss = 0.0;
-        double norm, scale_L, scale_F;
+        double norm;
 
-        /* Compute current L2 norm of row d of L */
         for (j = 0; j < p; j++) {
             double x = mat_get(L, d, j);
             ss += x * x;
         }
         norm = sqrt(ss);
 
-        /* Skip pathological zero rows */
         if (norm < eps)
             continue;
 
-        /* Multiply row d of L by scale_L so that ||L_d|| = target_row_norm */
-        scale_L = target_row_norm / norm;
+        for (j = 0; j < p; j++)
+            mat_set(L, d, j, mat_get(L, d, j) / norm);
+    }
+}
 
-        /* Multiply column d of F by scale_F to preserve FL exactly */
-        scale_F = 1.0 / scale_L;
+/* Project each loading gradient onto the tangent plane of its unit-norm row. */
+static void project_L_gradient(Matrix *L, Matrix *grad_L) {
+    int d, j;
 
-        /* Update row d of L and its Adam states */
-        for (j = 0; j < p; j++) {
-            mat_set(L, d, j, mat_get(L, d, j) * scale_L);
-            if (mL != NULL)
-                mat_set(mL, d, j, mat_get(mL, d, j) * scale_L);
-            if (vL != NULL)
-                mat_set(vL, d, j, mat_get(vL, d, j) * scale_L * scale_L);
-        }
+    for (d = 0; d < L->nrows; d++) {
+        double radial = 0.0;
 
-        /* Update column d of F and its Adam states */
-        for (i = 0; i < n; i++) {
-            mat_set(F, i, d, mat_get(F, i, d) * scale_F);
-            if (mF != NULL)
-                mat_set(mF, i, d, mat_get(mF, i, d) * scale_F);
-            if (vF != NULL)
-                mat_set(vF, i, d, mat_get(vF, i, d) * scale_F * scale_F);
-        }
+        for (j = 0; j < L->ncols; j++)
+            radial += mat_get(grad_L, d, j) * mat_get(L, d, j);
+        for (j = 0; j < L->ncols; j++)
+            mat_set(grad_L, d, j,
+                    mat_get(grad_L, d, j) - radial * mat_get(L, d, j));
     }
 }
 
@@ -1222,7 +1207,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       int n_trees,
                                                       int k,
                                                       PCA *pca,
-                                                      GexScaleInvarConstraint scale_invar_constraint,
+                                                      int constrain_L_scale,
                                                       double L_l1_strength,
                                                       double L_loading_overlap_strength,
                                                       int apply_post_hoc_identifiability,
@@ -1328,6 +1313,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         mat_set_all(model->L, 0.0);
         mat_add_gaussian_noise(model->L, 1);
     }
+    if (constrain_L_scale)
+        normalize_L_rows(model->L);
 
     /* Bootstrap sigma2_obs from the centered expression scale before the
        closed-form F initializer has an FL residual available. */
@@ -1338,12 +1325,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Initialize the latent variance parameters to the desired tip variance implied 
     by the PCA initialization of F for the given tree scale (assuming an ultrametric tree) */
     model->log_sigma2_latent = scalloc(k, sizeof(double)); /* Allocate latent variance parameters */
-    if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
-        /* Fix latent variances to 1.0 */
-        for (d = 0; d < k; d++)
-            model->log_sigma2_latent[d] = 0.0;
-    }
-    else {
+    {
         Matrix *Lt;
 
         /* Initialize provisional F = X * L^T only to estimate latent variances. */
@@ -1399,11 +1381,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->log_sigma2_obs = max(model->log_sigma2_obs, log(1e-6));
 
     /* Allocate gradients, moments, and variances for Adam */
-    if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-        grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
-        m_log_sigma_latent = scalloc(k, sizeof(double));   /* First moment of log latent variances */
-        v_log_sigma_latent = scalloc(k, sizeof(double));   /* Second moment of log latent variances */
-    }
+    grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
+    m_log_sigma_latent = scalloc(k, sizeof(double));   /* First moment of log latent variances */
+    v_log_sigma_latent = scalloc(k, sizeof(double));   /* Second moment of log latent variances */
     grad_F = mat_new(model->n_cells, k);    /* Gradient of latent coordinates */
     grad_L = mat_new(k, model->n_genes);    /* Gradient of factor loadings */
     mF = mat_new(model->n_cells, k);    /* First moment of latent coordinates */
@@ -1452,17 +1432,18 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
 
+        if (constrain_L_scale)
+            project_L_gradient(model->L, grad_L);
+
         /* Compute the gradient l2 norms */
         grad_F_norm = mat_frobenius_norm(grad_F);
         grad_L_norm = mat_frobenius_norm(grad_L);
         grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
         grad_log_sigma_latent_norm = 0.0;
-        if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-            for (d = 0; d < k; d++) {
-                grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
-            }
-            grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
+        for (d = 0; d < k; d++) {
+            grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
         }
+        grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
         /* Update gradient clipping thresholds */
@@ -1472,10 +1453,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                             clip_beta, clip_factor, clip_floor);
         clip_sigma_obs = adam_update_clip_threshold(grad_log_sigma_obs_norm, &ema_log_sigma_obs_norm,
                                                     step, clip_warmup, clip_beta, clip_factor, clip_floor);
-        if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-            clip_sigma_latent = adam_update_clip_threshold(grad_log_sigma_latent_norm, &ema_log_sigma_latent_norm,
-                                                           step, clip_warmup, clip_beta, clip_factor, clip_floor);
-        }
+        clip_sigma_latent = adam_update_clip_threshold(grad_log_sigma_latent_norm, &ema_log_sigma_latent_norm,
+                                                       step, clip_warmup, clip_beta, clip_factor, clip_floor);
 
         /* Re-scale the gradients if their norm exceeds the clipping threshold and 
         recompute the norm for those that were rescaled */
@@ -1492,22 +1471,19 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
             clipping_on |= 1;
         }
-        if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-            if (adam_clip_vector_by_norm(grad_log_sigma_latent, k,
-                                         grad_log_sigma_latent_norm, clip_sigma_latent)) {
-                grad_log_sigma_latent_norm = 0.0;
-                for (d = 0; d < k; d++) {
-                    grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
-                }
-                grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
-                clipping_on |= 1;
+        if (adam_clip_vector_by_norm(grad_log_sigma_latent, k,
+                                     grad_log_sigma_latent_norm, clip_sigma_latent)) {
+            grad_log_sigma_latent_norm = 0.0;
+            for (d = 0; d < k; d++) {
+                grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
             }
+            grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
+            clipping_on |= 1;
         }
         
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
-        if (step >= min_steps &&
-            isfinite(model->objective) &&
+        if (isfinite(model->objective) &&
             (!best_state.has_state || model->objective < best_state.objective)) {
             store_best_latent_brownian_state(&best_state, model, step,
                                              clipping_on,
@@ -1543,21 +1519,15 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         pow_beta2 = pow(ADAM_BETA2, step);
         adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
         adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, lr);
-        if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-            /* Step Brownian variance parameters if they are not fixed for scale invariance */
-            adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
-                             m_log_sigma_latent, v_log_sigma_latent,
-                             k, pow_beta1, pow_beta2, lr);
-        }
+        adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
+                         m_log_sigma_latent, v_log_sigma_latent,
+                         k, pow_beta1, pow_beta2, lr);
         adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
                          &m_log_sigma_obs, &v_log_sigma_obs,
                          pow_beta1, pow_beta2, lr);
         
-        if (scale_invar_constraint == GEX_SCALE_INVAR_LROWS) {
-            /* Normalize L rows and rescale F to prevent scale invariance */
-            normalize_L_rows_and_rescale_F(model->L, model->F,
-                                           mL, vL, mF, vF, 1.0);
-        }
+        if (constrain_L_scale)
+            normalize_L_rows(model->L);
         
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
@@ -1593,18 +1563,17 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     n_trees, grad_F, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
+    if (constrain_L_scale)
+        project_L_gradient(model->L, grad_L);
     grad_F_norm = mat_frobenius_norm(grad_F);
     grad_L_norm = mat_frobenius_norm(grad_L);
     grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
     grad_log_sigma_latent_norm = 0.0;
-    if (scale_invar_constraint != GEX_SCALE_INVAR_SIGMA2S) {
-        for (d = 0; d < k; d++)
-            grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
-        grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
-    }
+    for (d = 0; d < k; d++)
+        grad_log_sigma_latent_norm += grad_log_sigma_latent[d] * grad_log_sigma_latent[d];
+    grad_log_sigma_latent_norm = sqrt(grad_log_sigma_latent_norm);
     grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
-    if (step >= min_steps &&
-        isfinite(model->objective) &&
+    if (isfinite(model->objective) &&
         (!best_state.has_state || model->objective < best_state.objective)) {
         store_best_latent_brownian_state(&best_state, model, step,
                                          0,
@@ -1620,12 +1589,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     
     if (apply_post_hoc_identifiability) {
         /* Prevent permutation invariance by reordering factors */
-        if (scale_invar_constraint == GEX_SCALE_INVAR_SIGMA2S) {
-            reorder_factors_by_row_norm(model->L, model->F);
-        }
-        else {
-            reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
-        }
+        reorder_factors_by_sigma2_latent(model->L, model->F, model->log_sigma2_latent);
 
         /* Prevent sign invariance by making the largest loading of L positive */
         post_hoc_sign_identifiability(model->L, model->F);

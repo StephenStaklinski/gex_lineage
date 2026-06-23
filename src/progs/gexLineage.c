@@ -44,22 +44,6 @@ static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
     return -1;
 }
 
-static int parse_scale_invar_constraint(const char *s, GexScaleInvarConstraint *constraint_out) {
-    if (strcmp(s, "sigma2s") == 0) {
-        *constraint_out = GEX_SCALE_INVAR_SIGMA2S;
-        return 0;
-    }
-    if (strcmp(s, "Lrows") == 0) {
-        *constraint_out = GEX_SCALE_INVAR_LROWS;
-        return 0;
-    }
-    if (strcmp(s, "none") == 0) {
-        *constraint_out = GEX_SCALE_INVAR_NONE;
-        return 0;
-    }
-    return -1;
-}
-
 /* Print command line usage information to stderr. */
 static void usage(const char *progname) {
     fprintf(stderr,
@@ -74,7 +58,7 @@ static void usage(const char *progname) {
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] "
         "[--remove-ribo-mito-genes] "
-        "[--scale-invar-constraint sigma2s|Lrows|none] "
+        "[--no-scale-constraint] "
         "[--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--no-post-hoc-identifiability] "
@@ -107,10 +91,10 @@ int main(int argc, char *argv[]) {
     int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before modeling. */
+    int constrain_L_scale = 1; /* If nonzero, constrain each L row to unit norm. */
     int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
     int nthreads = 1;   /* Number of OpenMP threads to use */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
-    GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_LROWS; /* Which constraint to use for counteracting scale invariance */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -195,16 +179,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
         }
-        else if (strcmp(argv[i], "--scale-invar-constraint") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            if (parse_scale_invar_constraint(argv[++i], &scale_invar_constraint) != 0) {
-                fprintf(stderr, "ERROR: --scale-invar-constraint must be one of sigma2s, Lrows, or none\n");
-                return 1;
-            }
-        }
         else if (strcmp(argv[i], "--L-l1-strength") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -251,6 +225,9 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--remove-ribo-mito-genes") == 0) {
             remove_ribo_mito_genes = 1;
         }
+        else if (strcmp(argv[i], "--no-scale-constraint") == 0) {
+            constrain_L_scale = 0;
+        }
         else if (strcmp(argv[i], "--no-post-hoc-identifiability") == 0) {
             apply_post_hoc_identifiability = 0;
         }
@@ -295,13 +272,17 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --dim must be specified and positive.\n");
         return 1;
     }
-    if (nthreads > 0) {
-        if (nthreads > 1 && !has_thread_control()) {
-            fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
-            return 1;
-        }
-        set_num_threads(nthreads);
+
+    if (nthreads < 1) {
+        fprintf(stderr, "ERROR: --nthreads must be positive.\n");
+        return 1;
     }
+
+    if (nthreads > 1 && !has_thread_control()) {
+        fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
+        return 1;
+    }
+    set_num_threads(nthreads);
 
     /* Load the input trees */
     trees = read_nexus(trees_file, &n_trees);
@@ -513,7 +494,8 @@ int main(int argc, char *argv[]) {
     /* Fit the latent Brownian model */
     printf("Fitting model to the filtered data with k=%d latent dimensions...\n", k);
     model = gex_fit_latent_brownian_model(gex_filtered, trees, n_trees,
-                                          k, pca, scale_invar_constraint, L_l1_strength,
+                                          k, pca, constrain_L_scale,
+                                          L_l1_strength,
                                           L_loading_overlap_strength,
                                           apply_post_hoc_identifiability,
                                           outprefix);
