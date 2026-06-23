@@ -42,6 +42,19 @@ void dgesdd_(const char *jobz,
              LAPACK_INT *iwork,
              LAPACK_INT *info);
 
+void dsyevr_(const char *jobz, const char *range, const char *uplo,
+             const LAPACK_INT *n,
+             LAPACK_DOUBLE *a, const LAPACK_INT *lda,
+             const LAPACK_DOUBLE *vl, const LAPACK_DOUBLE *vu,
+             const LAPACK_INT *il, const LAPACK_INT *iu,
+             const LAPACK_DOUBLE *abstol,
+             LAPACK_INT *m, LAPACK_DOUBLE *w,
+             LAPACK_DOUBLE *z, const LAPACK_INT *ldz,
+             LAPACK_INT *isuppz,
+             LAPACK_DOUBLE *work, const LAPACK_INT *lwork,
+             LAPACK_INT *iwork, const LAPACK_INT *liwork,
+             LAPACK_INT *info);
+
 static inline int has_blas_thread_control(void) {
 #ifdef GEX_LINEAGE_HAS_OPENBLAS_THREAD_CONTROL
     return openblas_get_parallel() != 0;

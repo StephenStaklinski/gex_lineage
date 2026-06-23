@@ -1,5 +1,6 @@
 #include "pca.h"
 
+#include "external_libs.h"
 #include "gexmatrix.h"
 
 #include <phast/matrix.h>
@@ -9,6 +10,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <float.h>
 
 
 typedef struct {
@@ -122,40 +124,151 @@ static PCA *pca_eigen(Matrix *Cov) {
     return out;
 }
 
-PCA *pca_lapack(Matrix *Xc) {
-    Matrix *VT = NULL;
-    Vector *S = NULL;
+/* Compute only the leading k principal components. LAPACK's selected
+symmetric eigensolver works on the smaller Gram matrix, avoiding a full SVD. */
+static PCA *pca_lapack(Matrix *Xc, int k) {
+    LAPACK_DOUBLE *gram = NULL;
+    LAPACK_DOUBLE *eigvals = NULL;
+    LAPACK_DOUBLE *eigvecs = NULL;
+    LAPACK_DOUBLE *work = NULL;
+    LAPACK_INT *iwork = NULL;
+    LAPACK_INT *isuppz = NULL;
     PCA *out = NULL;
-    int i, j, r;
-    double total_var = 0.0;
+    Matrix *gram_matrix = NULL;
+    int i, j, component;
+    int n_samples = Xc->nrows;
+    int n_features = Xc->ncols;
+    int gram_dim = n_features <= n_samples ? n_features : n_samples;
+    int requested = k < gram_dim ? k : gram_dim;
+    double total_var;
+    double max_eigenvalue = 0.0;
+    double eigenvalue_tol;
+    LAPACK_INT n = (LAPACK_INT)gram_dim;
+    LAPACK_INT lda = n;
+    LAPACK_INT il = n - (LAPACK_INT)requested + 1;
+    LAPACK_INT iu = n;
+    LAPACK_INT found = 0;
+    LAPACK_INT ldz = n;
+    LAPACK_INT lwork = -1;
+    LAPACK_INT liwork = -1;
+    LAPACK_INT info = 0;
+    LAPACK_INT iwkopt;
+    LAPACK_DOUBLE wkopt;
+    LAPACK_DOUBLE vl = 0.0;
+    LAPACK_DOUBLE vu = 0.0;
+    LAPACK_DOUBLE abstol = 0.0;
+    char jobz = 'V';
+    char range = 'I';
+    char uplo = 'U';
 
-    mat_svd_lapack(Xc, NULL, &S, &VT);
+    if (Xc == NULL || requested <= 0 || n_samples <= 1)
+        return NULL;
 
-    r = S->size;
+    gram_matrix = mat_new(gram_dim, gram_dim);
+    if (n_features <= n_samples)
+        mat_mult_lapack_transpose(gram_matrix, Xc, 1, Xc, 0);
+    else
+        mat_mult_lapack_transpose(gram_matrix, Xc, 0, Xc, 1);
+
+    gram = smalloc((size_t)gram_dim * (size_t)gram_dim * sizeof(*gram));
+    eigvals = smalloc((size_t)gram_dim * sizeof(*eigvals));
+    eigvecs = smalloc((size_t)gram_dim * (size_t)requested * sizeof(*eigvecs));
+    isuppz = smalloc((size_t)(2 * requested) * sizeof(*isuppz));
+
+    for (j = 0; j < gram_dim; j++)
+        for (i = 0; i < gram_dim; i++)
+            gram[(size_t)j * (size_t)gram_dim + (size_t)i] =
+                mat_get(gram_matrix, i, j);
+
+    dsyevr_(&jobz, &range, &uplo, &n, gram, &lda, &vl, &vu, &il, &iu,
+            &abstol, &found, eigvals, eigvecs, &ldz, isuppz,
+            &wkopt, &lwork, &iwkopt, &liwork, &info);
+    if (info != 0) {
+        fprintf(stderr, "ERROR: LAPACK dsyevr workspace query failed in PCA (info=%d)\n",
+                (int)info);
+        goto cleanup;
+    }
+
+    lwork = (LAPACK_INT)wkopt;
+    liwork = iwkopt;
+    work = smalloc((size_t)lwork * sizeof(*work));
+    iwork = smalloc((size_t)liwork * sizeof(*iwork));
+
+    /* dsyevr overwrites the Gram matrix, so restore it after the query. */
+    for (j = 0; j < gram_dim; j++)
+        for (i = 0; i < gram_dim; i++)
+            gram[(size_t)j * (size_t)gram_dim + (size_t)i] =
+                mat_get(gram_matrix, i, j);
+
+    dsyevr_(&jobz, &range, &uplo, &n, gram, &lda, &vl, &vu, &il, &iu,
+            &abstol, &found, eigvals, eigvecs, &ldz, isuppz,
+            work, &lwork, iwork, &liwork, &info);
+    if (info != 0 || found <= 0) {
+        fprintf(stderr, "ERROR: selected eigendecomposition failed in PCA (info=%d)\n",
+                (int)info);
+        goto cleanup;
+    }
+
+    max_eigenvalue = eigvals[found - 1];
+    eigenvalue_tol = fmax(1.0, max_eigenvalue) *
+                     (double)(n_samples > n_features ? n_samples : n_features) *
+                     DBL_EPSILON;
+    total_var = mat_sum_squared_entries(Xc) / (double)(n_samples - 1);
+
     out = scalloc(1, sizeof(PCA));
-    out->components = mat_new(r, VT->ncols);
-    out->eigenvalues = scalloc(r, sizeof(double));
-    out->var_explained = scalloc(r, sizeof(double));
-    out->K = r;
+    out->components = mat_new((int)found, n_features);
+    out->eigenvalues = scalloc((int)found, sizeof(double));
+    out->var_explained = scalloc((int)found, sizeof(double));
 
-    for (i = 0; i < r; i++) {
-        double lambda = S->data[i] * S->data[i] / (double)(Xc->nrows - 1);
-        out->eigenvalues[i] = lambda;
-        out->var_explained[i] = lambda;
-        total_var += lambda;
+    /* dsyevr returns selected eigenpairs in ascending order. */
+    for (component = 0; component < (int)found; component++) {
+        int source = (int)found - 1 - component;
+        double gram_eigenvalue = fmax(0.0, eigvals[source]);
+        double lambda = gram_eigenvalue / (double)(n_samples - 1);
+
+        if (gram_eigenvalue <= eigenvalue_tol)
+            break;
+
+        out->eigenvalues[component] = lambda;
+        out->var_explained[component] =
+            total_var > 0.0 ? lambda / total_var : 0.0;
+
+        if (n_features <= n_samples) {
+            for (j = 0; j < n_features; j++)
+                mat_set(out->components, component, j,
+                        eigvecs[(size_t)source * (size_t)gram_dim + (size_t)j]);
+        }
+        else {
+            double singular_value = sqrt(gram_eigenvalue);
+            for (j = 0; j < n_features; j++) {
+                double loading = 0.0;
+                for (i = 0; i < n_samples; i++) {
+                    double left_loading =
+                        eigvecs[(size_t)source * (size_t)gram_dim + (size_t)i];
+                    loading += mat_get(Xc, i, j) * left_loading;
+                }
+                mat_set(out->components, component, j,
+                        loading / singular_value);
+            }
+        }
     }
+    out->K = component;
 
-    if (total_var > 0.0) {
-        for (i = 0; i < r; i++)
-            out->var_explained[i] /= total_var;
-    }
-
-    for (i = 0; i < r; i++)
-        for (j = 0; j < VT->ncols; j++)
-            mat_set(out->components, i, j, mat_get(VT, i, j));
-
-    vec_free(S);
-    mat_free(VT);
+cleanup:
+    if (gram_matrix != NULL)
+        mat_free(gram_matrix);
+    if (gram != NULL)
+        free(gram);
+    if (eigvals != NULL)
+        free(eigvals);
+    if (eigvecs != NULL)
+        free(eigvecs);
+    if (isuppz != NULL)
+        free(isuppz);
+    if (work != NULL)
+        free(work);
+    if (iwork != NULL)
+        free(iwork);
     return out;
 }
 
@@ -201,15 +314,12 @@ PCA *compute_pca(Matrix *X, int k) {
     /* Compute the covariance matrix of the centered data */
     mat_center_cols(Xc);
 
-    /* LAPACK SVD approach to PCA */
-    out = pca_lapack(Xc);
+    /* Compute only the requested leading components with LAPACK. */
+    out = pca_lapack(Xc, k);
 
     /* Free memory */
     if (Xc != NULL) 
         mat_free(Xc);
-
-    /* Retain the requested number of top components. */
-    filter_pca_components(out, k);
 
     return out;
 }
