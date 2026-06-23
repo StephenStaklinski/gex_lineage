@@ -44,7 +44,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         GexScaleInvarConstraint scale_invar_constraint,
                                                         double L_l1_strength,
                                                         double L_loading_overlap_strength,
-                                                        int normalize_regularization,
                                                         int apply_post_hoc_identifiability,
                                                         const char *outprefix);
 

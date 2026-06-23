@@ -26,25 +26,25 @@ static int cmp_eigpair_desc(const void *a, const void *b) {
     return 0;
 }
 
-/* Compute the number of PCA components needed to explain a certain proportion of the total variance. */
-static int pca_components_for_variance_threshold_internal(double *var_explained,
-                                                              int K,
-                                                              double threshold) {
+/* Compute the number of PCA components needed to explain a target cumulative variance. */
+static int pca_components_for_cumulative_variance_internal(double *var_explained,
+                                                           int K,
+                                                           double target) {
     int i;
     double cumulative = 0.0;
 
     if (K <= 0)
         return 0;
-    if (threshold <= 0.0)
+    if (target <= 0.0)
         return 1;
-    if (threshold >= 1.0)
-        threshold = 1.0;
+    if (target >= 1.0)
+        target = 1.0;
 
     /* Iterate through components that were sorted in descending order of eigenvalues (variance explained)*/
     for (i = 0; i < K; i++) {
         cumulative += var_explained[i];
-        /* Return the number of components once the threshold is reached or crossed */
-        if (cumulative >= threshold)
+        /* Return the number of components once the target is reached or crossed. */
+        if (cumulative >= target)
             return i + 1;
     }
 
@@ -159,19 +159,16 @@ PCA *pca_lapack(Matrix *Xc) {
     return out;
 }
 
-static void filter_pca_components(PCA *out, int k, double variance_threshold) {
+static void filter_pca_components(PCA *out, int k) {
     int i, j;
-    int keep_K = k;
+    int keep_K;
     Matrix *new_components = NULL;
     double *new_eigenvalues = NULL;
     double *new_var = NULL;
 
-    /* If k was not specified, determine how many components to keep based on the variance threshold */
-    if (k == 0) {
-        keep_K = pca_components_for_variance_threshold_internal(out->var_explained,
-                                                                out->K,
-                                                                variance_threshold);
-    }
+    if (out == NULL || k <= 0)
+        return;
+    keep_K = k < out->K ? k : out->K;
 
     /* Allocate memory for the reduced PCA components and variance explained */
     new_components = mat_new(keep_K, out->components->ncols);
@@ -197,7 +194,7 @@ static void filter_pca_components(PCA *out, int k, double variance_threshold) {
 }
 
 /* Compute PCA for a matrix. */
-PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
+PCA *compute_pca(Matrix *X, int k) {
     Matrix *Xc = mat_create_copy(X);
     PCA *out = NULL;
 
@@ -211,110 +208,8 @@ PCA *compute_pca(Matrix *X, int k, double variance_threshold) {
     if (Xc != NULL) 
         mat_free(Xc);
 
-    /* Filter the PCA components based on the specified number of components or variance threshold */
-    filter_pca_components(out, k, variance_threshold);
-
-    return out;
-}
-
-/* Covariance matrix after GLS centering to regress
-out known phylogenetic covariance */
-static Matrix *mat_cov_gls(Matrix *X, Matrix *C) {
-    int i, j;
-    int n = X->nrows;
-    int p = X->ncols;
-    Matrix *L = NULL;
-    Matrix *W = NULL;
-    Matrix *Wt = NULL;
-    Matrix *Cov = NULL;
-    Vector *ones = NULL;
-    Vector *tmp = NULL;
-    Vector *u = NULL;
-    Vector *rhs = NULL;
-    Vector *sol = NULL;
-    double *a = NULL;
-    double denom;
-
-    L = mat_new(n, n);
-    mat_cholesky(L, C);
-
-    ones = vec_new(n);
-    tmp  = vec_new(n);
-    u    = vec_new(n);
-    vec_set_all(ones, 1.0);
-    mat_forward_subst_lapack(L, ones, tmp);
-    mat_backward_subst_lapack(L, tmp, u);
-
-    denom = vec_sum(u);
-
-    /* Compute GLS column means */
-    a = scalloc(p, sizeof(double));
-    for (i = 0; i < n; i++) {
-        double w = u->data[i];
-        double *Xi = X->data[i];
-        for (j = 0; j < p; j++)
-            a[j] += w * Xi[j];
-    }
-
-    for (j = 0; j < p; j++)
-        a[j] /= denom;
-
-    /* Build whitened centered matrix */
-    W   = mat_new(n, p);
-    rhs = vec_new(n);
-    sol = vec_new(n);
-
-    for (j = 0; j < p; j++) {
-        double aj = a[j];
-        for (i = 0; i < n; i++)
-            rhs->data[i] = X->data[i][j] - aj;
-        mat_forward_subst_lapack(L, rhs, sol);
-        for (i = 0; i < n; i++)
-            W->data[i][j] = sol->data[i];
-    }
-
-    /* Cov = W^T W / (n - 1) */
-    Wt  = mat_transpose(W);
-    Cov = mat_new(p, p);
-    mat_mult_lapack(Cov, Wt, W);
-    mat_scale(Cov, 1.0 / (double)(n - 1));
-
-    /* Free memory */
-    if (L   != NULL) mat_free(L);
-    if (W   != NULL) mat_free(W);
-    if (Wt  != NULL) mat_free(Wt);
-    if (ones != NULL) vec_free(ones);
-    if (tmp  != NULL) vec_free(tmp);
-    if (u    != NULL) vec_free(u);
-    if (rhs  != NULL) vec_free(rhs);
-    if (sol  != NULL) vec_free(sol);
-    if (a != NULL) free(a);
-
-    return Cov;
-}
-
-/* Compute Revell 2009 phylogenetic PCA to obtain evolutionarily
-independent components of variation among traits where the phylogenetic
-correlation between scores on each axis will be zero.
-X is n x p (rows = taxa, columns = traits).
-C is n x n phylogenetic covariance among rows of X.
-*/
-PCA *compute_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
-    Matrix *Cov = NULL;
-    PCA *out = NULL;
-
-    /* Revell GLS-covariance */
-    Cov = mat_cov_gls(X, C);
-
-    /* Compute the PCA */
-    out = pca_eigen(Cov);
-
-    /* Free memory */
-    if (Cov != NULL)
-        mat_free(Cov);
-
-    /* Filter the PCA components based on the specified number of components or variance threshold */
-    filter_pca_components(out, k, variance_threshold);
+    /* Retain the requested number of top components. */
+    filter_pca_components(out, k);
 
     return out;
 }
@@ -322,25 +217,25 @@ PCA *compute_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
 /* Compute PCA after projecting expression onto the top phylogenetic
 covariance eigenvectors, so the retained axes emphasize maximum
 phylogenetic signal. */
-PCA *compute_max_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshold) {
+PCA *compute_max_phylo_pca(Matrix *X, Matrix *C, int k) {
     Matrix *VtY = NULL;
     Matrix *Yhat = NULL;
     PCA *phylo_pca = NULL;
     PCA *out = NULL;
     int phylo_k;
-    const double phylo_projection_threshold = 0.999;
+    const double phylo_projection_target = 0.999;
 
     /* Compute top eigenvectors of the phylogenetic covariance. */
     phylo_pca = pca_eigen(C);
     if (phylo_pca == NULL)
         return NULL;
 
-    phylo_k = pca_components_for_variance_threshold_internal(phylo_pca->var_explained,
-                                                             phylo_pca->K,
-                                                             phylo_projection_threshold);
+    phylo_k = pca_components_for_cumulative_variance_internal(phylo_pca->var_explained,
+                                                              phylo_pca->K,
+                                                              phylo_projection_target);
     if (k > phylo_k)
         phylo_k = k;
-    filter_pca_components(phylo_pca, phylo_k, variance_threshold);
+    filter_pca_components(phylo_pca, phylo_k);
 
     /* Project Y onto fitted values from the phylogenetic eigenvectors:
     Y_hat = V_phy V_phy^T Y.  phylo_pca->components stores V_phy^T. */
@@ -350,8 +245,8 @@ PCA *compute_max_phylo_pca(Matrix *X, Matrix *C, int k, double variance_threshol
     mat_mult_lapack_transpose(Yhat, phylo_pca->components, 1, VtY, 0);
 
     /* Run PCA on the fitted values and use the standard PCA rule to
-    choose the model rank. */
-    out = compute_pca(Yhat, k, variance_threshold);
+    keep the requested model rank. */
+    out = compute_pca(Yhat, k);
 
     /* Free memory */
     if (VtY != NULL)

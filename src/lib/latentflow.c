@@ -185,7 +185,7 @@ int gex_write_latent_flow_outputs(const char *outprefix,
     if (n_pcs <= 0)
         return -1;
 
-    latent_pca = compute_pca(model->F, n_pcs, 1.0);
+    latent_pca = compute_pca(model->F, n_pcs);
     tip_factor_means = scalloc(model->F->ncols, sizeof(double));
 
     for (d = 0; d < model->F->ncols; d++) {

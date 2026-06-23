@@ -1225,7 +1225,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       GexScaleInvarConstraint scale_invar_constraint,
                                                       double L_l1_strength,
                                                       double L_loading_overlap_strength,
-                                                      int normalize_regularization,
                                                       int apply_post_hoc_identifiability,
                                                       const char *outprefix) {
     /* Optimization related */
@@ -1311,17 +1310,13 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     model->FL = mat_new(n_cells, n_genes); /* Allocate the product FL for efficient likelihood computation */
     model->l1_strength = L_l1_strength;
     model->L_loading_overlap_strength = L_loading_overlap_strength;
-    if (normalize_regularization) {
-        int n_l_rows = k;
+    {
         double objective_entries = (double)n_cells * (double)n_genes;
-        double n_l_pairs = (double)n_l_rows * (double)(n_l_rows - 1) / 2.0;
+        double n_l_pairs = (double)k * (double)(k - 1) / 2.0;
 
-        if (n_l_rows > 0)
-            model->l1_strength *= objective_entries /
-                                  ((double)n_l_rows * (double)n_genes);
-        if (n_l_pairs > 0.0) {
+        model->l1_strength *= (double)n_cells / (double)k;
+        if (n_l_pairs > 0.0)
             model->L_loading_overlap_strength *= objective_entries / n_l_pairs;
-        }
     }
     init_best_latent_brownian_state(&best_state, n_cells, n_genes, k);
 
