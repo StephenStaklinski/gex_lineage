@@ -1506,7 +1506,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     mat_zero(mF); mat_zero(vF); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
 
     /* Adam hyperparameters */
-    double base_lr = 0.05;   /* Base learning rate for Adam, matching VINE's default */
+    double base_lr = 0.05;   /* Base learning rate for Adam */
     double lr = base_lr;
     double clip_beta = 0.98;
     double clip_factor = 2.0;
@@ -1587,7 +1587,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
 
         /* Re-scale the gradients if their norm exceeds the clipping threshold and 
-        recompute the norm for those that were rescales */
+        recompute the norm for those that were rescaled */
         if (adam_clip_matrix_by_norm(grad_F, grad_F_norm, clip_F)) {
             grad_F_norm = mat_frobenius_norm(grad_F);
             clipping_on |= 1;
@@ -1627,7 +1627,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
         
 
-        /* VINE-style convergence: compare mean objectives over fixed windows.
+        /* Compare mean objectives over fixed windows.
            Here lower is better, so stop when the window mean fails to decrease
            by about objective_tol relative to the previous window. */
         window_objective_sum += model->objective;
@@ -1714,9 +1714,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                 fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
             fprintf(logf, "\n");
         }
-
-        /* Convergence is checked before the parameter update so plateaued
-           steps can first trigger learning-rate reductions. */
     }
 
     /* Compute the final state objective and gradients. */
