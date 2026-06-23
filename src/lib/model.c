@@ -1289,7 +1289,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
     int convergence_window = 50; /* Number of steps to average when assessing convergence */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
-    double objective_tol = 1e-6; /* Relative window-average improvement needed to continue */
+    double objective_tol = 1e-3; /* Relative window-average improvement needed to continue */
     double window_objective_sum = 0.0; /* Running objective sum for convergence windows */
     double last_window_objective_avg = HUGE_VAL; /* Previous convergence-window mean objective */
 
@@ -1490,8 +1490,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     mat_zero(mF); mat_zero(vF); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
 
     /* Adam hyperparameters */
-    double base_lr = 0.05;   /* Base learning rate for Adam */
-    double lr = base_lr;
+    double lr = 0.01;   /* Base learning rate */
     double clip_beta = 0.98;
     double clip_factor = 2.0;
     double clip_floor = 7.0;
