@@ -1,5 +1,6 @@
 
 #include "brownian.h"
+#include "external_libs.h"
 #include "gexmatrix.h"
 #include "misc.h"
 #include "model.h"
@@ -39,6 +40,7 @@ static void usage(const char *progname) {
 
 /* Main program entry point for gexLineage. */
 int main(int argc, char *argv[]) {
+    set_num_threads(1);
     /* Data structures to store user inputs and other default parameters */
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *outprefix = NULL;   /* Prefix for all output files */

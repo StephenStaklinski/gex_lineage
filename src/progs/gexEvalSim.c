@@ -1,3 +1,4 @@
+#include "external_libs.h"
 #include "gexmatrix.h"
 #include "parser.h"
 
@@ -19,6 +20,7 @@ static void usage(const char *progname) {
 }
 
 int main(int argc, char *argv[]) {
+    set_num_threads(1);
     const char *sim_prefix = NULL;
     const char *fit_prefix = NULL;
     const char *outprefix = NULL;
