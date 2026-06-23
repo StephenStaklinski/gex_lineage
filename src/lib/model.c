@@ -926,11 +926,8 @@ static void normalize_L_rows_and_rescale_F(Matrix *L,
 typedef struct {
     int has_state;
     int step;
-    int steps_since_best;
     int clipping_on;
     double objective;
-    double ema_objective;
-    double best_ema_objective;
     double grad_norm;
     double grad_F_norm;
     double grad_L_norm;
@@ -975,9 +972,6 @@ static void free_best_latent_brownian_state(BestLatentBrownianState *best) {
 static void store_best_latent_brownian_state(BestLatentBrownianState *best,
                                              GexLatentBrownianModel *model,
                                              int step,
-                                             double ema_objective,
-                                             double best_ema_objective,
-                                             int steps_since_best,
                                              int clipping_on,
                                              double grad_norm,
                                              double grad_F_norm,
@@ -988,11 +982,8 @@ static void store_best_latent_brownian_state(BestLatentBrownianState *best,
 
     best->has_state = 1;
     best->step = step;
-    best->steps_since_best = steps_since_best;
     best->clipping_on = clipping_on;
     best->objective = model->objective;
-    best->ema_objective = ema_objective;
-    best->best_ema_objective = best_ema_objective;
     best->grad_norm = grad_norm;
     best->grad_F_norm = grad_F_norm;
     best->grad_L_norm = grad_L_norm;
@@ -1046,12 +1037,9 @@ static void write_best_latent_brownian_state(FILE *logf,
         return;
 
     if (verbose_log) {
-        fprintf(logf, "# best_state\t%d\t%.17g\t%.17g\t%.17g\t%d\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+        fprintf(logf, "# best_state\t%d\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
                 best->step,
                 best->objective,
-                best->ema_objective,
-                best->best_ema_objective,
-                best->steps_since_best,
                 best->clipping_on,
                 best->grad_norm,
                 best->grad_F_norm,
@@ -1300,12 +1288,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     int step;   /* Optimization step */
     int min_steps = 200;    /* Minimum number of optimization steps before allowing convergence */
     int convergence_window = 50; /* Number of steps to average when assessing convergence */
-    int steps_since_best = 0; /* Number of steps since the best EMA objective improved meaningfully */
     int converged = 0;   /* Whether the optimization stopped by satisfying the convergence rule. Assumes 0 (not converged) to start */
     double objective_tol = 1e-3; /* Relative window-average improvement needed to continue */
-    double ema_beta = 0.99;  /* Exponential smoothing coefficient for the objective */
-    double ema_objective = HUGE_VAL; /* Exponentially smoothed objective */
-    double best_ema_objective = HUGE_VAL; /* Best smoothed objective seen so far */
     double window_objective_sum = 0.0; /* Running objective sum for convergence windows */
     double last_window_objective_avg = HUGE_VAL; /* Previous convergence-window mean objective */
 
@@ -1343,7 +1327,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
     if (verbose_log) {
-        fprintf(logf, "step\tobjective\tema_objective\tbest_ema_objective\tsteps_since_best\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
+        fprintf(logf, "step\tobjective\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
         if (final_absorbing_factor)
             fprintf(logf, "\tl2_penalty");
         if (L_loading_overlap_strength > 0.0)
@@ -1548,19 +1532,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
 
-        if (step == 1)
-            ema_objective = model->objective;
-        else
-            ema_objective = ema_beta * ema_objective + (1.0 - ema_beta) * model->objective;
-
-        if (ema_objective < best_ema_objective) {
-            best_ema_objective = ema_objective;
-            steps_since_best = 0;
-        }
-        else {
-            steps_since_best++;
-        }
-        
         /* Compute the gradient l2 norms */
         grad_F_norm = mat_frobenius_norm(grad_F);
         grad_L_norm = mat_frobenius_norm(grad_L);
@@ -1619,8 +1590,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             isfinite(model->objective) &&
             (!best_state.has_state || model->objective < best_state.objective)) {
             store_best_latent_brownian_state(&best_state, model, step,
-                                             ema_objective, best_ema_objective,
-                                             steps_since_best, clipping_on,
+                                             clipping_on,
                                              grad_norm, grad_F_norm, grad_L_norm,
                                              grad_log_sigma_obs_norm,
                                              grad_log_sigma_latent_norm);
@@ -1674,12 +1644,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
         if (verbose_log) {
-            fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%d\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+            fprintf(logf, "%d\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
                     step,
                     model->objective,
-                    ema_objective,
-                    best_ema_objective,
-                    steps_since_best,
                     clipping_on,
                     grad_norm,
                     grad_F_norm,
@@ -1739,8 +1706,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         isfinite(model->objective) &&
         (!best_state.has_state || model->objective < best_state.objective)) {
         store_best_latent_brownian_state(&best_state, model, step,
-                                         ema_objective, best_ema_objective,
-                                         steps_since_best, 0,
+                                         0,
                                          grad_norm, grad_F_norm, grad_L_norm,
                                          grad_log_sigma_obs_norm,
                                          grad_log_sigma_latent_norm);
