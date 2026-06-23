@@ -110,8 +110,6 @@ static void usage(const char *progname) {
         "[--no-write-latent-flow] "
         "[--no-filter] "
         "[--no-preprocess] "
-        "[--verbose] "
-        "[--verbose-log] "
         "[--seed S] "
         "[--nthreads N]\n",
         progname);
@@ -143,8 +141,6 @@ int main(int argc, char *argv[]) {
     int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
     int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before modeling. */
     int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
-    int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
-    int verbose_log = 0;    /* If nonzero, write the full optimization log. */
     int nthreads = 1;   /* Number of OpenMP threads to use */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
     GexScaleInvarConstraint scale_invar_constraint = GEX_SCALE_INVAR_LROWS; /* Which constraint to use for counteracting scale invariance */
@@ -335,12 +331,6 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--no-post-hoc-identifiability") == 0) {
             apply_post_hoc_identifiability = 0;
         }
-        else if (strcmp(argv[i], "--verbose") == 0) {
-            verbose = 1;
-        }
-        else if (strcmp(argv[i], "--verbose-log") == 0) {
-            verbose_log = 1;
-        }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -387,7 +377,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
             return 1;
         }
-        set_num_threads(nthreads, verbose);
+        set_num_threads(nthreads);
     }
 
     /* Load the input trees */
@@ -442,11 +432,6 @@ int main(int argc, char *argv[]) {
                n_removed, gex->X->ncols);
     }
 
-    if (verbose) {
-        /* Print input/output summary for user verification */
-        gex_print_io_summary(trees, n_trees, gex);
-    }
-
     /* Reconcile tree tips and expression cell names to the intersection of both sets
     if they do not perfectly match. */
     if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
@@ -469,11 +454,6 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    if (verbose) {
-        printf("Computed phylogenetic covariance matrix for the first tree:\n");
-        print_covariance_summary(Sigmas[0], gex->cell_names, gex->X->nrows);
-    }
-
     /* Compute average covariance matrix over input trees if needed */
     if (filter_average_covariance || pca_method == PCA_METHOD_PHYLOPCA || pca_method == PCA_METHOD_MAX_PHYLOPCA) {
         filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
@@ -634,7 +614,7 @@ int main(int argc, char *argv[]) {
                                           L_loading_overlap_strength,
                                           normalize_regularization,
                                           apply_post_hoc_identifiability,
-                                          outprefix, verbose_log);
+                                          outprefix);
     if (model == NULL) {
         fprintf(stderr, "ERROR: failed to fit latent Brownian model.\n");
         return 1;

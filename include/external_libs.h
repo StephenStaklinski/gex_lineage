@@ -1,7 +1,6 @@
 #ifndef _GEX_EXTERNAL_LIBS_
 #define _GEX_EXTERNAL_LIBS_
 
-#include <stdio.h>
 #include <stdlib.h>
 
 #ifdef GEX_LINEAGE_HAS_OPENMP
@@ -61,45 +60,29 @@ static inline int has_thread_control(void) {
 #endif
 }
 
-static inline void set_openmp_num_threads(int nthreads, int verbose) {
+static inline void set_openmp_num_threads(int nthreads) {
     (void)nthreads;
-    (void)verbose;
 
 #ifdef GEX_LINEAGE_HAS_OPENMP
     omp_set_num_threads(nthreads);
-    if (verbose)
-        printf("Using %d thread(s) for OpenMP-enabled calculations.\n", nthreads);
 #endif
 }
 
-static inline void set_blas_num_threads(int nthreads, int verbose) {
+static inline void set_blas_num_threads(int nthreads) {
     (void)nthreads;
-    (void)verbose;
 
 #ifdef GEX_LINEAGE_HAS_OPENBLAS_THREAD_CONTROL
     openblas_set_num_threads(nthreads);
-    if (verbose) {
-        int actual_nthreads = openblas_get_num_threads();
-        if (actual_nthreads == nthreads) {
-            printf("Using %d thread(s) for OpenBLAS matrix multiplications.\n", nthreads);
-        }
-        else {
-            printf("Requested %d OpenBLAS thread(s), but OpenBLAS reports %d thread(s) (%s).\n",
-                   nthreads, actual_nthreads, openblas_get_config());
-        }
-    }
 #endif
 
 #ifdef GEX_LINEAGE_HAS_MKL_THREAD_CONTROL
     mkl_set_num_threads(nthreads);
-    if (verbose)
-        printf("Using %d thread(s) for MKL matrix multiplications.\n", mkl_get_max_threads());
 #endif
 }
 
-static inline void set_num_threads(int nthreads, int verbose) {
-    set_openmp_num_threads(nthreads, verbose);
-    set_blas_num_threads(nthreads, verbose);
+static inline void set_num_threads(int nthreads) {
+    set_openmp_num_threads(nthreads);
+    set_blas_num_threads(nthreads);
 }
 
 #endif

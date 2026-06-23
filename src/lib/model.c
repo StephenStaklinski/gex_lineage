@@ -1029,52 +1029,36 @@ static void restore_best_latent_brownian_state(GexLatentBrownianModel *model,
 static void write_best_latent_brownian_state(FILE *logf,
                                              BestLatentBrownianState *best,
                                              GexLatentBrownianModel *model,
-                                             int verbose_log,
                                              int restored) {
     int d;
 
     if (logf == NULL || best == NULL || !best->has_state)
         return;
 
-    if (verbose_log) {
-        fprintf(logf, "# best_state\t%d\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
-                best->step,
-                best->objective,
-                best->clipping_on,
-                best->grad_norm,
-                best->grad_F_norm,
-                best->grad_L_norm,
-                best->grad_log_sigma_obs_norm,
-                best->grad_log_sigma_latent_norm,
-                best->observation_objective,
-                best->brownian_prior_objective,
-                best->l1_objective,
-                exp(best->log_sigma2_obs));
-        if (model->final_absorbing_factor)
-            fprintf(logf, "\t%.17g", best->l2_objective);
-        if (model->L_loading_overlap_strength > 0.0)
-            fprintf(logf, "\t%.17g", best->L_loading_overlap_objective);
-        for (d = 0; d < model->k; d++)
-            fprintf(logf, "\t%.17g", exp(best->log_sigma2_latent[d]));
-        fprintf(logf, "\t%.17g\t%.17g\t%.17g\trestored=%d\n",
-                best->F_frobenius_norm,
-                best->L_frobenius_norm,
-                best->FL_frobenius_norm,
-                restored);
-    }
-    else {
-        fprintf(logf, "# best_state\t%d\t%.17g\t%.17g\t%.17g\t%.17g",
-                best->step,
-                best->objective,
-                best->brownian_prior_objective,
-                best->observation_objective,
-                best->l1_objective);
-        if (model->final_absorbing_factor)
-            fprintf(logf, "\t%.17g", best->l2_objective);
-        if (model->L_loading_overlap_strength > 0.0)
-            fprintf(logf, "\t%.17g", best->L_loading_overlap_objective);
-        fprintf(logf, "\trestored=%d\n", restored);
-    }
+    fprintf(logf, "# best_state\t%d\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+            best->step,
+            best->objective,
+            best->clipping_on,
+            best->grad_norm,
+            best->grad_F_norm,
+            best->grad_L_norm,
+            best->grad_log_sigma_obs_norm,
+            best->grad_log_sigma_latent_norm,
+            best->observation_objective,
+            best->brownian_prior_objective,
+            best->l1_objective,
+            exp(best->log_sigma2_obs));
+    if (model->final_absorbing_factor)
+        fprintf(logf, "\t%.17g", best->l2_objective);
+    if (model->L_loading_overlap_strength > 0.0)
+        fprintf(logf, "\t%.17g", best->L_loading_overlap_objective);
+    for (d = 0; d < model->k; d++)
+        fprintf(logf, "\t%.17g", exp(best->log_sigma2_latent[d]));
+    fprintf(logf, "\t%.17g\t%.17g\t%.17g\trestored=%d\n",
+            best->F_frobenius_norm,
+            best->L_frobenius_norm,
+            best->FL_frobenius_norm,
+            restored);
 }
 
 void post_hoc_sign_identifiability(Matrix *L, Matrix *F) {
@@ -1282,8 +1266,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                       double L_loading_overlap_strength,
                                                       int normalize_regularization,
                                                       int apply_post_hoc_identifiability,
-                                                      const char *outprefix,
-                                                      int verbose_log) {
+                                                      const char *outprefix) {
     /* Optimization related */
     int step;   /* Optimization step */
     int min_steps = 500;    /* Minimum number of optimization steps before allowing convergence */
@@ -1326,24 +1309,14 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
     logf = fopen(log_path, "w");
-    if (verbose_log) {
-        fprintf(logf, "step\tobjective\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
-        if (final_absorbing_factor)
-            fprintf(logf, "\tl2_penalty");
-        if (L_loading_overlap_strength > 0.0)
-            fprintf(logf, "\tL_loading_overlap_penalty");
-        for (i = 0; i < k; i++)
-            fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
-        fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
-    }
-    else {
-        fprintf(logf, "step\tobjective\tbrownian_neglprior\tobservation_negll\tl1_penalty");
-        if (final_absorbing_factor)
-            fprintf(logf, "\tl2_penalty");
-        if (L_loading_overlap_strength > 0.0)
-            fprintf(logf, "\tL_loading_overlap_penalty");
-        fprintf(logf, "\n");
-    }
+    fprintf(logf, "step\tobjective\tclipping_on\tgrad_norm\tF_grad_norm\tL_grad_norm\tlog_sigma2_obs_grad_norm\tlog_sigma2_latent_grad_norm\tobservation_negll\tbrownian_neglprior\tl1_penalty\tsigma2_obs");
+    if (final_absorbing_factor)
+        fprintf(logf, "\tl2_penalty");
+    if (L_loading_overlap_strength > 0.0)
+        fprintf(logf, "\tL_loading_overlap_penalty");
+    for (i = 0; i < k; i++)
+        fprintf(logf, "\tsigma2_latent_LF%d", i + 1);
+    fprintf(logf, "\tF_frobenius_norm\tL_frobenius_norm\tFL_frobenius_norm\n");
 
     /* Pre-compute tree traversal arrays and scratch space for Brownian pruning. */
     postorders = scalloc(n_trees, sizeof(TreeNode **));
@@ -1638,44 +1611,29 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         
         /* Log the scalar parameters and compact summaries of F and L at
         each optimization step without writing the full matrices. */
-        if (verbose_log) {
-            fprintf(logf, "%d\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
-                    step,
-                    model->objective,
-                    clipping_on,
-                    grad_norm,
-                    grad_F_norm,
-                    grad_L_norm,
-                    grad_log_sigma_obs_norm,
-                    grad_log_sigma_latent_norm,
-                    model->observation_objective,
-                    model->brownian_prior_objective,
-                    model->l1_objective,
-                    exp(model->log_sigma2_obs));
-            if (final_absorbing_factor)
-                fprintf(logf, "\t%.17g", model->l2_objective);
-            if (L_loading_overlap_strength > 0.0)
-                fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
-            for (d = 0; d < k; d++)
-                fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
-            fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
-                        mat_frobenius_norm(model->F),
-                        mat_frobenius_norm(model->L),
-                        model->FL_frobenius_norm);
-        }
-        else {
-            fprintf(logf, "%d\t%.17g\t%.17g\t%.17g\t%.17g",
-                    step,
-                    model->objective,
-                    model->brownian_prior_objective,
-                    model->observation_objective,
-                    model->l1_objective);
-            if (final_absorbing_factor)
-                fprintf(logf, "\t%.17g", model->l2_objective);
-            if (L_loading_overlap_strength > 0.0)
-                fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
-            fprintf(logf, "\n");
-        }
+        fprintf(logf, "%d\t%.17g\t%d\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g",
+                step,
+                model->objective,
+                clipping_on,
+                grad_norm,
+                grad_F_norm,
+                grad_L_norm,
+                grad_log_sigma_obs_norm,
+                grad_log_sigma_latent_norm,
+                model->observation_objective,
+                model->brownian_prior_objective,
+                model->l1_objective,
+                exp(model->log_sigma2_obs));
+        if (final_absorbing_factor)
+            fprintf(logf, "\t%.17g", model->l2_objective);
+        if (L_loading_overlap_strength > 0.0)
+            fprintf(logf, "\t%.17g", model->L_loading_overlap_objective);
+        for (d = 0; d < k; d++)
+            fprintf(logf, "\t%.17g", exp(model->log_sigma2_latent[d]));
+        fprintf(logf, "\t%.17g\t%.17g\t%.17g\n",
+                mat_frobenius_norm(model->F),
+                mat_frobenius_norm(model->L),
+                model->FL_frobenius_norm);
     }
 
     /* Compute the final state objective and gradients. */
@@ -1733,7 +1691,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Keep extra optimizer metadata in comment rows so table parsers can skip it. */
     fprintf(logf, "# termination\t%s\n", (converged ? "converged" : "stopped"));
-    write_best_latent_brownian_state(logf, &best_state, model, verbose_log,
+    write_best_latent_brownian_state(logf, &best_state, model,
                                      restored_best_state);
 
     /* Free memory */

@@ -30,9 +30,8 @@ static void usage(const char *progname) {
         "[--sigma2 <csv>] "
         "[--dim K] "
         "[--sigma2-obs S] "
-        "[--include-factorization ]"
+        "[--include-factorization] "
         "[--identity-cov] "
-        "[--verbose]"
         "[--seed S]\n",
         progname);
 }
@@ -50,7 +49,6 @@ int main(int argc, char *argv[]) {
     double sigma2_obs = 1.0; /* Variance of observation noise */
     int expr_only = 1; /* If nonzero, only output the simulated expression matrix. */
     int identity_cov = 0; /* If nonzero, use identity covariance (null model) instead of tree-based covariance for simulations. */
-    int verbose = 0;    /* If nonzero, print additional progress messages during the run. */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -142,9 +140,6 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--identity-cov") == 0) {
             identity_cov = 1;
         }
-        else if (strcmp(argv[i], "--verbose") == 0) {
-            verbose = 1;
-        }
         else if (strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -186,11 +181,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (verbose) {
-        /* Print input/output summary for user verification */
-        gex_print_io_summary(trees, n_trees, NULL);
-    }
-
     /* Rescale the trees to a specified total height if requested */
     if (tree_total_time > 0.0) {
         uniform_rescale_trees(trees, n_trees, tree_total_time);
@@ -222,11 +212,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
         }
-        if (verbose) {
-            printf("Computed phylogenetic covariance matrix for the first tree:\n");
-            print_covariance_summary(Sigmas[0], gex->cell_names, n_cells);
-        }
-
         use_Sigmas = Sigmas;
         n_use_sigmas = n_trees;
         printf("Using all %d tree(s)...\n", n_use_sigmas);
