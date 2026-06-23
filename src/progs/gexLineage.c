@@ -78,9 +78,6 @@ static void usage(const char *progname) {
         "[--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--remove-ribo-mito-genes] "
-        "[--n-perms N] "
-        "[--max-q Q] "
-        "[--moran-min-i I] "
         "[--filter-only] "
         "[--no-write-latent-flow] "
         "[--no-filter] "
@@ -97,9 +94,9 @@ int main(int argc, char *argv[]) {
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
-    int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     int filter_average_covariance = 1;  /* If nonzero, use the average covariance for phylogenetic filtering. */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
+    int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
@@ -238,20 +235,6 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "ERROR: --lrt-alt must be one of full, lambda\n");
                 return 1;
             }
-        }
-        else if (strcmp(argv[i], "--n-perms") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            n_perms = atoi(argv[++i]);
-        }
-        else if (strcmp(argv[i], "--max-q") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            max_q = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--filter-only") == 0) {
             filter_only = 1;
