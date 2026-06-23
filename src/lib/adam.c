@@ -6,21 +6,6 @@
 
 #include <math.h>
 
-/* Cosine decay of learning rate */
-double adam_cosine_lr(double curr_lr,
-                      double base_lr,
-                      double min_lr,
-                      int step,
-                      int max_steps) {
-    if (step <= 1 || step >= max_steps)
-        return curr_lr; /* Stay at the current learning rate after decay ends */
-
-    double progress = (double)step / (double)max_steps;
-    double lr = base_lr * 0.5 * (1.0 + cos(M_PI * progress));
-    lr = fmax(lr, min_lr);
-
-    return lr;
-}
 
 /* Perform one Adam optimization update for a scalar parameter in place. */
 void adam_step_scalar(double *param,
