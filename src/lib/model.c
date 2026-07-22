@@ -24,11 +24,12 @@ static double brownian_branch_variance(double sigma2, double branch_length) {
 X ~ N(FL, sigma2_obs). Returns the full contribution to the objective,
 including the Gaussian normalization constant, fills residual matrix,
 and computes gradients w.r.t. F and log(sigma2_obs). */
-double gaussian_observation_term(Matrix *FL,
+static double gaussian_observation_term_work(Matrix *FL,
                                     Matrix *F,
                                     Matrix *L,
                                     double log_sigma2_obs,
                                     Matrix *Xc,
+                                    Matrix *residual_work,
                                     Matrix *grad_F,
                                     Matrix *grad_L,
                                     double *grad_log_sigma_obs,
@@ -41,7 +42,7 @@ double gaussian_observation_term(Matrix *FL,
     double ss = 0.0;
     double pred_ss = 0.0;
     Matrix *FL_work = FL;
-    Matrix *E = NULL;
+    Matrix *E = residual_work;
 
     /* Initialize gradient accumulator for log(sigma2_obs) */
     if (grad_log_sigma_obs != NULL)
@@ -55,7 +56,8 @@ double gaussian_observation_term(Matrix *FL,
 
     if (FL_work == NULL)
         FL_work = mat_new(n, p);
-    E = mat_new(n, p);
+    if (E == NULL)
+        E = mat_new(n, p);
 
     mat_mult_lapack(FL_work, F, L);
 
@@ -107,12 +109,27 @@ double gaussian_observation_term(Matrix *FL,
         if (FL_frobenius_norm != NULL)
             *FL_frobenius_norm = sqrt(pred_ss);
 
-        mat_free(E);
+        if (residual_work == NULL)
+            mat_free(E);
         if (FL == NULL)
             mat_free(FL_work);
 
         return obj;
     }
+}
+
+double gaussian_observation_term(Matrix *FL,
+                                    Matrix *F,
+                                    Matrix *L,
+                                    double log_sigma2_obs,
+                                    Matrix *Xc,
+                                    Matrix *grad_F,
+                                    Matrix *grad_L,
+                                    double *grad_log_sigma_obs,
+                                    double *FL_frobenius_norm) {
+    return gaussian_observation_term_work(FL, F, L, log_sigma2_obs, Xc, NULL,
+                                          grad_F, grad_L, grad_log_sigma_obs,
+                                          FL_frobenius_norm);
 }
 
 static int init_brownian_pruning_tree(TreeNode *tree,
@@ -675,6 +692,7 @@ the latent factor Brownian prior, and loading regularization.
 */
 static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
                                            Matrix *Xc,
+                                           Matrix *residual_work,
                                            TreeNode **trees,
                                            TreeNode ***postorders,
                                            int *n_postorders,
@@ -704,9 +722,10 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     /* Add the likelihood from the gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. F and log(sigma2_obs). */
     model->observation_objective =
-        gaussian_observation_term(model->FL, model->F, model->L, model->log_sigma2_obs,
-                                  Xc, grad_F, grad_L, grad_log_sigma_obs,
-                                  &model->FL_frobenius_norm);
+        gaussian_observation_term_work(model->FL, model->F, model->L,
+                                       model->log_sigma2_obs, Xc, residual_work,
+                                       grad_F, grad_L, grad_log_sigma_obs,
+                                       &model->FL_frobenius_norm);
     obj += model->observation_objective;
 
     /* Add the mixture-of-Brownian prior contribution on F and accumulate the
@@ -1243,6 +1262,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double m_log_sigma_obs = 0.0;   /* Adam optimizer moment estimate for observation noise */
     double v_log_sigma_obs = 0.0;   /* Adam optimizer variance estimate for observation noise */
     Matrix *grad_F = NULL, *grad_L = NULL, *mF = NULL, *vF = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
+    Matrix *residual_work = NULL; /* Reused observation residual scratch matrix */
 
     /* Other */
     int i, j, d;    /* Loop indices */
@@ -1386,6 +1406,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     v_log_sigma_latent = scalloc(k, sizeof(double));   /* Second moment of log latent variances */
     grad_F = mat_new(model->n_cells, k);    /* Gradient of latent coordinates */
     grad_L = mat_new(k, model->n_genes);    /* Gradient of factor loadings */
+    residual_work = mat_new(model->n_cells, model->n_genes);
     mF = mat_new(model->n_cells, k);    /* First moment of latent coordinates */
     vF = mat_new(model->n_cells, k);    /* Second moment of latent coordinates */
     mL = mat_new(k, model->n_genes);    /* First moment of factor loadings */
@@ -1423,7 +1444,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         clipping_on = 0;
 
         /* Compute the objective function and gradients */
-        model->objective = gex_model_objective_and_grad(model, gex->X, trees,
+        model->objective = gex_model_objective_and_grad(model, gex->X, residual_work, trees,
                                                         postorders, n_postorders,
                                                         tip_index_by_id,
                                                         prune_means, prune_vars,
@@ -1555,7 +1576,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
 
     /* Compute the final state objective and gradients. */
-    model->objective = gex_model_objective_and_grad(model, gex->X, trees,
+    model->objective = gex_model_objective_and_grad(model, gex->X, residual_work, trees,
                                                     postorders, n_postorders,
                                                     tip_index_by_id,
                                                     prune_means, prune_vars,
@@ -1606,6 +1627,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (v_log_sigma_latent != NULL) free(v_log_sigma_latent);
     if (grad_F != NULL) mat_free(grad_F);
     if (grad_L != NULL) mat_free(grad_L);
+    if (residual_work != NULL) mat_free(residual_work);
     if (mF != NULL) mat_free(mF);
     if (vF != NULL) mat_free(vF);
     if (mL != NULL) mat_free(mL);
