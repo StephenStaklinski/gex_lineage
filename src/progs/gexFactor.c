@@ -7,7 +7,6 @@
 #include "latentflow.h"
 #include "parser.h"
 #include "pca.h"
-#include "phylofilter.h"
 
 #include <phast/trees.h>
 #include <phast/matrix.h>
@@ -18,96 +17,43 @@
 #include <string.h>
 #include <math.h>
 
-/* Parse the filter mode from a string. Sets pointer to mode_out.
-Returns 0 on success or -1 on failure. */
-static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
-    if (strcmp(s, "moran") == 0) {
-        *mode_out = GEX_FILTER_MORAN;
-        return 0;
-    }
-    if (strcmp(s, "lrt") == 0) {
-        *mode_out = GEX_FILTER_LRT;
-        return 0;
-    }
-    return -1;
-}
-
-static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
-    if (strcmp(s, "full") == 0) {
-        *mode_out = GEX_LRT_ALT_FULL;
-        return 0;
-    }
-    if (strcmp(s, "lambda") == 0) {
-        *mode_out = GEX_LRT_ALT_LAMBDA;
-        return 0;
-    }
-    return -1;
-}
-
 /* Print command line usage information to stderr. */
 static void usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s "
-        "--trees <trees.nex> "
-        "--expr <matrix.tsv> "
-        "--outprefix <prefix> "
-        "--dim K "
-        "[--tree-total-time T] "
-        "[--tree-index N] "
-        "[--filter-covariance average|all] "
-        "[--filter-test lrt|moran] "
-        "[--lrt-alt lambda|full] "
-        "[--remove-ribo-mito-genes] "
-        "[--no-scale-constraint] "
-        "[--L-l1-strength S] "
+        "Usage: %s --trees <trees.nex> --expr <filtered.tsv> "
+        "--outprefix <prefix> --dim K "
+        "[--tree-total-time T] [--tree-index N] "
+        "[--no-scale-constraint] [--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
-        "[--no-post-hoc-identifiability] "
-        "[--filter-only] "
-        "[--no-write-latent-flow] "
-        "[--no-filter] "
-        "[--no-preprocess] "
-        "[--seed S] "
-        "[--nthreads N]\n",
+        "[--no-post-hoc-identifiability] [--no-write-latent-flow] "
+        "[--seed S] [--nthreads N]\n",
         progname);
 }
 
-/* Main program entry point for gexLineage. */
+/* Fit the latent Brownian factor model to modeling-ready expression data. */
 int main(int argc, char *argv[]) {
     /* Data structures to store user inputs and other default parameters */
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
-    GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Which test(s) to use for filtering genes before modeling */
-    int filter_average_covariance = 1;  /* If nonzero, use the average covariance for phylogenetic filtering. */
-    double max_q = 0.05;  /* False discovery rate for multiple testing correction */
-    int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
     double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double L_loading_overlap_strength = 0.0;  /* Strength of absolute L-row loading-overlap penalty; 0 disables it. */
     int k = 0;  /* Number of latent factors to fit. */
-    int filter_only = 0;    /* If nonzero, stop after writing filter outputs and exit successfully. */
     int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
-    int no_filter = 0;  /* If nonzero, skip the filter step and use all genes for modeling. */
-    int preprocess = 1; /* If nonzero, preprocess the expression data before modeling. */
-    int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before modeling. */
     int constrain_L_scale = 1; /* If nonzero, constrain each L row to unit norm. */
     int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
     int nthreads = 1;   /* Number of OpenMP threads to use */
-    GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
-    Matrix **Sigmas = NULL; /* Phylogenetic covariance matrices, one per tree */
-    Matrix *filter_avg_Sigma = NULL; /* Average covariance used for filtering and maxPhyloPCA. */
-    Matrix **filter_Sigmas = NULL; /* Covariance matrices used for filtering */
-    int n_filter_sigmas = 0; /* Number of covariance matrices used for phylogenetic filtering */
-    MoranResult *morans = NULL; /* Results from Moran's I calculation */
-    GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
+    Matrix *pca_Sigma = NULL; /* First-tree covariance used for maxPhyloPCA. */
     PCA *pca = NULL; /* PCA results */
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
+    char **factor_names = NULL; /* Names assigned to fitted latent factors */
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
     set_seed(-1); /* Random seed, for now */
@@ -152,33 +98,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
         }
-        else if (strcmp(argv[i], "--filter-covariance") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            i++;
-            if (strcmp(argv[i], "average") == 0) {
-                filter_average_covariance = 1;
-            }
-            else if (strcmp(argv[i], "all") == 0) {
-                filter_average_covariance = 0;
-            }
-            else {
-                fprintf(stderr, "ERROR: --filter-covariance must be one of average or all\n");
-                return 1;
-            }
-        }
-        else if (strcmp(argv[i], "--filter-test") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
-                fprintf(stderr, "ERROR: --filter-test must be one of moran or lrt\n");
-                return 1;
-            }
-        }
         else if (strcmp(argv[i], "--L-l1-strength") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
@@ -200,30 +119,8 @@ int main(int argc, char *argv[]) {
             }
             k = atoi(argv[++i]);
         }
-        else if (strcmp(argv[i], "--lrt-alt") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            if (parse_lrt_alt_mode(argv[++i], &lrt_alt_mode) != 0) {
-                fprintf(stderr, "ERROR: --lrt-alt must be one of full, lambda\n");
-                return 1;
-            }
-        }
-        else if (strcmp(argv[i], "--filter-only") == 0) {
-            filter_only = 1;
-        }
         else if (strcmp(argv[i], "--no-write-latent-flow") == 0) {
             write_latent_flow = 0;
-        }
-        else if (strcmp(argv[i], "--no-filter") == 0) {
-            no_filter = 1;
-        }
-        else if (strcmp(argv[i], "--no-preprocess") == 0) {
-            preprocess = 0;
-        }
-        else if (strcmp(argv[i], "--remove-ribo-mito-genes") == 0) {
-            remove_ribo_mito_genes = 1;
         }
         else if (strcmp(argv[i], "--no-scale-constraint") == 0) {
             constrain_L_scale = 0;
@@ -264,10 +161,6 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
         return 1;
     }
-    if (filter_only && no_filter) {
-        fprintf(stderr, "ERROR: --no-filter cannot be used together with --filter-only.\n");
-        return 1;
-    }
     if (k <= 0) {
         fprintf(stderr, "ERROR: --dim must be specified and positive.\n");
         return 1;
@@ -279,7 +172,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (nthreads > 1 && !has_thread_control()) {
-        fprintf(stderr, "ERROR: this gexLineage build does not support OpenMP or BLAS thread control.\n");
+        fprintf(stderr, "ERROR: this build does not support OpenMP or BLAS thread control.\n");
         return 1;
     }
     set_num_threads(nthreads);
@@ -322,16 +215,6 @@ int main(int argc, char *argv[]) {
     }
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
-    if (remove_ribo_mito_genes) {
-        int n_removed = gex_remove_ribo_mito_genes(gex);
-        if (n_removed < 0) {
-            fprintf(stderr, "ERROR: ribosomal/mitochondrial gene filtering removed all genes.\n");
-            return 1;
-        }
-        printf("Removed %d ribosomal/mitochondrial gene(s); matrix now has %d gene(s).\n",
-               n_removed, gex->X->ncols);
-    }
-
     /* Reconcile tree tips and expression cell names to the intersection of both sets
     if they do not perfectly match. */
     if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
@@ -345,115 +228,21 @@ int main(int argc, char *argv[]) {
         printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
     }
 
-    /* Calculate the phylogenetic covariance matrix for each input tree. */
-    Sigmas = scalloc(n_trees, sizeof(Matrix *));
-    for (i = 0; i < n_trees; i++) {
-        Sigmas[i] = covariance_from_tree(trees[i], gex->cell_names, gex->X->nrows);
-        if (Sigmas[i] == NULL) {
-            fprintf(stderr, "ERROR: failed to compute Brownian covariance matrix for tree %d.\n", i + 1);
-            return 1;
-        }
-    }
-    /* Compute average covariance matrix for maxPhyloPCA and optionally gene filtering. */
-    filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
-                                                   gex->cell_names, gex->X->nrows);
-
-    /* Pre-process the gene expression data */
-    if (preprocess) {
-        printf("Pre-processing the gene expression data...\n");
-        /* Library size normalization per-cell */
-        mat_normalize_rows(gex->X);
-        /* Scale by global factor to counts per 10k */
-        double scale_factor = 10000.0;
-        mat_scale(gex->X, scale_factor);
-        /* Log-transform the data to stabilize variance and approximate Gaussian */
-        mat_log1p(gex->X);
+    /* The first tree initializes maxPhyloPCA. The factor model itself receives
+       and fits against every input tree. */
+    pca_Sigma = covariance_from_tree(trees[0], gex->cell_names, gex->X->nrows);
+    if (pca_Sigma == NULL) {
+        fprintf(stderr, "ERROR: failed to compute the first tree covariance matrix.\n");
+        return 1;
     }
 
-    /* Transform data into the residuals */
-    mat_center_cols(gex->X);
-
-
-    /* Select which covariance matrix or matrices to use for the phylogenetic signal filtering */
-    if (filter_average_covariance) {
-        filter_Sigmas = scalloc(1, sizeof(Matrix *));
-        filter_Sigmas[0] = filter_avg_Sigma;
-        n_filter_sigmas = 1;
-    }
-    else {
-        filter_Sigmas = Sigmas;
-        n_filter_sigmas = n_trees;
-    }
-
-    /* Run the phylogenetic signal filter(s). */
-    if (!no_filter) {
-        const char *tree_msg;
-        int tree_count = n_trees;
-        if (filter_average_covariance) {
-            tree_msg = "the average covariance across all";
-        } else {
-            tree_msg = "all";
-        }
-        printf("Applying the phylogenetic signal gene filter(s) to the real input gene expression matrix data using %s %d tree(s)...\n",
-            tree_msg, tree_count);
-
-        /* Pagel's lambda LRT is only for <=1000 cells; Full LRT is only for <=100 cells */
-        if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_LAMBDA && gex->X->nrows > 1000) {
-            filter_mode = GEX_FILTER_MORAN;
-            printf("WARNING: Pagel's lambda Brownian LRT is only for <=1000 cells. Switching to Moran's I filter instead.\n");
-        }
-        if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_FULL && gex->X->nrows > 100) {
-            filter_mode = GEX_FILTER_MORAN;
-            printf("WARNING: Full Brownian LRT is only for <=100 cells. Switching to Moran's I filter instead.\n");
-        }
-
-        /* Run the phylogenetic autocorrelation filter tests if requested */
-        if (filter_mode == GEX_FILTER_MORAN) {
-            morans = gex_compute_morans_i(gex->X, filter_Sigmas,
-                                          n_filter_sigmas);
-
-            char corr_path[4096];
-            snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
-            write_moran_tsv(corr_path, morans, gex, max_q);
-        }
-
-        /* Run the phylogenetic LRT filter tests if requested */
-        if (filter_mode == GEX_FILTER_LRT) {
-            lrt = gex_compute_brownian_lrt(gex->X, filter_Sigmas,
-                                           n_filter_sigmas,
-                                           n_perms,lrt_alt_mode);
-
-            char lrt_path[4096];
-            if (lrt_alt_mode == GEX_LRT_ALT_FULL) {
-                snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.full.tsv", outprefix);
-            } else if (lrt_alt_mode == GEX_LRT_ALT_LAMBDA) {
-                snprintf(lrt_path, sizeof(lrt_path), "%s.correlation.lrt.lambda.tsv", outprefix);
-            }
-
-            write_lrt_tsv(lrt_path, lrt, gex, max_q);
-        }
-
-        /* Stop early if only phylogenetic signal filtering is requested */
-        if (filter_only) {
-            return 0;
-        }
-    }
-
-
-    if (no_filter) {
-        /* Keep all genes */
-        gex_filtered = gex;
-        gex = NULL;
-        printf("Skipping phylogenetic signal gene filtering and using all %d gene(s) for modeling.\n", gex_filtered->X->ncols);
-
-    } else {
-        /* Filter genes */
-        gex_filtered = gex_filter_genes(gex, morans, lrt, filter_mode, max_q);
-        printf("Filtered matrix has %d cells and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
-    }
+    gex_filtered = gex;
+    gex = NULL;
+    printf("Using all %d gene(s) from the modeling-ready input matrix.\n",
+           gex_filtered->X->ncols);
 
     printf("Running maxPhyloPCA to initialize latent factors for the model...\n");
-    pca = compute_max_phylo_pca(gex_filtered->X, filter_avg_Sigma, k);
+    pca = compute_max_phylo_pca(gex_filtered->X, pca_Sigma, k);
     if (pca == NULL) {
         fprintf(stderr, "ERROR: failed to compute PCA initialization.\n");
         return 1;
@@ -513,7 +302,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Write the fitted latent Brownian model parameters to files */
-    char **factor_names = scalloc(k, sizeof(char *));
+    factor_names = scalloc(k, sizeof(char *));
     generate_names(factor_names, k, "factor");
     double *sigma2_latent = scalloc(k, sizeof(double));
     for (i = 0; i < k; i++) {
@@ -610,22 +399,10 @@ int main(int argc, char *argv[]) {
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
     gex_free_matrix_data(gex_filtered);
-    free_moran_result(morans);
-    free_lrt_result(lrt);
     free_pca(pca);
     gex_free_latent_brownian_model(model);
-    if (Sigmas != NULL) {
-        for (i = 0; i < n_trees; i++) {
-            if (Sigmas[i] != NULL)
-                mat_free(Sigmas[i]);
-        }
-        free(Sigmas);
-    }
-    if (filter_Sigmas != NULL && filter_Sigmas != Sigmas) {
-        free(filter_Sigmas);
-    }
-    if (filter_avg_Sigma != NULL) {
-        mat_free(filter_avg_Sigma);
+    if (pca_Sigma != NULL) {
+        mat_free(pca_Sigma);
     }
 
     return 0; /* Success */

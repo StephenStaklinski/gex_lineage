@@ -38,11 +38,12 @@ The number of threads can be controlled with the -j option.
 
 ## Usage
 
-For detailed usage of the main `gexLineage` executable and supporting programs, run them
-with `--help`:
+Filtering and factor-model fitting are exposed as separate programs. Run each
+with `--help` for its detailed options:
 
 ```bash
-gexLineage --help
+gexFilter --help
+gexFactor --help
 ```
 
 ## Support
