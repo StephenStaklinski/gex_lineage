@@ -63,7 +63,6 @@ int main(int argc, char *argv[]) {
     GexMatrix *gex = NULL;  /* Original expression matrix */
     GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
     Matrix *filter_avg_Sigma = NULL; /* Average covariance used for filtering. */
-    Matrix *filter_Sigmas[1] = {NULL}; /* One-element interface for the average covariance. */
     MoranResult *morans = NULL; /* Results from Moran's I calculation */
     GexLRTResult *lrt = NULL;   /* Results from Brownian LRT calculation */
     int n_trees = 0;    /* Number of input trees */
@@ -171,7 +170,6 @@ int main(int argc, char *argv[]) {
 
     /* Use the same unit-height time scale for every filtering run. */
     uniform_rescale_trees(trees, n_trees, 1.0);
-    printf("Rescaled tree(s) to total height 1.0.\n");
 
     /* Filtering always uses one covariance matrix averaged across all trees. */
     filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
@@ -180,7 +178,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: failed to compute the average tree covariance matrix.\n");
         return 1;
     }
-    filter_Sigmas[0] = filter_avg_Sigma;
 
     /* Pre-process the gene expression data */
     if (preprocess) {
@@ -215,7 +212,7 @@ int main(int argc, char *argv[]) {
 
         /* Run the phylogenetic autocorrelation filter tests if requested */
         if (filter_mode == GEX_FILTER_MORAN) {
-            morans = gex_compute_morans_i(gex->X, filter_Sigmas, 1);
+            morans = gex_compute_morans_i(gex->X, &filter_avg_Sigma, 1);
 
             char corr_path[4096];
             snprintf(corr_path, sizeof(corr_path), "%s.correlation.moran.tsv", outprefix);
@@ -224,7 +221,7 @@ int main(int argc, char *argv[]) {
 
         /* Run the phylogenetic LRT filter tests if requested */
         if (filter_mode == GEX_FILTER_LRT) {
-            lrt = gex_compute_brownian_lrt(gex->X, filter_Sigmas, 1,
+            lrt = gex_compute_brownian_lrt(gex->X, &filter_avg_Sigma, 1,
                                            n_perms,lrt_alt_mode);
 
             char lrt_path[4096];
@@ -263,5 +260,5 @@ int main(int argc, char *argv[]) {
         mat_free(filter_avg_Sigma);
     }
 
-    return 0; /* Success */
+    return 0;
 }

@@ -171,7 +171,6 @@ int main(int argc, char *argv[]) {
 
     /* Use the same unit-height time scale for every factor-model run. */
     uniform_rescale_trees(trees, n_trees, 1.0);
-    printf("Rescaled tree(s) to total height 1.0.\n");
 
     /* The first tree initializes maxPhyloPCA. The factor model itself receives
        and fits against every input tree. */
@@ -350,5 +349,5 @@ int main(int argc, char *argv[]) {
         mat_free(pca_Sigma);
     }
 
-    return 0; /* Success */
+    return 0;
 }

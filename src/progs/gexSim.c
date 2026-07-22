@@ -176,7 +176,6 @@ int main(int argc, char *argv[]) {
 
     /* Use the same unit-height time scale for every simulation. */
     uniform_rescale_trees(trees, n_trees, 1.0);
-    printf("Rescaled tree(s) to total height 1.0.\n");
 
     /* Set the cell names in the gene expression matrix */
     List *leaf_names = tr_leaf_names(trees[0]);
@@ -386,5 +385,5 @@ int main(int argc, char *argv[]) {
         free(use_Sigmas);
     }
 
-    return 0; /* Success */
+    return 0;
 }
