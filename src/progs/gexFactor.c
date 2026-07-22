@@ -44,8 +44,7 @@ int main(int argc, char *argv[]) {
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
-    GexMatrix *gex = NULL;  /* Original expression matrix */
-    GexMatrix *gex_filtered = NULL; /* Filtered expression matrix */
+    GexMatrix *gex_filtered = NULL; /* Expression matrix */
     Matrix *pca_Sigma = NULL; /* First-tree covariance used for maxPhyloPCA. */
     PCA *pca = NULL; /* PCA results */
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
@@ -116,7 +115,7 @@ int main(int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
-            return 0;   /* Success since user just wants cli help */
+            return 0;
         }
         else {
             fprintf(stderr, "ERROR: unknown argument: %s\n", argv[i]);
@@ -125,6 +124,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    /* Verify inputs are valid */
     if (trees_file == NULL || expr_file == NULL || outprefix == NULL) {
         usage(argv[0]);
         return 1;
@@ -133,14 +133,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --dim must be specified and positive.\n");
         return 1;
     }
-
-    /* Load the input trees */
-    trees = read_nexus(trees_file, &n_trees);
-    if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
-        fprintf(stderr, "ERROR: failed to load tree(s).\n");
-        return 1;
-    }
-    printf("Loaded %d tree(s).\n", n_trees);
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
         return 1;
@@ -149,22 +141,21 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --L-loading-overlap-strength must be nonnegative (0 disables L loading-overlap regularization)\n");
         return 1;
     }
-    /* Check that the input trees are ultrametric (required for cell lineage) */
+
+    /* Load the input trees */
+    trees = read_nexus(trees_file, &n_trees);
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
     }
-
-    /* Load the input real expression matrix */
-    gex = read_gex_matrix(expr_file);
-    if (gex == NULL) {
-        fprintf(stderr, "ERROR: failed to load expression matrix.\n");
-        return 1;
-    }
-    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
+    printf("Loaded %d tree(s).\n", n_trees);
+    
+    /* Load the input expression matrix */
+    gex_filtered = read_gex_matrix(expr_file);
+    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
 
     /* Reconcile tree tips and expression cell names to the intersection of both sets
     if they do not perfectly match. */
-    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
+    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex_filtered) != 0) {
         fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
         return 1;
     }
@@ -174,29 +165,10 @@ int main(int argc, char *argv[]) {
 
     /* The first tree initializes maxPhyloPCA. The factor model itself receives
        and fits against every input tree. */
-    pca_Sigma = covariance_from_tree(trees[0], gex->cell_names, gex->X->nrows);
-    if (pca_Sigma == NULL) {
-        fprintf(stderr, "ERROR: failed to compute the first tree covariance matrix.\n");
-        return 1;
-    }
-
-    gex_filtered = gex;
-    gex = NULL;
-    printf("Using all %d gene(s) from the modeling-ready input matrix.\n",
-           gex_filtered->X->ncols);
+    pca_Sigma = covariance_from_tree(trees[0], gex_filtered->cell_names, gex_filtered->X->nrows);
 
     printf("Running maxPhyloPCA to initialize latent factors for the model...\n");
     pca = compute_max_phylo_pca(gex_filtered->X, pca_Sigma, k);
-    if (pca == NULL) {
-        fprintf(stderr, "ERROR: failed to compute PCA initialization.\n");
-        return 1;
-    }
-    if (pca->K != k) {
-        fprintf(stderr, "ERROR: --dim %d exceeds the %d available PCA component(s).\n",
-                k, pca->K);
-        return 1;
-    }
-    printf("Retaining the top %d PCA component(s).\n", k);
     write_pca_tsv(outprefix, pca, gex_filtered);
 
     /* Check for technical accuracy of PCA during testing */
@@ -341,7 +313,6 @@ int main(int argc, char *argv[]) {
         free(factor_names);
     }
     gex_free_trees(trees, n_trees);
-    gex_free_matrix_data(gex);
     gex_free_matrix_data(gex_filtered);
     free_pca(pca);
     gex_free_latent_brownian_model(model);

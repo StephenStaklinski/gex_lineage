@@ -133,22 +133,13 @@ int main(int argc, char *argv[]) {
 
     /* Load the input trees */
     trees = read_nexus(trees_file, &n_trees);
-    if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
-        fprintf(stderr, "ERROR: failed to load tree(s).\n");
-        return 1;
-    }
-    printf("Loaded %d tree(s).\n", n_trees);
-    /* Check that the input trees are ultrametric (required for cell lineage) */
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
     }
+    printf("Loaded %d tree(s).\n", n_trees);
 
-    /* Load the input real expression matrix */
+    /* Load the input expression matrix */
     gex = read_gex_matrix(expr_file);
-    if (gex == NULL) {
-        fprintf(stderr, "ERROR: failed to load expression matrix.\n");
-        return 1;
-    }
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
     if (remove_ribo_mito_genes) {
@@ -174,10 +165,6 @@ int main(int argc, char *argv[]) {
     /* Filtering always uses one covariance matrix averaged across all trees. */
     filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
                                                    gex->cell_names, gex->X->nrows);
-    if (filter_avg_Sigma == NULL) {
-        fprintf(stderr, "ERROR: failed to compute the average tree covariance matrix.\n");
-        return 1;
-    }
 
     /* Pre-process the gene expression data */
     if (preprocess) {

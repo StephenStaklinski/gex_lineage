@@ -163,16 +163,10 @@ int main(int argc, char *argv[]) {
 
     /* Load the input trees */
     trees = read_nexus(trees_file, &n_trees);
-    if (trees == NULL || n_trees < 1 || trees[0] == NULL) {
-        fprintf(stderr, "ERROR: failed to load tree(s).\n");
-        return 1;
-    }
-    printf("Loaded %d tree(s).\n", n_trees);
-
-    /* Check that the input trees are ultrametric (required for cell lineage) */
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
     }
+    printf("Loaded %d tree(s).\n", n_trees);
 
     /* Use the same unit-height time scale for every simulation. */
     uniform_rescale_trees(trees, n_trees, 1.0);
