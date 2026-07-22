@@ -15,76 +15,97 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    const char *name;
+    int index;
+} TipNameIndex;
 
+typedef struct {
+    int *indices;
+    int size;
+} TipIndexSet;
 
+static int compare_tip_names(const void *a, const void *b) {
+    const TipNameIndex *x = a;
+    const TipNameIndex *y = b;
+    return strcmp(x->name, y->name);
+}
 
-/* Find the most recent common ancestor (MRCA) of two nodes in a tree.
-Returns a pointer to the MRCA node or NULL if no common ancestor is found. */
-static TreeNode *find_mrca(TreeNode *a, TreeNode *b) {
-    TreeNode *anc;
-    TreeNode *cur;
+static int lookup_tip_index(TipNameIndex *name_index, int n, const char *name) {
+    int lo = 0;
+    int hi = n - 1;
 
-    if (a == NULL || b == NULL)
-        return NULL;
-
-    for (anc = a; anc != NULL; anc = anc->parent) {
-        for (cur = b; cur != NULL; cur = cur->parent) {
-            if (anc == cur)
-                return anc;
-        }
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        int cmp = strcmp(name, name_index[mid].name);
+        if (cmp == 0)
+            return name_index[mid].index;
+        if (cmp < 0)
+            hi = mid - 1;
+        else
+            lo = mid + 1;
     }
-
-    return NULL;
+    return -1;
 }
 
-/* Fill the depth array with the depth from the origin to each node in the tree. 
-Sets the depth for each node in the array. Returns 0 on success, -1 on failure. */
-static int fill_node_depths(TreeNode *node, double *depth_by_id, int nnodes, double depth) {
-    if (node == NULL)
-        return 0;
+/* A pair of tips first occurs in opposite child sets at its MRCA. Filling
+   those cross-products during one postorder traversal avoids a separate
+   ancestor search for every covariance entry. */
+static void fill_covariance_postorder(TreeNode *node,
+                                      double depth,
+                                      TipNameIndex *name_index,
+                                      int n,
+                                      int *matched,
+                                      Matrix *Sigma,
+                                      TipIndexSet *out) {
+    TipIndexSet left = {NULL, 0};
+    TipIndexSet right = {NULL, 0};
+    int i, j;
 
-    if (node->id < 0 || node->id >= nnodes)
-        return -1;
-
-    depth_by_id[node->id] = depth;
-
-    if (fill_node_depths(node->lchild,
-                                  depth_by_id,
-                                  nnodes,
-                                  depth + (node->lchild ? node->lchild->dparent : 0.0)) != 0)
-        return -1;
-    if (fill_node_depths(node->rchild,
-                                  depth_by_id,
-                                  nnodes,
-                                  depth + (node->rchild ? node->rchild->dparent : 0.0)) != 0)
-        return -1;
-
-    return 0;
-}
-
-static void fill_tip_map(TreeNode *node,
-                            char **names,
-                            int n,
-                            TreeNode **tips) {
-    int i;
-
+    out->indices = NULL;
+    out->size = 0;
     if (node == NULL)
         return;
 
-    /* Check if the node is a leaf */
     if (node->lchild == NULL && node->rchild == NULL) {
-        for (i = 0; i < n; i++) {
-            if (tips[i] == NULL && node->name != NULL &&
-                strcmp(node->name, names[i]) == 0) {
-                tips[i] = node;
-                break;
-            }
+        int index = lookup_tip_index(name_index, n, node->name);
+        if (index >= 0) {
+            if (matched[index])
+                die("ERROR: duplicate tree tip '%s'.\n", node->name);
+            matched[index] = 1;
+            mat_set(Sigma, index, index, depth);
+            out->indices = smalloc(sizeof(int));
+            out->indices[0] = index;
+            out->size = 1;
         }
         return;
     }
 
-    fill_tip_map(node->lchild, names, n, tips);
-    fill_tip_map(node->rchild, names, n, tips);
+    fill_covariance_postorder(node->lchild,
+                              depth + (node->lchild ? node->lchild->dparent : 0.0),
+                              name_index, n, matched, Sigma, &left);
+    fill_covariance_postorder(node->rchild,
+                              depth + (node->rchild ? node->rchild->dparent : 0.0),
+                              name_index, n, matched, Sigma, &right);
+
+    for (i = 0; i < left.size; i++) {
+        for (j = 0; j < right.size; j++) {
+            mat_set(Sigma, left.indices[i], right.indices[j], depth);
+            mat_set(Sigma, right.indices[j], left.indices[i], depth);
+        }
+    }
+
+    out->size = left.size + right.size;
+    if (out->size > 0) {
+        out->indices = smalloc((size_t)out->size * sizeof(int));
+        if (left.size > 0)
+            memcpy(out->indices, left.indices, (size_t)left.size * sizeof(int));
+        if (right.size > 0)
+            memcpy(out->indices + left.size, right.indices,
+                   (size_t)right.size * sizeof(int));
+    }
+    free(left.indices);
+    free(right.indices);
 }
 
 
@@ -93,10 +114,14 @@ Covariance is the distance from root to MRCA for each pair of tips.
 Tips are matched to the order of the input names.
 Returns a pointer to the allocated covariance matrix or NULL on failure. */
 Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
-    int i, j;
+    int i;
     Matrix *Sigma = NULL;   /* Phylogenetic covariance matrix */
-    TreeNode **tips = NULL;
-    double *depth_by_id = NULL;
+    TipNameIndex *name_index = NULL;
+    TipIndexSet root_tips = {NULL, 0};
+    int *matched = NULL;
+
+    if (tree == NULL || names == NULL || n <= 0)
+        return NULL;
 
     /* Check that the leading origin to root node branch exists */
     if (tree->dparent < 0.0) {
@@ -104,51 +129,31 @@ Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
         return NULL;
     }
 
-    /* Fill the tip mapping from the input names to tips in the tree */
-    tips = scalloc(n, sizeof(TreeNode *));
-    fill_tip_map(tree, names, n, tips);
+    name_index = smalloc((size_t)n * sizeof(TipNameIndex));
+    matched = scalloc((size_t)n, sizeof(int));
     for (i = 0; i < n; i++) {
-        if (tips[i] == NULL) {
-            fprintf(stderr,
-                    "ERROR: could not find tip '%s' in tree.\n",
-                    names[i]);
-            return NULL;
-        }
+        name_index[i].name = names[i];
+        name_index[i].index = i;
+    }
+    qsort(name_index, (size_t)n, sizeof(TipNameIndex), compare_tip_names);
+    for (i = 1; i < n; i++) {
+        if (strcmp(name_index[i - 1].name, name_index[i].name) == 0)
+            die("ERROR: duplicate requested tip name '%s'.\n", name_index[i].name);
     }
 
-    /* Fill the node depth array with the depth from the origin to each node in the tree. 
-    This allows for fast lookup of MRCA depths when building the covariance matrix. */
-    tr_set_nnodes(tree);
-    depth_by_id = smalloc(tree->nnodes * sizeof(double));
-    if (fill_node_depths(tree, depth_by_id, tree->nnodes, tree->dparent) != 0) {
-        fprintf(stderr, "ERROR: failed to compute node depths.\n");
-        return NULL;
-    }
-
-    /* Fill the covariance matrix based on the depth to MRCA for each pair of tips.
-    The covariance between two tips is the depth from the origin to their MRCA. */
     Sigma = mat_new(n, n);
     mat_zero(Sigma);
-    double depth;
+    fill_covariance_postorder(tree, tree->dparent, name_index, n, matched,
+                              Sigma, &root_tips);
+
     for (i = 0; i < n; i++) {
-        mat_set(Sigma, i, i, depth_by_id[tips[i]->id]); /* Diagonal compares with self */
-        for (j = i + 1; j < n; j++) {
-            TreeNode *mrca = find_mrca(tips[i], tips[j]);
-
-            if (mrca == NULL || mrca->id < 0 || mrca->id >= tree->nnodes) {
-                fprintf(stderr, "ERROR: failed MRCA for '%s' and '%s'\n",
-                        tips[i]->name, tips[j]->name);
-                return NULL;
-            }
-
-            depth = depth_by_id[mrca->id];
-            mat_set(Sigma, i, j, depth);
-            mat_set(Sigma, j, i, depth); /* Make the covariance matrix symmetric */
-        }
+        if (!matched[i])
+            die("ERROR: could not find tip '%s' in tree.\n", names[i]);
     }
 
-    free(depth_by_id);
-    free(tips);
+    free(root_tips.indices);
+    free(matched);
+    free(name_index);
     return Sigma;
 }
 
@@ -280,4 +285,3 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
 
     return res;
 }
-
