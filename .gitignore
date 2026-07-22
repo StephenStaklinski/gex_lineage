@@ -10,6 +10,5 @@
 
 bin
 build
-lib
 local_install.sh
 test_run.sh

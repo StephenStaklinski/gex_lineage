@@ -225,7 +225,7 @@ Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
         return NULL;
 
     int i, j;
-    int tol = 1e-12;  /* Tolerance for checking if sigma2s are the same across cols for MVN reuse */
+    double tol = 1e-12;  /* Tolerance for checking if sigma2s are the same across cols for MVN reuse */
     int n_rows = Sigmas[0]->nrows; /* Assume all Sigmas have the same number of rows */
     Matrix *res = mat_new(n_rows, n_cols);
     mat_zero(res);
