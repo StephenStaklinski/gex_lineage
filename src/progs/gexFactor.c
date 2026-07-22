@@ -26,7 +26,7 @@ static void usage(const char *progname) {
         "[--no-scale-constraint] [--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--no-post-hoc-identifiability] [--no-write-latent-flow] "
-        "[--seed S] [--nthreads N]\n",
+        "[--seed S]\n",
         progname);
 }
 
@@ -44,7 +44,6 @@ int main(int argc, char *argv[]) {
     int write_latent_flow = 1; /* If nonzero, write latent factors for tips and reconstructed internal nodes. */
     int constrain_L_scale = 1; /* If nonzero, constrain each L row to unit norm. */
     int apply_post_hoc_identifiability = 1; /* If nonzero, apply post-hoc sign and permutation identifiability fixes. */
-    int nthreads = 1;   /* Number of OpenMP threads to use */
 
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
@@ -57,6 +56,7 @@ int main(int argc, char *argv[]) {
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
     set_seed(-1); /* Random seed, for now */
+    set_num_threads(1); /* Keep OpenMP and BLAS/LAPACK single-threaded for now. */
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trees") == 0) {
@@ -135,17 +135,6 @@ int main(int argc, char *argv[]) {
             }
             set_seed((unsigned int)atoi(argv[++i]));
         }
-        else if (strcmp(argv[i], "--nthreads") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            nthreads = atoi(argv[++i]);
-            if (nthreads <= 0) {
-                fprintf(stderr, "ERROR: thread count must be positive.\n");
-                return 1;
-            }
-        }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;   /* Success since user just wants cli help */
@@ -165,17 +154,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "ERROR: --dim must be specified and positive.\n");
         return 1;
     }
-
-    if (nthreads < 1) {
-        fprintf(stderr, "ERROR: --nthreads must be positive.\n");
-        return 1;
-    }
-
-    if (nthreads > 1 && !has_thread_control()) {
-        fprintf(stderr, "ERROR: this build does not support OpenMP or BLAS thread control.\n");
-        return 1;
-    }
-    set_num_threads(nthreads);
 
     /* Load the input trees */
     trees = read_nexus(trees_file, &n_trees);

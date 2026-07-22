@@ -47,7 +47,7 @@ static void usage(const char *progname) {
         "[--tree-total-time T] [--tree-index N] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] [--remove-ribo-mito-genes] "
-        "[--no-preprocess] [--seed S] [--nthreads N]\n",
+        "[--no-preprocess] [--seed S]\n",
         progname);
 }
 
@@ -64,7 +64,6 @@ int main(int argc, char *argv[]) {
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     int preprocess = 1; /* If nonzero, normalize, log-transform, and center before filtering. */
     int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before filtering. */
-    int nthreads = 1;   /* Number of OpenMP threads to use */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
 
     /* Data structures for calculations later */
@@ -78,6 +77,7 @@ int main(int argc, char *argv[]) {
     int n_trees = 0;    /* Number of input trees */
     int i;  /* Pre-allocated generic loop index variable */
     set_seed(-1); /* Random seed, for now */
+    set_num_threads(1); /* Keep OpenMP and BLAS/LAPACK single-threaded for now. */
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trees") == 0) {
@@ -152,17 +152,6 @@ int main(int argc, char *argv[]) {
             }
             set_seed((unsigned int)atoi(argv[++i]));
         }
-        else if (strcmp(argv[i], "--nthreads") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            nthreads = atoi(argv[++i]);
-            if (nthreads <= 0) {
-                fprintf(stderr, "ERROR: thread count must be positive.\n");
-                return 1;
-            }
-        }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;   /* Success since user just wants cli help */
@@ -178,17 +167,6 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
         return 1;
     }
-
-    if (nthreads < 1) {
-        fprintf(stderr, "ERROR: --nthreads must be positive.\n");
-        return 1;
-    }
-
-    if (nthreads > 1 && !has_thread_control()) {
-        fprintf(stderr, "ERROR: this build does not support OpenMP or BLAS thread control.\n");
-        return 1;
-    }
-    set_num_threads(nthreads);
 
     /* Load the input trees */
     trees = read_nexus(trees_file, &n_trees);
