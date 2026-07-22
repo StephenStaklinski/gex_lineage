@@ -22,7 +22,7 @@ static void usage(const char *progname) {
     fprintf(stderr,
         "Usage: %s --trees <trees.nex> --expr <filtered.tsv> "
         "--outprefix <prefix> --dim K "
-        "[--tree-total-time T] [--tree-index N] "
+        "[--tree-index N] "
         "[--no-scale-constraint] [--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--no-post-hoc-identifiability] [--no-write-latent-flow] "
@@ -36,7 +36,6 @@ int main(int argc, char *argv[]) {
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
-    double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double L_loading_overlap_strength = 0.0;  /* Strength of absolute L-row loading-overlap penalty; 0 disables it. */
@@ -79,13 +78,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
-        }
-        else if (strcmp(argv[i], "--tree-total-time") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            tree_total_time = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--tree-index") == 0) {
             if (i + 1 >= argc) {
@@ -200,11 +192,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Rescale the trees to a specified total height if requested */
-    if (tree_total_time > 0.0) {
-        uniform_rescale_trees(trees, n_trees, tree_total_time);
-        printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
-    }
+    /* Use the same unit-height time scale for every factor-model run. */
+    uniform_rescale_trees(trees, n_trees, 1.0);
+    printf("Rescaled tree(s) to total height 1.0.\n");
 
     /* The first tree initializes maxPhyloPCA. The factor model itself receives
        and fits against every input tree. */

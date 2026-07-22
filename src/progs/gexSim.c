@@ -24,7 +24,6 @@ static void usage(const char *progname) {
         "Usage: %s "
         "--trees <trees.nex> "
         "--outprefix <prefix> "
-        "[--tree-total-time T] "
         "[--n-genes N] "
         "[--L-l2-norm <csv>] "
         "[--desired-tip-var <csv> ] "
@@ -44,7 +43,6 @@ int main(int argc, char *argv[]) {
     /* Data structures to store user inputs and other default parameters */
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *outprefix = NULL;   /* Prefix for all output files */
-    double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int n_genes = 100; /* Number of genes to simulate */
     double desired_L_l2_norm = 1.0; /* Default desired L l2 norm for latent factors */
     int k = 5; /* Number of latent factors to simulate */
@@ -86,13 +84,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
-        }
-        else if (strcmp(argv[i], "--tree-total-time") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            tree_total_time = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--n-genes") == 0) {
             if (i + 1 >= argc) {
@@ -183,11 +174,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Rescale the trees to a specified total height if requested */
-    if (tree_total_time > 0.0) {
-        uniform_rescale_trees(trees, n_trees, tree_total_time);
-        printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
-    }
+    /* Use the same unit-height time scale for every simulation. */
+    uniform_rescale_trees(trees, n_trees, 1.0);
+    printf("Rescaled tree(s) to total height 1.0.\n");
 
     /* Set the cell names in the gene expression matrix */
     List *leaf_names = tr_leaf_names(trees[0]);

@@ -44,7 +44,7 @@ static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
 static void usage(const char *progname) {
     fprintf(stderr,
         "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> "
-        "[--tree-total-time T] [--tree-index N] "
+        "[--tree-index N] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] [--remove-ribo-mito-genes] "
         "[--no-preprocess] [--seed S]\n",
@@ -60,7 +60,6 @@ int main(int argc, char *argv[]) {
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Test used to retain phylogenetically informative genes. */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
-    double tree_total_time = 1.0;  /* If positive, rescale all trees uniformly to have this total height. */
     int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     int preprocess = 1; /* If nonzero, normalize, log-transform, and center before filtering. */
     int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before filtering. */
@@ -100,13 +99,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
-        }
-        else if (strcmp(argv[i], "--tree-total-time") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            tree_total_time = atof(argv[++i]);
         }
         else if (strcmp(argv[i], "--tree-index") == 0) {
             if (i + 1 >= argc) {
@@ -215,11 +207,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Rescale the trees to a specified total height if requested */
-    if (tree_total_time > 0.0) {
-        uniform_rescale_trees(trees, n_trees, tree_total_time);
-        printf("Rescaled tree(s) to total height %.6f.\n", tree_total_time);
-    }
+    /* Use the same unit-height time scale for every filtering run. */
+    uniform_rescale_trees(trees, n_trees, 1.0);
+    printf("Rescaled tree(s) to total height 1.0.\n");
 
     /* Filtering always uses one covariance matrix averaged across all trees. */
     filter_avg_Sigma = gex_average_tree_covariance(trees, n_trees,
