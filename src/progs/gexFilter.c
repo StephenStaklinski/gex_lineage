@@ -14,27 +14,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Parse the filter mode from a string. Sets pointer to mode_out.
-Returns 0 on success or -1 on failure. */
-static int parse_filter_mode(const char *s, GexFilterMode *mode_out) {
+/* Parse the complete filtering test selection. */
+static int parse_filter_test(const char *s,
+                             GexFilterMode *mode_out,
+                             GexLRTAltMode *lrt_alt_out) {
     if (strcmp(s, "moran") == 0) {
         *mode_out = GEX_FILTER_MORAN;
         return 0;
     }
-    if (strcmp(s, "lrt") == 0) {
+    if (strcmp(s, "lrt-lambda") == 0) {
         *mode_out = GEX_FILTER_LRT;
+        *lrt_alt_out = GEX_LRT_ALT_LAMBDA;
         return 0;
     }
-    return -1;
-}
-
-static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
-    if (strcmp(s, "full") == 0) {
-        *mode_out = GEX_LRT_ALT_FULL;
-        return 0;
-    }
-    if (strcmp(s, "lambda") == 0) {
-        *mode_out = GEX_LRT_ALT_LAMBDA;
+    if (strcmp(s, "lrt-full") == 0) {
+        *mode_out = GEX_FILTER_LRT;
+        *lrt_alt_out = GEX_LRT_ALT_FULL;
         return 0;
     }
     return -1;
@@ -44,8 +39,8 @@ static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
 static void usage(const char *progname) {
     fprintf(stderr,
         "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> "
-        "[--filter-test lrt|moran] "
-        "[--lrt-alt lambda|full] [--remove-ribo-mito-genes] "
+        "[--filter-test moran|lrt-lambda|lrt-full] "
+        "[--remove-ribo-mito-genes] "
         "[--no-preprocess] [--seed S]\n",
         progname);
 }
@@ -103,18 +98,8 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
                 return 1;
             }
-            if (parse_filter_mode(argv[++i], &filter_mode) != 0) {
-                fprintf(stderr, "ERROR: --filter-test must be one of moran or lrt\n");
-                return 1;
-            }
-        }
-        else if (strcmp(argv[i], "--lrt-alt") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            if (parse_lrt_alt_mode(argv[++i], &lrt_alt_mode) != 0) {
-                fprintf(stderr, "ERROR: --lrt-alt must be one of full, lambda\n");
+            if (parse_filter_test(argv[++i], &filter_mode, &lrt_alt_mode) != 0) {
+                fprintf(stderr, "ERROR: --filter-test must be one of moran, lrt-lambda, or lrt-full\n");
                 return 1;
             }
         }
