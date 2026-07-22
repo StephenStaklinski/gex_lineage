@@ -44,7 +44,6 @@ static int parse_lrt_alt_mode(const char *s, GexLRTAltMode *mode_out) {
 static void usage(const char *progname) {
     fprintf(stderr,
         "Usage: %s --trees <trees.nex> --expr <matrix.tsv> --outprefix <prefix> "
-        "[--tree-index N] "
         "[--filter-test lrt|moran] "
         "[--lrt-alt lambda|full] [--remove-ribo-mito-genes] "
         "[--no-preprocess] [--seed S]\n",
@@ -60,7 +59,6 @@ int main(int argc, char *argv[]) {
     GexFilterMode filter_mode = GEX_FILTER_LRT;   /* Test used to retain phylogenetically informative genes. */
     double max_q = 0.05;  /* False discovery rate for multiple testing correction */
     int n_perms = 1000; /* Number of permutations for monte-carlo based permutation tests */
-    int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     int preprocess = 1; /* If nonzero, normalize, log-transform, and center before filtering. */
     int remove_ribo_mito_genes = 0; /* If nonzero, remove ribosomal and mitochondrial genes before filtering. */
     GexLRTAltMode lrt_alt_mode = GEX_LRT_ALT_LAMBDA;   /* Which alternative model to use for the Brownian LRT */
@@ -99,17 +97,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
-        }
-        else if (strcmp(argv[i], "--tree-index") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            tree_index = atoi(argv[++i]);
-            if (tree_index <= 0) {
-                fprintf(stderr, "ERROR: --tree-index must be a positive 1-based integer.\n");
-                return 1;
-            }
         }
         else if (strcmp(argv[i], "--filter-test") == 0) {
             if (i + 1 >= argc) {
@@ -167,16 +154,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("Loaded %d tree(s).\n", n_trees);
-    if (tree_index > 0) {
-        int loaded_trees = n_trees;
-        if (keep_one_tree(trees, &n_trees, tree_index) != 0) {
-            fprintf(stderr, "ERROR: --tree-index %d is out of range for %d loaded tree(s).\n",
-                    tree_index, loaded_trees);
-            return 1;
-        }
-        printf("Keeping only tree %d from the input NEXUS.\n", tree_index);
-    }
-
     /* Check that the input trees are ultrametric (required for cell lineage) */
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;

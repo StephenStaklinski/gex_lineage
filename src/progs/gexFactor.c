@@ -22,7 +22,6 @@ static void usage(const char *progname) {
     fprintf(stderr,
         "Usage: %s --trees <trees.nex> --expr <filtered.tsv> "
         "--outprefix <prefix> --dim K "
-        "[--tree-index N] "
         "[--no-scale-constraint] [--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--no-post-hoc-identifiability] [--no-write-latent-flow] "
@@ -36,7 +35,6 @@ int main(int argc, char *argv[]) {
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
-    int tree_index = 0;    /* If positive, keep only this 1-based tree from the input NEXUS. */
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double L_loading_overlap_strength = 0.0;  /* Strength of absolute L-row loading-overlap penalty; 0 disables it. */
     int k = 0;  /* Number of latent factors to fit. */
@@ -78,17 +76,6 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
-        }
-        else if (strcmp(argv[i], "--tree-index") == 0) {
-            if (i + 1 >= argc) {
-                usage(argv[0]);
-                return 1;
-            }
-            tree_index = atoi(argv[++i]);
-            if (tree_index <= 0) {
-                fprintf(stderr, "ERROR: --tree-index must be a positive 1-based integer.\n");
-                return 1;
-            }
         }
         else if (strcmp(argv[i], "--L-l1-strength") == 0) {
             if (i + 1 >= argc) {
@@ -154,16 +141,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     printf("Loaded %d tree(s).\n", n_trees);
-    if (tree_index > 0) {
-        int loaded_trees = n_trees;
-        if (keep_one_tree(trees, &n_trees, tree_index) != 0) {
-            fprintf(stderr, "ERROR: --tree-index %d is out of range for %d loaded tree(s).\n",
-                    tree_index, loaded_trees);
-            return 1;
-        }
-        printf("Keeping only tree %d from the input NEXUS.\n", tree_index);
-    }
-
     if (L_l1_strength < 0.0) {
         fprintf(stderr, "ERROR: --L-l1-strength must be nonnegative (0 disables L1 regularization)\n");
         return 1;
