@@ -82,10 +82,12 @@ static void fill_covariance_postorder(TreeNode *node,
     }
 
     fill_covariance_postorder(node->lchild,
-                              depth + (node->lchild ? node->lchild->dparent : 0.0),
+                              depth + (node->lchild ?
+                                  max(node->lchild->dparent, 1e-8) : 0.0),
                               name_index, n, matched, Sigma, &left);
     fill_covariance_postorder(node->rchild,
-                              depth + (node->rchild ? node->rchild->dparent : 0.0),
+                              depth + (node->rchild ?
+                                  max(node->rchild->dparent, 1e-8) : 0.0),
                               name_index, n, matched, Sigma, &right);
 
     for (i = 0; i < left.size; i++) {
@@ -110,7 +112,8 @@ static void fill_covariance_postorder(TreeNode *node,
 
 
 /* Calculate the phylogenetic covariance matrix for an input tree.
-Covariance is the distance from root to MRCA for each pair of tips. 
+Covariance is the distance from root to MRCA for each pair of tips. Non-root
+branches are floored at 1e-8, matching the Brownian pruning calculations.
 Tips are matched to the order of the input names.
 Returns a pointer to the allocated covariance matrix or NULL on failure. */
 Matrix *covariance_from_tree(TreeNode *tree, char **names, int n) {
