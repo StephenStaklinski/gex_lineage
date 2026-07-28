@@ -2,6 +2,7 @@
 
 #include "adam.h"
 #include "brownian.h"
+#include "external_libs.h"
 #include "pca.h"
 #include "misc.h"
 
@@ -386,7 +387,7 @@ static double brownian_prior_from_pruning_arrays(Matrix *F,
                                                            adjoints[t],
                                                            f_d,
                                                            sigma2_d,
-                                                           tree_grads[t],
+                                                           grad_F != NULL ? tree_grads[t] : NULL,
                                                            &quad_terms[t]);
             prior_log_terms[t] = -neglog;
         }
@@ -711,13 +712,16 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     double obj = 0.0;   /* Objective function value */
 
     /* Zero gradients */
-    mat_zero(grad_F);
-    mat_zero(grad_L);
+    if (grad_F != NULL)
+        mat_zero(grad_F);
+    if (grad_L != NULL)
+        mat_zero(grad_L);
     if (grad_log_sigma_latent != NULL) {
         for (d = 0; d < k; d++)
             grad_log_sigma_latent[d] = 0.0;
     }
-    *grad_log_sigma_obs = 0.0;
+    if (grad_log_sigma_obs != NULL)
+        *grad_log_sigma_obs = 0.0;
 
     /* Add the likelihood from the gaussian observation model X_ij ~ N((FL)_ij, sigma2_obs)
     and accumulate the gradients w.r.t. F and log(sigma2_obs). */
@@ -762,94 +766,153 @@ static double gex_model_objective_and_grad(GexLatentBrownianModel *model,
     return obj;
 }
 
+typedef struct {
+    Matrix *U;       /* Eigenvectors of the tree covariance. */
+    Vector *eval;    /* Eigenvalues of the tree covariance. */
+    Matrix *A;       /* L L^T, k x k. */
+    Matrix *C;       /* X L^T, n x k. */
+    Matrix *R;       /* U^T X L^T, n x k. */
+    Matrix *Y;       /* U^T F, n x k. */
+    double *chol;    /* Column-major k x k Cholesky workspace. */
+    double *rhs;     /* Length-k solve/output workspace. */
+    double *tmp;     /* Length-k forward-solve workspace. */
+    int n;
+    int k;
+} FWorkspace;
+
+static void free_F_workspace(FWorkspace *work) {
+    if (work == NULL)
+        return;
+    if (work->U != NULL) mat_free(work->U);
+    if (work->eval != NULL) vec_free(work->eval);
+    if (work->A != NULL) mat_free(work->A);
+    if (work->C != NULL) mat_free(work->C);
+    if (work->R != NULL) mat_free(work->R);
+    if (work->Y != NULL) mat_free(work->Y);
+    free(work->chol);
+    free(work->rhs);
+    free(work->tmp);
+    free(work);
+}
+
+static FWorkspace *init_F_workspace(
+        TreeNode *tree,
+        char **cell_names,
+        int n,
+        int k) {
+    FWorkspace *work = NULL;
+    Matrix *K = NULL;
+
+    if (tree == NULL || cell_names == NULL || n <= 0 || k <= 0)
+        return NULL;
+
+    work = scalloc(1, sizeof(FWorkspace));
+    work->n = n;
+    work->k = k;
+
+    K = covariance_from_tree(tree, cell_names, n);
+    if (K == NULL) {
+        free_F_workspace(work);
+        return NULL;
+    }
+
+    work->U = mat_new(n, n);
+    work->eval = vec_new(n);
+    if (mat_diagonalize_sym(K, work->eval, work->U) != 0) {
+        mat_free(K);
+        free_F_workspace(work);
+        return NULL;
+    }
+    mat_free(K);
+
+    work->A = mat_new(k, k);
+    work->C = mat_new(n, k);
+    work->R = mat_new(n, k);
+    work->Y = mat_new(n, k);
+    work->chol = scalloc((size_t)k * (size_t)k, sizeof(double));
+    work->rhs = scalloc(k, sizeof(double));
+    work->tmp = scalloc(k, sizeof(double));
+    return work;
+}
+
+/* Set F to its exact conditional optimum for the current L and variances.
+   The tree eigensystem and all large workspaces are cached across calls. */
 static int update_F_closed_form(GexLatentBrownianModel *model,
                                 Matrix *Xc,
-                                TreeNode *tree,
-                                char **cell_names) {
+                                FWorkspace *work) {
+    const double eig_floor = 1e-12;
+    const char uplo = 'L';
+    LAPACK_INT lapack_k;
+    LAPACK_INT info;
+    double sigma2_obs;
     int i, a, b, d;
     int n;
     int k;
-    double sigma2_obs;
-    const double eig_floor = 1e-12;
-    Matrix *K = NULL;
-    Matrix *U = NULL;
-    Matrix *Ut = NULL;
-    Matrix *A = NULL;
-    Matrix *C = NULL;
-    Matrix *R = NULL;
-    Matrix *Y = NULL;
-    Matrix *M = NULL;
-    Matrix *M_inv = NULL;
-    Vector *eval = NULL;
 
-    if (model == NULL || Xc == NULL || tree == NULL || cell_names == NULL)
+    if (model == NULL || Xc == NULL || work == NULL)
         return -1;
 
     n = model->n_cells;
     k = model->k;
+    if (work->n != n || work->k != k)
+        return -1;
+
     sigma2_obs = exp(model->log_sigma2_obs);
+    lapack_k = (LAPACK_INT)k;
 
-    K = covariance_from_tree(tree, cell_names, n);
-    if (K == NULL)
-        return -1;
-
-    U = mat_new(n, n);
-    eval = vec_new(n);
-    if (mat_diagonalize_sym(K, eval, U) != 0)
-        return -1;
-
-    Ut = mat_transpose(U);
-    A = mat_new(k, k);
-    C = mat_new(n, k);
-    R = mat_new(n, k);
-    Y = mat_new(n, k);
-    M = mat_new(k, k);
-    M_inv = mat_new(k, k);
-
-    mat_mult_lapack_transpose(A, model->L, 0, model->L, 1);
-    mat_mult_lapack_transpose(C, Xc, 0, model->L, 1);
-    mat_mult_lapack(R, Ut, C);
+    mat_mult_lapack_transpose(work->A, model->L, 0, model->L, 1);
+    mat_mult_lapack_transpose(work->C, Xc, 0, model->L, 1);
+    mat_mult_lapack_transpose(work->R, work->U, 1, work->C, 0);
 
     for (i = 0; i < n; i++) {
-        double lambda = vec_get(eval, i);
+        double lambda = vec_get(work->eval, i);
         double coef;
 
         if (lambda < eig_floor)
             lambda = eig_floor;
         coef = lambda / sigma2_obs;
 
-        for (a = 0; a < k; a++) {
-            for (b = 0; b < k; b++) {
-                double val = coef * mat_get(A, a, b);
+        /* LAPACK expects column-major storage. */
+        for (b = 0; b < k; b++) {
+            for (a = 0; a < k; a++) {
+                double val = coef * mat_get(work->A, a, b);
                 if (a == b)
                     val += exp(-model->log_sigma2_latent[a]);
-                mat_set(M, a, b, val);
+                work->chol[a + b * k] = val;
             }
         }
 
-        if (mat_invert(M_inv, M) != 0)
+        dpotrf_(&uplo, &lapack_k, work->chol, &lapack_k, &info);
+        if (info != 0) {
+            fprintf(stderr,
+                    "ERROR: Cholesky solve failed while updating F "
+                    "(tree eigenmode %d, LAPACK info=%d).\n",
+                    i + 1, (int)info);
             return -1;
+        }
 
+        for (d = 0; d < k; d++)
+            work->rhs[d] = coef * mat_get(work->R, i, d);
+
+        /* Solve chol * tmp = rhs. */
         for (d = 0; d < k; d++) {
-            double val = 0.0;
-            for (a = 0; a < k; a++)
-                val += mat_get(M_inv, d, a) * coef * mat_get(R, i, a);
-            mat_set(Y, i, d, val);
+            double val = work->rhs[d];
+            for (a = 0; a < d; a++)
+                val -= work->chol[d + a * k] * work->tmp[a];
+            work->tmp[d] = val / work->chol[d + d * k];
+        }
+
+        /* Solve chol^T * rhs = tmp. */
+        for (d = k - 1; d >= 0; d--) {
+            double val = work->tmp[d];
+            for (a = d + 1; a < k; a++)
+                val -= work->chol[a + d * k] * work->rhs[a];
+            work->rhs[d] = val / work->chol[d + d * k];
+            mat_set(work->Y, i, d, work->rhs[d]);
         }
     }
 
-    mat_mult_lapack(model->F, U, Y);
-
-    mat_free(K);
-    mat_free(U);
-    mat_free(Ut);
-    mat_free(A);
-    mat_free(C);
-    mat_free(R);
-    mat_free(Y);
-    mat_free(M);
-    mat_free(M_inv);
-    vec_free(eval);
+    mat_mult_lapack(model->F, work->U, work->Y);
     return 0;
 }
 
@@ -1251,6 +1314,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double **prune_vars = NULL;
     double **prune_adjoints = NULL;
     double **tree_grads = NULL;
+    FWorkspace *f_workspace = NULL;
 
     /* Gradients */
     double *grad_log_sigma_latent = NULL;   /* Gradients of log latent noise standard deviations */
@@ -1261,7 +1325,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     double *v_log_sigma_latent = NULL;  /* Adam optimizer variance estimates for latent noise */
     double m_log_sigma_obs = 0.0;   /* Adam optimizer moment estimate for observation noise */
     double v_log_sigma_obs = 0.0;   /* Adam optimizer variance estimate for observation noise */
-    Matrix *grad_F = NULL, *grad_L = NULL, *mF = NULL, *vF = NULL, *mL = NULL, *vL = NULL;  /* Gradients and optimizer states */
+    Matrix *grad_F = NULL, *grad_L = NULL;
+    Matrix *mF = NULL, *vF = NULL, *mL = NULL, *vL = NULL;
     Matrix *residual_work = NULL; /* Reused observation residual scratch matrix */
 
     /* Other */
@@ -1270,6 +1335,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     FILE *logf = NULL;  /* Optimization log file */
     char log_path[4096]; /* Path to optimization log file */
     BestLatentBrownianState best_state;
+    int use_closed_form_F = (n_trees == 1);
 
     /* Open the log file an write a header */
     snprintf(log_path, sizeof(log_path), "%s.log", outprefix);
@@ -1336,8 +1402,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (constrain_L_scale)
         normalize_L_rows(model->L);
 
-    /* Bootstrap sigma2_obs from the centered expression scale before the
-       closed-form F initializer has an FL residual available. */
+    /* Bootstrap sigma2_obs from the centered expression scale before an FL
+       residual is available. */
     double sse = mat_sum_squared_entries(gex->X);
     model->log_sigma2_obs = log(sse / ((double)model->n_cells * model->n_genes));
     model->log_sigma2_obs = max(model->log_sigma2_obs, log(1e-6));
@@ -1376,19 +1442,24 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         }
     }
 
-    if (update_F_closed_form(model, gex->X, trees[0], gex->cell_names) != 0) {
-        fprintf(stderr, "ERROR: failed to initialize F in closed form.\n");
-        gex_free_latent_brownian_model(model);
-        free_best_latent_brownian_state(&best_state);
-        if (logf != NULL) fclose(logf);
-        free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
-                                     prune_means, prune_vars,
-                                     prune_adjoints, tree_grads, n_trees);
-        return NULL;
+    if (use_closed_form_F) {
+        f_workspace = init_F_workspace(trees[0], gex->cell_names, n_cells, k);
+        if (f_workspace == NULL ||
+            update_F_closed_form(model, gex->X, f_workspace) != 0) {
+            fprintf(stderr, "ERROR: failed to initialize F in closed form.\n");
+            free_F_workspace(f_workspace);
+            gex_free_latent_brownian_model(model);
+            free_best_latent_brownian_state(&best_state);
+            if (logf != NULL) fclose(logf);
+            free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
+                                         prune_means, prune_vars,
+                                         prune_adjoints, tree_grads, n_trees);
+            return NULL;
+        }
     }
 
     /* Reinitialize sigma2_obs from the residual sum of squares for the
-       closed-form initial F and current L. */
+       initialized F and current L. */
     mat_mult_lapack(model->FL, model->F, model->L);
     sse = 0.0;
     for (i = 0; i < model->n_cells; i++) {
@@ -1404,14 +1475,19 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     grad_log_sigma_latent = scalloc(k, sizeof(double));    /* Gradient of log latent variances */
     m_log_sigma_latent = scalloc(k, sizeof(double));   /* First moment of log latent variances */
     v_log_sigma_latent = scalloc(k, sizeof(double));   /* Second moment of log latent variances */
-    grad_F = mat_new(model->n_cells, k);    /* Gradient of latent coordinates */
+    if (!use_closed_form_F)
+        grad_F = mat_new(model->n_cells, k);
     grad_L = mat_new(k, model->n_genes);    /* Gradient of factor loadings */
     residual_work = mat_new(model->n_cells, model->n_genes);
-    mF = mat_new(model->n_cells, k);    /* First moment of latent coordinates */
-    vF = mat_new(model->n_cells, k);    /* Second moment of latent coordinates */
+    if (!use_closed_form_F) {
+        mF = mat_new(model->n_cells, k);
+        vF = mat_new(model->n_cells, k);
+        mat_zero(mF);
+        mat_zero(vF);
+    }
     mL = mat_new(k, model->n_genes);    /* First moment of factor loadings */
     vL = mat_new(k, model->n_genes);    /* Second moment of factor loadings */
-    mat_zero(mF); mat_zero(vF); mat_zero(mL); mat_zero(vL); /* Zero the gradient matrices */
+    mat_zero(mL); mat_zero(vL); /* Zero the optimizer states */
 
     /* Adam hyperparameters */
     double lr = 0.01;   /* Base learning rate */
@@ -1443,7 +1519,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         /* Reset clipping flag */
         clipping_on = 0;
 
-        /* Compute the objective function and gradients */
+        /* A single Gaussian tree prior permits profiling F out exactly. A
+           multi-tree mixture does not, so F remains an Adam parameter there. */
+        if (use_closed_form_F)
+            update_F_closed_form(model, gex->X, f_workspace);
+
+        /* Compute the objective and gradients of the free parameters. */
         model->objective = gex_model_objective_and_grad(model, gex->X, residual_work, trees,
                                                         postorders, n_postorders,
                                                         tip_index_by_id,
@@ -1457,7 +1538,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
             project_L_gradient(model->L, grad_L);
 
         /* Compute the gradient l2 norms */
-        grad_F_norm = mat_frobenius_norm(grad_F);
+        grad_F_norm = use_closed_form_F ? 0.0 :
+                                           mat_frobenius_norm(grad_F);
         grad_L_norm = mat_frobenius_norm(grad_L);
         grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
         grad_log_sigma_latent_norm = 0.0;
@@ -1468,8 +1550,10 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         grad_norm = grad_F_norm + grad_L_norm + grad_log_sigma_obs_norm + grad_log_sigma_latent_norm;
 
         /* Update gradient clipping thresholds */
-        clip_F = adam_update_clip_threshold(grad_F_norm, &ema_F_norm, step, clip_warmup,
-                                            clip_beta, clip_factor, clip_floor);
+        if (!use_closed_form_F)
+            clip_F = adam_update_clip_threshold(grad_F_norm, &ema_F_norm,
+                                                step, clip_warmup, clip_beta,
+                                                clip_factor, clip_floor);
         clip_L = adam_update_clip_threshold(grad_L_norm, &ema_L_norm, step, clip_warmup,
                                             clip_beta, clip_factor, clip_floor);
         clip_sigma_obs = adam_update_clip_threshold(grad_log_sigma_obs_norm, &ema_log_sigma_obs_norm,
@@ -1479,7 +1563,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
         /* Re-scale the gradients if their norm exceeds the clipping threshold and 
         recompute the norm for those that were rescaled */
-        if (adam_clip_matrix_by_norm(grad_F, grad_F_norm, clip_F)) {
+        if (!use_closed_form_F &&
+            adam_clip_matrix_by_norm(grad_F, grad_F_norm, clip_F)) {
             grad_F_norm = mat_frobenius_norm(grad_F);
             clipping_on |= 1;
         }
@@ -1538,7 +1623,9 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         /* Perturb the model parameters */
         pow_beta1 = pow(ADAM_BETA1, step);
         pow_beta2 = pow(ADAM_BETA2, step);
-        adam_step_matrix(model->F, grad_F, mF, vF, pow_beta1, pow_beta2, lr);
+        if (!use_closed_form_F)
+            adam_step_matrix(model->F, grad_F, mF, vF,
+                             pow_beta1, pow_beta2, lr);
         adam_step_matrix(model->L, grad_L, mL, vL, pow_beta1, pow_beta2, lr);
         adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
                          m_log_sigma_latent, v_log_sigma_latent,
@@ -1576,6 +1663,8 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     }
 
     /* Compute the final state objective and gradients. */
+    if (use_closed_form_F)
+        update_F_closed_form(model, gex->X, f_workspace);
     model->objective = gex_model_objective_and_grad(model, gex->X, residual_work, trees,
                                                     postorders, n_postorders,
                                                     tip_index_by_id,
@@ -1586,7 +1675,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     &grad_log_sigma_obs);
     if (constrain_L_scale)
         project_L_gradient(model->L, grad_L);
-    grad_F_norm = mat_frobenius_norm(grad_F);
+    grad_F_norm = use_closed_form_F ? 0.0 : mat_frobenius_norm(grad_F);
     grad_L_norm = mat_frobenius_norm(grad_L);
     grad_log_sigma_obs_norm = fabs(grad_log_sigma_obs);
     grad_log_sigma_latent_norm = 0.0;
@@ -1632,6 +1721,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
     if (vF != NULL) mat_free(vF);
     if (mL != NULL) mat_free(mL);
     if (vL != NULL) mat_free(vL);
+    free_F_workspace(f_workspace);
     free_best_latent_brownian_state(&best_state);
     if (logf != NULL) fclose(logf);
     free_brownian_pruning_arrays(postorders, n_postorders, tip_index_by_id,
