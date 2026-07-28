@@ -1491,6 +1491,7 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Adam hyperparameters */
     double lr = 0.01;   /* Base learning rate */
+    const double min_log_sigma2_latent = log(1e-6);
     double clip_beta = 0.98;
     double clip_factor = 2.0;
     double clip_floor = 7.0;
@@ -1533,6 +1534,18 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                         n_trees, grad_F, grad_L,
                                                         grad_log_sigma_latent,
                                                         &grad_log_sigma_obs);
+
+        /* At the lower variance boundary, suppress only gradients that point
+           outside the feasible region. A negative gradient can still move a
+           factor back above the boundary if it becomes supported later. */
+        for (d = 0; d < k; d++) {
+            if (model->log_sigma2_latent[d] <= min_log_sigma2_latent &&
+                grad_log_sigma_latent[d] > 0.0) {
+                model->log_sigma2_latent[d] = min_log_sigma2_latent;
+                grad_log_sigma_latent[d] = 0.0;
+                m_log_sigma_latent[d] = 0.0;
+            }
+        }
 
         if (constrain_L_scale)
             project_L_gradient(model->L, grad_L);
@@ -1630,6 +1643,12 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
         adam_step_vector(model->log_sigma2_latent, grad_log_sigma_latent,
                          m_log_sigma_latent, v_log_sigma_latent,
                          k, pow_beta1, pow_beta2, lr);
+        for (d = 0; d < k; d++) {
+            if (model->log_sigma2_latent[d] < min_log_sigma2_latent) {
+                model->log_sigma2_latent[d] = min_log_sigma2_latent;
+                m_log_sigma_latent[d] = 0.0;
+            }
+        }
         adam_step_scalar(&model->log_sigma2_obs, grad_log_sigma_obs,
                          &m_log_sigma_obs, &v_log_sigma_obs,
                          pow_beta1, pow_beta2, lr);
@@ -1673,6 +1692,11 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
                                                     n_trees, grad_F, grad_L,
                                                     grad_log_sigma_latent,
                                                     &grad_log_sigma_obs);
+    for (d = 0; d < k; d++) {
+        if (model->log_sigma2_latent[d] <= min_log_sigma2_latent &&
+            grad_log_sigma_latent[d] > 0.0)
+            grad_log_sigma_latent[d] = 0.0;
+    }
     if (constrain_L_scale)
         project_L_gradient(model->L, grad_L);
     grad_F_norm = use_closed_form_F ? 0.0 : mat_frobenius_norm(grad_F);
