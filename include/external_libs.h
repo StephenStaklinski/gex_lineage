@@ -32,6 +32,10 @@ void dtrtrs_(const char *uplo, const char *trans, const char *diag,
             LAPACK_DOUBLE *b, const LAPACK_INT *ldb,
             LAPACK_INT *info);
 
+void dpotrf_(const char *uplo, const LAPACK_INT *n,
+             LAPACK_DOUBLE *a, const LAPACK_INT *lda,
+             LAPACK_INT *info);
+
 void dgesdd_(const char *jobz,
              const LAPACK_INT *m, const LAPACK_INT *n,
              LAPACK_DOUBLE *a, const LAPACK_INT *lda,
