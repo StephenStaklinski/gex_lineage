@@ -1,4 +1,5 @@
 #include "pca.h"
+#include "parser.h"
 
 #include "external_libs.h"
 #include "gexmatrix.h"
@@ -11,6 +12,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <float.h>
+#include <string.h>
 
 
 typedef struct {
@@ -366,6 +368,75 @@ PCA *compute_max_phylo_pca(Matrix *X, Matrix *C, int k) {
     if (phylo_pca != NULL)
         free_pca(phylo_pca);
 
+    return out;
+}
+
+/* Read a gene-by-PC loading table written by write_pca_tsv and reorder its
+   genes to match the expression matrix. Only the first k components are used. */
+PCA *read_pca_initialization_tsv(const char *filename, GexMatrix *gex, int k) {
+    GexMatrix *table = NULL;
+    PCA *out = NULL;
+    int i, j, d;
+
+    if (filename == NULL || gex == NULL || gex->X == NULL || k <= 0)
+        return NULL;
+
+    table = read_gex_matrix(filename);
+    if (table == NULL)
+        return NULL;
+
+    if (table->X->ncols < k) {
+        fprintf(stderr,
+                "ERROR: PCA initialization has %d component(s), but --dim requires %d: %s\n",
+                table->X->ncols, k, filename);
+        gex_free_matrix_data(table);
+        return NULL;
+    }
+    if (table->X->nrows != gex->X->ncols) {
+        fprintf(stderr,
+                "ERROR: PCA initialization has %d gene(s), but expression has %d: %s\n",
+                table->X->nrows, gex->X->ncols, filename);
+        gex_free_matrix_data(table);
+        return NULL;
+    }
+
+    out = scalloc(1, sizeof(PCA));
+    out->K = k;
+    out->components = mat_new(k, gex->X->ncols);
+    out->eigenvalues = scalloc(k, sizeof(double));
+    out->var_explained = scalloc(k, sizeof(double));
+
+    for (j = 0; j < gex->X->ncols; j++) {
+        int matched_row = -1;
+
+        for (i = 0; i < table->X->nrows; i++) {
+            if (strcmp(gex->gene_names[j], table->cell_names[i]) == 0) {
+                if (matched_row >= 0) {
+                    fprintf(stderr,
+                            "ERROR: duplicate gene '%s' in PCA initialization: %s\n",
+                            gex->gene_names[j], filename);
+                    gex_free_matrix_data(table);
+                    free_pca(out);
+                    return NULL;
+                }
+                matched_row = i;
+            }
+        }
+
+        if (matched_row < 0) {
+            fprintf(stderr,
+                    "ERROR: expression gene '%s' is missing from PCA initialization: %s\n",
+                    gex->gene_names[j], filename);
+            gex_free_matrix_data(table);
+            free_pca(out);
+            return NULL;
+        }
+
+        for (d = 0; d < k; d++)
+            mat_set(out->components, d, j, mat_get(table->X, matched_row, d));
+    }
+
+    gex_free_matrix_data(table);
     return out;
 }
 

@@ -7,7 +7,7 @@
 #include <phast/trees.h>
 #include <phast/vector.h>
 
-TreeNode **read_nexus(const char *filename, int *n_trees);
+TreeNode **read_nexus(const char *filename, int *n_trees, int max_trees);
 
 int keep_one_tree(TreeNode **trees, int *n_trees, int tree_index);
 

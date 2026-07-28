@@ -38,13 +38,19 @@ The number of threads can be controlled with the -j option.
 
 ## Usage
 
-Filtering and factor-model fitting are exposed as separate programs. Run each
-with `--help` for its detailed options:
+Filtering, PCA initialization, and factor-model fitting are exposed as separate
+programs. Run each with `--help` for its detailed options:
 
 ```bash
 gexFilter --help
+gexPca --help
 gexFactor --help
 ```
+
+`gexPca` writes maxPhyloPCA results, including a
+`.pca.eigenvectors.tsv` loading matrix. Pass that matrix to
+`gexFactor --pca`; when `--pca` is omitted, `gexFactor` initializes its
+loadings randomly using the configured seed.
 
 ## Support
 

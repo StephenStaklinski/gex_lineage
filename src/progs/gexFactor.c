@@ -22,6 +22,7 @@ static void usage(const char *progname) {
     fprintf(stderr,
         "Usage: %s --trees <trees.nex> --expr <filtered.tsv> "
         "--outprefix <prefix> --dim K "
+        "[--pca <pca.eigenvectors.tsv>] "
         "[--no-scale-constraint] [--L-l1-strength S] "
         "[--L-loading-overlap-strength S] "
         "[--no-post-hoc-identifiability] [--no-write-latent-flow] "
@@ -35,6 +36,7 @@ int main(int argc, char *argv[]) {
     const char *trees_file = NULL;  /* Path to input NEXUS file containing trees */
     const char *expr_file = NULL;   /* Path to input tab-delimited file containing expression matrix */
     const char *outprefix = NULL;   /* Prefix for all output files */
+    const char *pca_file = NULL;    /* Optional saved PCA loadings used to initialize L. */
     double L_l1_strength = 0;  /* L1 regularization strength for loadings; 0 disables the penalty. */
     double L_loading_overlap_strength = 0.0;  /* Strength of absolute L-row loading-overlap penalty; 0 disables it. */
     int k = 0;  /* Number of latent factors to fit. */
@@ -45,8 +47,7 @@ int main(int argc, char *argv[]) {
     /* Data structures for calculations later */
     TreeNode **trees = NULL;    /* Array of tree pointers */
     GexMatrix *gex_filtered = NULL; /* Expression matrix */
-    Matrix *pca_Sigma = NULL; /* First-tree covariance used for maxPhyloPCA. */
-    PCA *pca = NULL; /* PCA results */
+    PCA *pca = NULL; /* Optional loaded PCA initialization. */
     GexLatentBrownianModel *model = NULL;   /* Fitted latent Brownian gene expression model */
     char **factor_names = NULL; /* Names assigned to fitted latent factors */
     int n_trees = 0;    /* Number of input trees */
@@ -75,6 +76,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             outprefix = argv[++i];
+        }
+        else if (strcmp(argv[i], "--pca") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 1;
+            }
+            pca_file = argv[++i];
         }
         else if (strcmp(argv[i], "--L-l1-strength") == 0) {
             if (i + 1 >= argc) {
@@ -143,7 +151,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Load the input trees */
-    trees = read_nexus(trees_file, &n_trees);
+    trees = read_nexus(trees_file, &n_trees, -1);
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
     }
@@ -163,37 +171,15 @@ int main(int argc, char *argv[]) {
     /* Use the same unit-height time scale for every factor-model run. */
     uniform_rescale_trees(trees, n_trees, 1.0);
 
-    /* The first tree initializes maxPhyloPCA. The factor model itself receives
-       and fits against every input tree. */
-    pca_Sigma = covariance_from_tree(trees[0], gex_filtered->cell_names, gex_filtered->X->nrows);
-
-    printf("Running maxPhyloPCA to initialize latent factors for the model...\n");
-    pca = compute_max_phylo_pca(gex_filtered->X, pca_Sigma, k);
-    write_pca_tsv(outprefix, pca, gex_filtered);
-
-    /* Check for technical accuracy of PCA during testing */
-    if (pca != NULL && pca->components != NULL) {
-        char pca_gram_path[4096];
-        char **pca_factor_names = scalloc(pca->K, sizeof(char *));
-        Matrix *pca_components_t = mat_transpose(pca->components);
-        Matrix *pca_gram = mat_new(pca->K, pca->K);
-
-        generate_names(pca_factor_names, pca->K, "PC");
-        mat_mult_lapack(pca_gram, pca->components, pca_components_t);
-
-        snprintf(pca_gram_path, sizeof(pca_gram_path), "%s.pca.eigenvector_gram.tsv", outprefix);
-        write_labeled_matrix_tsv(pca_gram_path, pca_gram,
-                                 pca_factor_names, pca->K,
-                                 pca_factor_names, pca->K,
-                                 "PC");
-
-        for (i = 0; i < pca->K; i++) {
-            if (pca_factor_names[i] != NULL)
-                free(pca_factor_names[i]);
+    if (pca_file != NULL) {
+        printf("Loading PCA initialization from %s...\n", pca_file);
+        pca = read_pca_initialization_tsv(pca_file, gex_filtered, k);
+        if (pca == NULL) {
+            fprintf(stderr, "ERROR: failed to load PCA initialization.\n");
+            return 1;
         }
-        free(pca_factor_names);
-        mat_free(pca_components_t);
-        mat_free(pca_gram);
+    } else {
+        printf("No PCA initialization supplied; using seeded random loadings.\n");
     }
 
     /* Fit the latent Brownian model */
@@ -316,9 +302,6 @@ int main(int argc, char *argv[]) {
     gex_free_matrix_data(gex_filtered);
     free_pca(pca);
     gex_free_latent_brownian_model(model);
-    if (pca_Sigma != NULL) {
-        mat_free(pca_Sigma);
-    }
 
     return 0;
 }

@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Load the input trees */
-    trees = read_nexus(trees_file, &n_trees);
+    trees = read_nexus(trees_file, &n_trees, -1);
     if (check_trees_ultrametric(trees, n_trees) != 0) {
         return 1;
     }

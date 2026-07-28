@@ -157,13 +157,12 @@ static int gex_split_tab_fields(char *line, char ***fields_out) {
     return count;
 }
 
-/* Read in NEXUS tree file and parse trees.
-Updates the n_trees pointer. Returns a pointer to the 
-array of tree pointers or NULL on failure. 
+/* Read up to max_trees trees from a NEXUS file. A max_trees value of -1
+means that every tree should be read.
 
 TODO: Make the function map names from the nexus file header
 the trees block since many NEXUS files have renamed taxa. */
-TreeNode **read_nexus(const char *filename, int *n_trees) {
+TreeNode **read_nexus(const char *filename, int *n_trees, int max_trees) {
     FILE *f;
     char line[4096];
     char *tree_record = NULL;
@@ -174,7 +173,8 @@ TreeNode **read_nexus(const char *filename, int *n_trees) {
     int count = 0;
     int collecting_tree = 0;
 
-    if (n_trees == NULL || filename == NULL)
+    if (n_trees == NULL || filename == NULL ||
+        (max_trees != -1 && max_trees <= 0))
         return NULL;
 
     *n_trees = 0;   /* Reset the number of trees to 0 */
@@ -247,6 +247,8 @@ TreeNode **read_nexus(const char *filename, int *n_trees) {
             }
 
             trees[count++] = tree;
+            if (max_trees != -1 && count >= max_trees)
+                break;
         }
     }
 
