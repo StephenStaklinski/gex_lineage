@@ -142,16 +142,6 @@ int main(int argc, char *argv[]) {
     gex = read_gex_matrix(expr_file);
     printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex->X->nrows, gex->X->ncols);
 
-    if (remove_ribo_mito_genes) {
-        int n_removed = gex_remove_ribo_mito_genes(gex);
-        if (n_removed < 0) {
-            fprintf(stderr, "ERROR: ribosomal/mitochondrial gene filtering removed all genes.\n");
-            return 1;
-        }
-        printf("Removed %d ribosomal/mitochondrial gene(s); matrix now has %d gene(s).\n",
-               n_removed, gex->X->ncols);
-    }
-
     /* Reconcile tree tips and expression cell names to the intersection of both sets
     if they do not perfectly match. */
     if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
@@ -176,6 +166,16 @@ int main(int argc, char *argv[]) {
         mat_scale(gex->X, scale_factor);
         /* Log-transform the data to stabilize variance and approximate Gaussian */
         mat_log1p(gex->X);
+    }
+
+    if (remove_ribo_mito_genes) {
+        int n_removed = gex_remove_ribo_mito_genes(gex);
+        if (n_removed < 0) {
+            fprintf(stderr, "ERROR: ribosomal/mitochondrial gene filtering removed all genes.\n");
+            return 1;
+        }
+        printf("Removed %d ribosomal/mitochondrial gene(s); matrix now has %d gene(s).\n",
+               n_removed, gex->X->ncols);
     }
 
     /* Transform data into the residuals */
