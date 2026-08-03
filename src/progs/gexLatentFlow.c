@@ -126,6 +126,7 @@ int main(int argc, char *argv[]) {
     GexMatrix *factors = NULL;
     double *log_sigma2 = NULL;
     int n_trees = 0;
+    int n_fitted_tips;
     int i;
 
     set_num_threads(1);
@@ -186,11 +187,23 @@ int main(int argc, char *argv[]) {
         fprintf(stderr,
                 "WARNING: input contains %d trees; latent flow uses the first tree, matching gexFactor.\n",
                 n_trees);
-    uniform_rescale_trees(trees, n_trees, 1.0);
 
     factors = read_gex_matrix(factors_file);
     if (factors == NULL || factors->X == NULL)
         return 1;
+    n_fitted_tips = factors->X->nrows;
+
+    /* Match gexFactor's in-memory preprocessing by pruning input trees to the
+       fitted cell set. Existing fitted factor rows must all remain present. */
+    if (gex_reconcile_tree_and_expression(trees, n_trees, &factors) != 0)
+        return 1;
+    if (factors->X->nrows != n_fitted_tips) {
+        fprintf(stderr,
+                "ERROR: the input tree set does not contain every fitted cell in %s.\n",
+                factors_file);
+        return 1;
+    }
+    uniform_rescale_trees(trees, n_trees, 1.0);
     if (count_tree_tips(trees[0]) != factors->X->nrows) {
         fprintf(stderr,
                 "ERROR: the first tree has a different number of tips than %s has rows.\n",
