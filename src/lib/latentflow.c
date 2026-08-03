@@ -165,11 +165,11 @@ static int write_latent_flow_tsv(const char *outprefix,
     return 0;
 }
 
-int gex_write_latent_flow_outputs(const char *outprefix,
-                                  TreeNode **trees,
-                                  int n_trees,
-                                  GexMatrix *gex,
-                                  GexLatentBrownianModel *model) {
+int gex_write_latent_flow_from_factors(const char *outprefix,
+                                       TreeNode *tree,
+                                       Matrix *F,
+                                       double *log_sigma2_latent,
+                                       char **cell_names) {
     int i, d;
     int n_pcs;
     double *tip_factor_means = NULL;
@@ -177,35 +177,33 @@ int gex_write_latent_flow_outputs(const char *outprefix,
     Matrix *states = NULL;
     int status = 0;
 
-    if (outprefix == NULL || trees == NULL || n_trees <= 0 ||
-        gex == NULL || model == NULL || model->F == NULL)
+    if (outprefix == NULL || tree == NULL || F == NULL ||
+        log_sigma2_latent == NULL || cell_names == NULL)
         return -1;
 
-    n_pcs = model->F->ncols < 2 ? model->F->ncols : 2;
+    n_pcs = F->ncols < 2 ? F->ncols : 2;
     if (n_pcs <= 0)
         return -1;
 
-    latent_pca = compute_pca(model->F, n_pcs);
-    tip_factor_means = scalloc(model->F->ncols, sizeof(double));
+    latent_pca = compute_pca(F, n_pcs);
+    tip_factor_means = scalloc(F->ncols, sizeof(double));
 
-    for (d = 0; d < model->F->ncols; d++) {
-        for (i = 0; i < model->F->nrows; i++)
-            tip_factor_means[d] += mat_get(model->F, i, d);
-        tip_factor_means[d] /= (double)model->F->nrows;
+    for (d = 0; d < F->ncols; d++) {
+        for (i = 0; i < F->nrows; i++)
+            tip_factor_means[d] += mat_get(F, i, d);
+        tip_factor_means[d] /= (double)F->nrows;
     }
 
-    states = gex_reconstruct_latent_tree_states(trees[0],
-                                                model->F,
-                                                model->log_sigma2_latent,
-                                                gex->cell_names);
+    states = gex_reconstruct_latent_tree_states(tree, F,
+                                                log_sigma2_latent,
+                                                cell_names);
     if (states == NULL) {
-        fprintf(stderr, "ERROR: failed to reconstruct latent states for tree 1.\n");
+        fprintf(stderr, "ERROR: failed to reconstruct latent states.\n");
         status = -1;
     }
     else {
-        if (write_latent_flow_tsv(outprefix, trees[0], states, latent_pca,
-                                  tip_factor_means, model->F,
-                                  gex->cell_names) != 0)
+        if (write_latent_flow_tsv(outprefix, tree, states, latent_pca,
+                                  tip_factor_means, F, cell_names) != 0)
             status = -1;
         mat_free(states);
     }
@@ -216,4 +214,18 @@ int gex_write_latent_flow_outputs(const char *outprefix,
         free(tip_factor_means);
 
     return status;
+}
+
+int gex_write_latent_flow_outputs(const char *outprefix,
+                                  TreeNode **trees,
+                                  int n_trees,
+                                  GexMatrix *gex,
+                                  GexLatentBrownianModel *model) {
+    if (outprefix == NULL || trees == NULL || n_trees <= 0 ||
+        gex == NULL || model == NULL || model->F == NULL)
+        return -1;
+
+    return gex_write_latent_flow_from_factors(outprefix, trees[0], model->F,
+                                               model->log_sigma2_latent,
+                                               gex->cell_names);
 }

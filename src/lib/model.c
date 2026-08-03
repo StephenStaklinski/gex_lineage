@@ -335,6 +335,118 @@ static double brownian_prune_neglog_and_grad(TreeNode *tree,
     return nll;
 }
 
+/* Combine two Gaussian messages about the same node state. A zero variance
+   represents an exactly known state, as at an observed tip or a fixed root. */
+static void combine_brownian_messages(double mean1,
+                                      double var1,
+                                      double mean2,
+                                      double var2,
+                                      double *mean_out,
+                                      double *var_out) {
+    if (var1 <= 0.0) {
+        *mean_out = mean1;
+        *var_out = 0.0;
+    }
+    else if (var2 <= 0.0) {
+        *mean_out = mean2;
+        *var_out = 0.0;
+    }
+    else {
+        double precision1 = 1.0 / var1;
+        double precision2 = 1.0 / var2;
+        double precision = precision1 + precision2;
+        *var_out = 1.0 / precision;
+        *mean_out = (mean1 * precision1 + mean2 * precision2) / precision;
+    }
+}
+
+/* Complete Brownian ancestral-state reconstruction after the postorder pass.
+   descendant_mean/var contain the Gaussian likelihood message from each
+   node's descendant tips. A preorder pass supplies the complementary message
+   from the root prior and all tips outside the node's clade. */
+static int brownian_reconstruct_full_tree(TreeNode *tree,
+                                          int *tip_index_by_id,
+                                          const double *z,
+                                          double sigma2,
+                                          const double *descendant_mean,
+                                          const double *descendant_var,
+                                          double *reconstructed_mean) {
+    List *preorder = NULL;
+    double *outside_mean = NULL;
+    double *outside_var = NULL;
+    int i;
+
+    if (tree == NULL || tip_index_by_id == NULL || z == NULL ||
+        descendant_mean == NULL || descendant_var == NULL ||
+        reconstructed_mean == NULL || sigma2 <= 0.0)
+        return -1;
+
+    preorder = tr_preorder(tree);
+    if (preorder == NULL)
+        return -1;
+
+    outside_mean = scalloc(tree->nnodes, sizeof(double));
+    outside_var = scalloc(tree->nnodes, sizeof(double));
+
+    /* The fitted Brownian model starts at an origin fixed at zero, with the
+       root separated from it by tree->dparent. */
+    outside_mean[tree->id] = 0.0;
+    outside_var[tree->id] = sigma2 * max(tree->dparent, 0.0);
+
+    for (i = 0; i < lst_size(preorder); i++) {
+        TreeNode *node = lst_get_ptr(preorder, i);
+        int id;
+
+        if (node == NULL)
+            continue;
+        id = node->id;
+
+        if (tip_index_by_id[id] >= 0) {
+            /* Fitted latent tip scores are the observations being
+               conditioned upon and therefore remain exact. */
+            reconstructed_mean[id] = z[tip_index_by_id[id]];
+        }
+        else {
+            double posterior_var;
+            combine_brownian_messages(descendant_mean[id], descendant_var[id],
+                                      outside_mean[id], outside_var[id],
+                                      &reconstructed_mean[id], &posterior_var);
+        }
+
+        if (node->lchild != NULL || node->rchild != NULL) {
+            TreeNode *children[2] = {node->lchild, node->rchild};
+            int child_index;
+
+            for (child_index = 0; child_index < 2; child_index++) {
+                TreeNode *child = children[child_index];
+                TreeNode *sibling = children[1 - child_index];
+                double context_mean = outside_mean[id];
+                double context_var = outside_var[id];
+
+                if (child == NULL)
+                    continue;
+
+                if (sibling != NULL) {
+                    double sibling_var = descendant_var[sibling->id] +
+                        brownian_branch_variance(sigma2, sibling->dparent);
+                    combine_brownian_messages(context_mean, context_var,
+                                              descendant_mean[sibling->id],
+                                              sibling_var,
+                                              &context_mean, &context_var);
+                }
+
+                outside_mean[child->id] = context_mean;
+                outside_var[child->id] = context_var +
+                    brownian_branch_variance(sigma2, child->dparent);
+            }
+        }
+    }
+
+    free(outside_mean);
+    free(outside_var);
+    return 0;
+}
+
 /* Compute the mixture-of-Brownian Gaussian prior contribution for the latent
 factors F across all latent dimensions. Returns the contribution to the
 objective, adds the prior gradient to F, and computes gradients with respect
@@ -495,6 +607,7 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
     double *var = NULL;
     double *adjoint = NULL;
     double *z = NULL;
+    double *reconstructed_mean = NULL;
     Matrix *states = NULL;
 
     if (tree == NULL || F == NULL || log_sigma2_latent == NULL || cell_names == NULL)
@@ -510,6 +623,7 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
     var = scalloc(tree->nnodes, sizeof(double));
     adjoint = scalloc(tree->nnodes, sizeof(double));
     z = scalloc(F->nrows, sizeof(double));
+    reconstructed_mean = scalloc(tree->nnodes, sizeof(double));
 
     for (d = 0; d < F->ncols; d++) {
         double sigma2_d = exp(log_sigma2_latent[d]);
@@ -517,9 +631,7 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
         for (i = 0; i < F->nrows; i++)
             z[i] = mat_get(F, i, d);
 
-        /* Brownian pruning conditions internal latent states on observed tip
-           states. Directionality is not inferred by Brownian motion itself; it
-           comes later from traversing the rooted tree from parent to child. */
+        /* First compute descendant partial-likelihood messages. */
         if (!isfinite(brownian_prune_neglog_and_grad(tree,
                                                      postorder,
                                                      n_postorder,
@@ -536,8 +648,22 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
             break;
         }
 
+        /* Then add the root-prior and outside-clade messages so every
+           internal-node estimate is conditioned on all fitted tip states. */
+        if (brownian_reconstruct_full_tree(tree,
+                                           tip_index_by_id,
+                                           z,
+                                           sigma2_d,
+                                           mean,
+                                           var,
+                                           reconstructed_mean) != 0) {
+            mat_free(states);
+            states = NULL;
+            break;
+        }
+
         for (i = 0; i < tree->nnodes; i++)
-            mat_set(states, i, d, mean[i]);
+            mat_set(states, i, d, reconstructed_mean[i]);
     }
 
     if (postorder != NULL)
@@ -552,6 +678,8 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
         free(adjoint);
     if (z != NULL)
         free(z);
+    if (reconstructed_mean != NULL)
+        free(reconstructed_mean);
 
     return states;
 }
