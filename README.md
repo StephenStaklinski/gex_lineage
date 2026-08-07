@@ -45,29 +45,12 @@ programs. Run each with `--help` for its detailed options:
 gexFilter --help
 gexPca --help
 gexFactor --help
-gexLatentFlow --help
 ```
 
 `gexPca` writes maxPhyloPCA results, including a
 `.pca.eigenvectors.tsv` loading matrix. Pass that matrix to
 `gexFactor --pca`; when `--pca` is omitted, `gexFactor` initializes its
 loadings randomly using the configured seed.
-
-### Regenerating latent-flow output
-
-`gexLatentFlow` reconstructs internal latent-factor states from an existing
-fit without rerunning model optimization. Given the tree file originally used
-for fitting and the fit prefix, run:
-
-```bash
-gexLatentFlow --trees trees.nex --fit-prefix results/sample.fit
-```
-
-This reads `results/sample.fit.F.tsv` and
-`results/sample.fit.summary.tsv`, then writes or replaces only
-`results/sample.fit.latent_flow.tsv`. To preserve an existing table, provide a
-different `--outprefix`. Factor scores and Brownian variances can instead be
-supplied explicitly; see `gexLatentFlow --help`.
 
 ## Support
 
