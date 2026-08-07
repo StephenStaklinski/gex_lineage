@@ -1,7 +1,6 @@
 #include "brownian.h"
 #include "external_libs.h"
 #include "gexmatrix.h"
-#include "misc.h"
 #include "parser.h"
 #include "pca.h"
 
@@ -18,33 +17,6 @@ static void usage(const char *progname) {
             "Usage: %s --tree <tree.nex> --expr <filtered.tsv> "
             "--outprefix <prefix> --dim K\n",
             progname);
-}
-
-static void write_pca_gram(const char *outprefix, PCA *pca) {
-    char filename[4096];
-    char **pc_names;
-    Matrix *components_t;
-    Matrix *gram;
-    int i;
-
-    pc_names = scalloc(pca->K, sizeof(char *));
-    generate_names(pc_names, pca->K, "PC");
-    components_t = mat_transpose(pca->components);
-    gram = mat_new(pca->K, pca->K);
-    mat_mult_lapack(gram, pca->components, components_t);
-
-    snprintf(filename, sizeof(filename),
-             "%s.pca.eigenvector_gram.tsv", outprefix);
-    write_labeled_matrix_tsv(filename, gram,
-                             pc_names, pca->K,
-                             pc_names, pca->K,
-                             "PC");
-
-    for (i = 0; i < pca->K; i++)
-        free(pc_names[i]);
-    free(pc_names);
-    mat_free(components_t);
-    mat_free(gram);
 }
 
 int main(int argc, char *argv[]) {

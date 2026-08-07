@@ -24,4 +24,6 @@ void print_pca_summary(PCA *pca);
 
 void write_pca_tsv(const char *outprefix, PCA *pca, GexMatrix *gex);
 
+void write_pca_gram(const char *outprefix, PCA *pca);
+
 #endif
