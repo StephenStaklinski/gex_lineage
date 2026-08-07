@@ -1,7 +1,5 @@
 #include "adam.h"
 
-#include "gexmatrix.h"
-
 #include <phast/matrix.h>
 
 #include <math.h>

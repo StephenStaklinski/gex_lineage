@@ -94,7 +94,7 @@ static void gex_bh_adjust(double *pvals, double *qvals, int n) {
 /* Calculate the inverse pairwise distance weight matrix from a phylogenetic 
 covariance matrix. This weight matrix approach is based on the PATH method 
 by Schiffman et al. 2024 Nature Genetics (PMID: 39317739). */
-void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma) {
+static void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma) {
     int i, j;
     int n = Sigma->nrows; 
     double Sii;

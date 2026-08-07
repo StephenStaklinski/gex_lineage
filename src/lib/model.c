@@ -1897,15 +1897,15 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
     free(model);
 }
 
-void write_summary_tsv(const char *path,
-                        int n_cells,
-                        int n_genes,
-                        double brownian_negll,
-                        double observation_negll,
-                        double sigma2_obs,
-                        double *sigma2_latent,
-                        double *L_row_norms,
-                        int k) {
+static void write_summary_tsv(const char *path,
+                              int n_cells,
+                              int n_genes,
+                              double brownian_negll,
+                              double observation_negll,
+                              double sigma2_obs,
+                              double *sigma2_latent,
+                              double *L_row_norms,
+                              int k) {
     int j;
     FILE *summary_out = NULL;
 

@@ -1,11 +1,9 @@
 #ifndef GEXBROWNIAN_H
 #define GEXBROWNIAN_H
 
-#include "gexmatrix.h"
-#include "phylofilter.h"
-
 #include <phast/matrix.h>
 #include <phast/trees.h>
+#include <phast/vector.h>
 
 Matrix *covariance_from_tree(TreeNode *tree, char **names, int n);
 

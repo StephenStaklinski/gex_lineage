@@ -3,7 +3,6 @@
 
 #include "gexmatrix.h"
 #include "pca.h"
-#include "model.h"
 
 #include <phast/matrix.h>
 #include <phast/trees.h>
@@ -68,16 +67,6 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
                                             Matrix *F,
                                             double *log_sigma2_latent,
                                             char **cell_names);
-
-void write_summary_tsv(const char *path,
-                        int n_cells,
-                        int n_genes,
-                        double brownian_negll,
-                        double observation_negll,
-                        double sigma2_obs,
-                        double *sigma2_latent,
-                        double *L_row_norms,
-                        int k);
 
 void write_model(const char *outprefix,
                     GexMatrix *gex,

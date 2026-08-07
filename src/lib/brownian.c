@@ -1,7 +1,6 @@
 #include "brownian.h"
 
 #include "gexmatrix.h"
-#include "misc.h"
 
 #include "mvn.h"
 

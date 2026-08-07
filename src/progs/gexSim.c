@@ -5,8 +5,6 @@
 #include "misc.h"
 #include "model.h"
 #include "parser.h"
-#include "pca.h"
-#include "phylofilter.h"
 
 #include <phast/trees.h>
 #include <phast/matrix.h>
