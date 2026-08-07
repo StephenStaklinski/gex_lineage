@@ -165,21 +165,28 @@ static int write_latent_flow_tsv(const char *outprefix,
     return 0;
 }
 
-int gex_write_latent_flow_from_factors(const char *outprefix,
-                                       TreeNode *tree,
-                                       Matrix *F,
-                                       double *log_sigma2_latent,
-                                       char **cell_names) {
+int gex_write_latent_flow_outputs(const char *outprefix,
+                                  TreeNode *tree,
+                                  GexMatrix *gex,
+                                  GexLatentBrownianModel *model) {
     int i, d;
     int n_pcs;
+    Matrix *F = NULL;
+    double *log_sigma2_latent = NULL;
+    char **cell_names = NULL;
     double *tip_factor_means = NULL;
     PCA *latent_pca = NULL;
     Matrix *states = NULL;
     int status = 0;
 
-    if (outprefix == NULL || tree == NULL || F == NULL ||
-        log_sigma2_latent == NULL || cell_names == NULL)
+    if (outprefix == NULL || tree == NULL || gex == NULL || model == NULL ||
+        model->F == NULL || model->log_sigma2_latent == NULL ||
+        gex->cell_names == NULL)
         return -1;
+
+    F = model->F;
+    log_sigma2_latent = model->log_sigma2_latent;
+    cell_names = gex->cell_names;
 
     n_pcs = F->ncols < 2 ? F->ncols : 2;
     if (n_pcs <= 0)
@@ -214,18 +221,4 @@ int gex_write_latent_flow_from_factors(const char *outprefix,
         free(tip_factor_means);
 
     return status;
-}
-
-int gex_write_latent_flow_outputs(const char *outprefix,
-                                  TreeNode **trees,
-                                  int n_trees,
-                                  GexMatrix *gex,
-                                  GexLatentBrownianModel *model) {
-    if (outprefix == NULL || trees == NULL || n_trees <= 0 ||
-        gex == NULL || model == NULL || model->F == NULL)
-        return -1;
-
-    return gex_write_latent_flow_from_factors(outprefix, trees[0], model->F,
-                                               model->log_sigma2_latent,
-                                               gex->cell_names);
 }

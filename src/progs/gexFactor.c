@@ -179,7 +179,7 @@ int main(int argc, char *argv[]) {
 
     if (write_latent_flow) {
         printf("Writing latent flow table...\n");
-        if (gex_write_latent_flow_outputs(outprefix, trees, 1, gex_filtered, model) != 0) {
+        if (gex_write_latent_flow_outputs(outprefix, trees[0], gex_filtered, model) != 0) {
             fprintf(stderr, "ERROR: failed to write latent flow outputs.\n");
             return 1;
         }
