@@ -7,6 +7,11 @@
 
 
 typedef enum {
+    GEX_LRT_NULL_MONTECARLO = 0,
+    GEX_LRT_NULL_CHI2 = 1
+} GexLRTNullMode;
+
+typedef enum {
     GEX_LRT_ALT_FULL = 0,
     GEX_LRT_ALT_LAMBDA = 1
 } GexLRTAltMode;
@@ -34,7 +39,8 @@ typedef struct {
 
 typedef enum {
     GEX_FILTER_MORAN = 0,
-    GEX_FILTER_LRT = 1
+    GEX_FILTER_LRT = 1,
+    GEX_FILTER_BOTH = 2
 } GexFilterMode;
 
 MoranResult *gex_compute_morans_i(Matrix *X,
