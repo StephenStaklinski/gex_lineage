@@ -302,7 +302,7 @@ int main(int argc, char *argv[]) {
         generate_names(gex->gene_names, sim_dim, "factor"); /* gex becomes F now */
         
 
-        simulate_factorization_and_reconstruction(gex->X, gex->cell_names, n_cells, k, n_genes, 
+        simulate_factorization_and_reconstruction(gex->X, n_cells, k, n_genes,
                                                     sigma2_obs, L_row_norms, L, gex_obs);
 
         /* Deterministic transformation to prevent permutation invariance */

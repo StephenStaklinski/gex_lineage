@@ -80,8 +80,7 @@ void write_summary_tsv(const char *path,
                         double sigma2_obs,
                         double *sigma2_latent,
                         double *L_row_norms,
-                        int k,
-                        char **factor_names);
+                        int k);
 
 void write_model(const char *outprefix,
                     GexMatrix *gex,
@@ -97,7 +96,6 @@ void write_model(const char *outprefix,
                     double *sigma2_latent);
 
 void simulate_factorization_and_reconstruction(Matrix *F,
-                                                char **cell_names,
                                                 int n_cells,
                                                 int k,
                                                 int n_genes,

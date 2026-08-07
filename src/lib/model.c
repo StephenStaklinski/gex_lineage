@@ -1907,8 +1907,7 @@ void write_summary_tsv(const char *path,
                         double sigma2_obs,
                         double *sigma2_latent,
                         double *L_row_norms,
-                        int k,
-                        char **factor_names) {
+                        int k) {
     int j;
     FILE *summary_out = NULL;
 
@@ -1959,7 +1958,7 @@ void write_model(const char *outprefix,
 
     write_summary_tsv(summary_path, gex->X->nrows, gex->X->ncols, 
                         brownian_negll, observation_negll,
-                        sigma2_obs, sigma2_latent, L_row_norms, k, factor_names);
+                        sigma2_obs, sigma2_latent, L_row_norms, k);
     
     /* Free memory */
     free(L_row_norms);
@@ -1977,7 +1976,6 @@ void write_model(const char *outprefix,
 
 /* Simulate L and X from the input F and sigma_obs */
 void simulate_factorization_and_reconstruction(Matrix *F,
-                                     char **cell_names,
                                      int n_cells,
                                      int k,
                                      int n_genes,

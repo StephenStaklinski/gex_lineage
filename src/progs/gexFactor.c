@@ -162,8 +162,6 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "ERROR: failed to load PCA initialization.\n");
             return 1;
         }
-    } else {
-        printf("No PCA initialization supplied; using seeded random loadings.\n");
     }
 
     /* Fit the latent Brownian model */
