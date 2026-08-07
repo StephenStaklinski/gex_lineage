@@ -1,76 +1,26 @@
-/*
- * VINE: Variational Inference with Node Embeddings
- *
- * Copyright (c) 2025-2026, Cold Spring Harbor Laboratory
- * All rights reserved.
- *
- * This file is part of VINE and is distributed under the BSD 3-Clause License.
- * See the LICENSE file in the project root for details.
- */
+#ifndef GEX_MVN_H
+#define GEX_MVN_H
 
-#ifndef MVN_H
-#define MVN_H
-
-#include <stdio.h>
 #include <phast/matrix.h>
 
-enum mvn_type {MVN_STD, MVN_IDENTITY, MVN_DIAG, MVN_LOWR, MVN_GEN};
+enum mvn_type {MVN_STD, MVN_IDENTITY, MVN_DIAG, MVN_GEN};
 
-typedef struct MVN MVN;
-
-struct MVN {
-  int dim; /* dimensionality */
-  Vector *mu; /* mean vector */
-  Matrix *sigma;   /* covariance matrix*/
-  Matrix *cholL;  /* lower triangular matrix from Cholesky
-                     decomposition of covariance matrix */
-  Vector *evals;  /* eigendecomposition of covariance matrix */
-  Matrix *evecs; /* for cases in which Cholesky cannot be obtained */
-  Matrix *lowR; /* for low-rank parameterization */
-  MVN *lowRmvn; /* embedded low-rank MVN */
-  Matrix *lowR_invRtR; /* precomputed inverse of R^T R */
-  enum mvn_type type;
-};
+typedef struct {
+    int dim;
+    Vector *mu;
+    Matrix *sigma;
+    Matrix *cholL;
+    Vector *evals;
+    Matrix *evecs;
+    enum mvn_type type;
+} MVN;
 
 MVN *mvn_new(int dim, Vector *mu, Matrix *sigma);
 
-MVN *mvn_new_LOWR(int dim, Vector *mu, Matrix *R);
-
-void mvn_reset_LOWR(MVN *mvn, Matrix *R);
-
 void mvn_free(MVN *mvn);
-
-void mvn_update_type(MVN *mvn);
-
-void mvn_sample_std(Vector *retval);
-
-void mvn_map_std(MVN *mvn, Vector *rv, Vector *lowrv);
-
-void mvn_seed(unsigned int seed);
-
-void mvn_sample(MVN *mvn, Vector *retval);
-
-void mvn_sample_anti(MVN *mvn, Vector *retval1, Vector *retval2);
-
-void mvn_sample_anti_keep(MVN *mvn, Vector *retval1, Vector *retval2,
-                          Vector *origstd);
 
 void mvn_preprocess(MVN *mvn, unsigned int force_eigen);
 
-double mvn_log_dens(MVN *mvn, Vector *x);
-
-double mvn_log_det(MVN *mvn);
-
-void mvn_print(MVN *mvn, FILE *F);
-
-void mvn_rederive_std(MVN *mvn, Vector *x, Vector *x_std);
-
-double mvn_trace(MVN *mvn);
-
-double mvn_mu2(MVN *mvn);
-
-void mvn_project_LOWR(MVN *mvn, Vector *z, Vector *a);
-
-void mvn_invert_RtR_LOWR(MVN *mvn);
+void mvn_sample(MVN *mvn, Vector *retval);
 
 #endif
