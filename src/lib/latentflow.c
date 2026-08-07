@@ -87,14 +87,17 @@ static int write_latent_flow_tsv(const char *outprefix,
     char path[4096];
     FILE *fh = NULL;
     List *preorder = NULL;
+    double *depth_by_id = NULL;
 
     tr_set_nnodes(tree);
     preorder = tr_preorder(tree);
+    depth_by_id = scalloc(tree->nnodes, sizeof(double));
 
     snprintf(path, sizeof(path), "%s.latent_flow.tsv", outprefix);
     fh = fopen(path, "w");
     if (fh == NULL) {
         fprintf(stderr, "ERROR: could not open %s for writing.\n", path);
+        free(depth_by_id);
         return -1;
     }
 
@@ -118,6 +121,11 @@ static int write_latent_flow_tsv(const char *outprefix,
         if (node == NULL)
             continue;
 
+        if (node->parent != NULL) {
+            depth_by_id[node->id] = depth_by_id[node->parent->id] +
+                node->dparent;
+        }
+
         name = node_output_name(node, name_buf, sizeof(name_buf));
         if (node->parent != NULL) {
             parent_id = node->parent->id;
@@ -130,6 +138,7 @@ static int write_latent_flow_tsv(const char *outprefix,
             cell_index = find_cell_index(cell_names, F->nrows, name);
             if (cell_index < 0) {
                 fclose(fh);
+                free(depth_by_id);
                 fprintf(stderr, "ERROR: could not find tip '%s' in expression data while writing latent flow.\n",
                         name);
                 return -1;
@@ -149,7 +158,7 @@ static int write_latent_flow_tsv(const char *outprefix,
                 name,
                 parent_name,
                 is_tip ? 1 : 0,
-                tr_distance_to_root(node),
+                depth_by_id[node->id],
                 node->parent == NULL ? 0.0 : node->dparent,
                 pc1,
                 pc2);
@@ -161,6 +170,7 @@ static int write_latent_flow_tsv(const char *outprefix,
     }
 
     fclose(fh);
+    free(depth_by_id);
     return 0;
 }
 
