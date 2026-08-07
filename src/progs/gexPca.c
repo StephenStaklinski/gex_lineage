@@ -76,32 +76,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    trees = read_nexus(tree_file, &n_trees, 1);
-    if (trees == NULL || n_trees != 1)
+    if (load_and_reconcile_tree_gex_inputs(tree_file, expr_file, 1,
+                                           &trees, &n_trees, &gex) != 0)
         return 1;
-    if (check_trees_ultrametric(trees, n_trees) != 0) {
-        gex_free_trees(trees, n_trees);
-        return 1;
-    }
-    printf("Loaded the first tree.\n");
 
-    gex = read_gex_matrix(expr_file);
-    if (gex == NULL) {
-        gex_free_trees(trees, n_trees);
-        return 1;
-    }
-    printf("Loaded matrix with %d cell(s) and %d gene(s).\n",
-           gex->X->nrows, gex->X->ncols);
-
-    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
-        fprintf(stderr,
-                "ERROR: failed to reconcile tree tips and expression cell names.\n");
-        gex_free_matrix_data(gex);
-        gex_free_trees(trees, n_trees);
-        return 1;
-    }
-
-    uniform_rescale_trees(trees, n_trees, 1.0);
     tree_covariance =
         covariance_from_tree(trees[0], gex->cell_names, gex->X->nrows);
     if (tree_covariance == NULL) {

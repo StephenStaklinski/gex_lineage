@@ -25,6 +25,13 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
                                       int n_trees,
                                       GexMatrix **gex_ptr);
 
+int load_and_reconcile_tree_gex_inputs(const char *trees_file,
+                                       const char *expr_file,
+                                       int max_trees,
+                                       TreeNode ***trees_out,
+                                       int *n_trees_out,
+                                       GexMatrix **gex_out);
+
 Vector *parse_csv_to_vec(const char *csv);
 
 #endif

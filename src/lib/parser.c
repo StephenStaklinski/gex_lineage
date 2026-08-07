@@ -820,6 +820,56 @@ int gex_reconcile_tree_and_expression(TreeNode **trees,
     return 0;
 }
 
+int load_and_reconcile_tree_gex_inputs(const char *trees_file,
+                                       const char *expr_file,
+                                       int max_trees,
+                                       TreeNode ***trees_out,
+                                       int *n_trees_out,
+                                       GexMatrix **gex_out) {
+    TreeNode **trees = NULL;
+    GexMatrix *gex = NULL;
+    int n_trees = 0;
+
+    if (trees_file == NULL || expr_file == NULL || trees_out == NULL ||
+        n_trees_out == NULL || gex_out == NULL)
+        return -1;
+
+    *trees_out = NULL;
+    *n_trees_out = 0;
+    *gex_out = NULL;
+
+    trees = read_nexus(trees_file, &n_trees, max_trees);
+    if (trees == NULL || n_trees <= 0 ||
+        check_trees_ultrametric(trees, n_trees) != 0) {
+        gex_free_trees(trees, n_trees);
+        return -1;
+    }
+    printf("Loaded %d tree(s).\n", n_trees);
+
+    gex = read_gex_matrix(expr_file);
+    if (gex == NULL) {
+        gex_free_trees(trees, n_trees);
+        return -1;
+    }
+    printf("Loaded matrix with %d cell(s) and %d gene(s).\n",
+           gex->X->nrows, gex->X->ncols);
+
+    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex) != 0) {
+        fprintf(stderr,
+                "ERROR: failed to reconcile tree tips and expression cell names.\n");
+        gex_free_matrix_data(gex);
+        gex_free_trees(trees, n_trees);
+        return -1;
+    }
+
+    uniform_rescale_trees(trees, n_trees, 1.0);
+
+    *trees_out = trees;
+    *n_trees_out = n_trees;
+    *gex_out = gex;
+    return 0;
+}
+
 Vector *parse_csv_to_vec(const char *csv_string) {
     Vector *v = NULL;
     int count = 0;

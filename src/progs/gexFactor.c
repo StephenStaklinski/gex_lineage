@@ -150,26 +150,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Load the input trees */
-    trees = read_nexus(trees_file, &n_trees, -1);
-    if (check_trees_ultrametric(trees, n_trees) != 0) {
+    if (load_and_reconcile_tree_gex_inputs(trees_file, expr_file, -1,
+                                           &trees, &n_trees,
+                                           &gex_filtered) != 0)
         return 1;
-    }
-    printf("Loaded %d tree(s).\n", n_trees);
-    
-    /* Load the input expression matrix */
-    gex_filtered = read_gex_matrix(expr_file);
-    printf("Loaded matrix with %d cell(s) and %d gene(s).\n", gex_filtered->X->nrows, gex_filtered->X->ncols);
-
-    /* Reconcile tree tips and expression cell names to the intersection of both sets
-    if they do not perfectly match. */
-    if (gex_reconcile_tree_and_expression(trees, n_trees, &gex_filtered) != 0) {
-        fprintf(stderr, "ERROR: failed to reconcile tree tips and expression cell names.\n");
-        return 1;
-    }
-
-    /* Use the same unit-height time scale for every factor-model run. */
-    uniform_rescale_trees(trees, n_trees, 1.0);
 
     if (pca_file != NULL) {
         printf("Loading PCA initialization from %s...\n", pca_file);
