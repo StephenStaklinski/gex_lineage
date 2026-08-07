@@ -34,31 +34,15 @@ Matrix *mat_centered_col_cov(Matrix *Xc);
 
 Matrix *mat_centered_row_cov(Matrix *Xc);
 
-void mat_standardize_cols(Matrix *X);
-
-void mat_col_shuffle(Matrix *X);
-
 double mat_sum_entries(Matrix *X);
 
 double mat_sum_squared_entries(Matrix *X);
-
-Matrix *mat_mult_elementwise(Matrix *dest, Matrix *A, Matrix *B);
-
-void mat_square_elementwise(Matrix *X);
-
-void mat_sqrt_elementwise(Matrix *X);
-
-void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B);
 
 void mat_add_diag(Matrix *X, double val);
 
 double *mat_row_l2_norms(Matrix *L);
 
-Vector *mat_get_diag(Matrix *X);
-
 Vector *mat_row_sums(Matrix *X);
-
-Vector *mat_col_sums(Matrix *X);
 
 double vec_sum_squared_entries(Vector *v);
 
@@ -90,8 +74,6 @@ double mat_pearson_correlation(Matrix *A, Matrix *B);
 Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows, int absolute);
 
 double mat_logdet_chol(Matrix *L);
-
-double mat_logdet(Matrix *Sigma);
 
 void mat_add_gaussian_noise(Matrix *X, double sigma2);
 

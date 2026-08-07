@@ -257,57 +257,6 @@ Matrix *mat_centered_row_cov(Matrix *Xc) {
     return Cov;
 }
 
-/* Standardize the columns of a matrix by subtracting the mean and 
-dividing by the standard deviation in-place */
-void mat_standardize_cols(Matrix *X) {
-    int i, j;
-
-    for (j = 0; j < X->ncols; j++) {
-        double mean = 0.0;
-        double var = 0.0;
-        double sd;
-
-        /* Get the mean of the column */
-        for (i = 0; i < X->nrows; i++)
-            mean += mat_get(X, i, j);
-        mean /= X->nrows;
-
-        /* Get the variance of the column */
-        for (i = 0; i < X->nrows; i++) {
-            double diff = mat_get(X, i, j) - mean;
-            var += diff * diff;
-        }
-        var /= X->nrows;
-
-        sd = sqrt(var);
-        if (sd < 1e-12)
-            continue;
-
-        /* Standardize the column */
-        for (i = 0; i < X->nrows; i++) {
-            double val = mat_get(X, i, j);
-            val -= mean;
-            val /= sd;
-            mat_set(X, i, j, val);
-        }
-    }
-}
-
-/* Shuffle all columns of a matrix in-place using Fisher–Yates */
-void mat_col_shuffle(Matrix *X) {
-    int i, j;
-    double tmp;
-
-    for (j = 0; j < X->ncols; j++) {
-        for (i = X->nrows - 1; i > 0; i--) {
-            int k = rand() % (i + 1);  /* 0 ≤ k ≤ i */
-            tmp = mat_get(X, i, j);
-            mat_set(X, i, j, mat_get(X, k, j));
-            mat_set(X, k, j, tmp);
-        }
-    }
-}
-
 /* Sum all entries of a Matrix */
 double mat_sum_entries(Matrix *X) {
     int i, j;
@@ -340,73 +289,6 @@ double mat_sum_squared_entries(Matrix *X) {
     return sum;
 }
 
-/* Multiply two matrices element-wise (NOT true matrix multiplication)
-and store the result in a third matrix */
-Matrix *mat_mult_elementwise(Matrix *dest, Matrix *A, Matrix *B) {
-    int i, j;
-
-    if (dest == NULL || A == NULL || B == NULL)
-        return NULL;
-
-    if (A->nrows != B->nrows || A->ncols != B->ncols)
-        return NULL;
-
-    for (i = 0; i < A->nrows; i++) {
-        for (j = 0; j < A->ncols; j++) {
-            double val = mat_get(A, i, j) * mat_get(B, i, j);
-            mat_set(dest, i, j, val);
-        }
-    }
-
-    return dest;
-}
-
-/* Square the entries of a matrix element-wise in-place. */
-void mat_square_elementwise(Matrix *X) {
-    int i, j;
-
-    for (i = 0; i < X->nrows; i++) {
-        for (j = 0; j < X->ncols; j++) {
-            double val = mat_get(X, i, j);
-            val *= val;
-            mat_set(X, i, j, val);
-        }
-    }
-}
-
-/* Take the square root of the entries of a matrix element-wise 
-in-place. */
-void mat_sqrt_elementwise(Matrix *X) {
-    int i, j;
-
-    for (i = 0; i < X->nrows; i++) {
-        for (j = 0; j < X->ncols; j++) {
-            double val = mat_get(X, i, j);
-            val = sqrt(val);
-            mat_set(X, i, j, val);
-        }
-    }
-}
-
-/* Divide two matrices element-wise (NOT true matrix multiplication)
-and store the result in a third matrix */
-void mat_div_elementwise(Matrix *dest, Matrix *A, Matrix *B) {
-    int i, j;
-
-    if (dest == NULL || A == NULL || B == NULL)
-        return;
-
-    if (A->nrows != B->nrows || A->ncols != B->ncols)
-        return;
-
-    for (i = 0; i < A->nrows; i++) {
-        for (j = 0; j < A->ncols; j++) {
-            double val = mat_get(A, i, j) / mat_get(B, i, j);
-            mat_set(dest, i, j, val);
-        }
-    }
-}
-
 /* Add a scalar value to the diagonal entries of a matrix */
 void mat_add_diag(Matrix *X, double val) {
     int i, n;
@@ -433,20 +315,6 @@ double *mat_row_l2_norms(Matrix *L) {
     return row_norms;
 }
 
-/* Return a vector containing the diagonal entries of a matrix */
-Vector *mat_get_diag(Matrix *X) {
-    int i, n;
-    Vector *diag;
-
-    n = X->nrows < X->ncols ? X->nrows : X->ncols;
-    diag = vec_new(n);
-
-    for (i = 0; i < n; i++)
-        vec_set(diag, i, mat_get(X, i, i));
-
-    return diag;
-}
-
 /* Return a vector containing the row sums of a matrix */
 Vector *mat_row_sums(Matrix *X) {
     int i, j;
@@ -460,21 +328,6 @@ Vector *mat_row_sums(Matrix *X) {
         vec_set(row_sums, i, sum);
     }
     return row_sums;
-}
-
-/* Return a vector containing the column sums of a matrix */
-Vector *mat_col_sums(Matrix *X) {
-    int i, j;
-    Vector *col_sums;
-
-    col_sums = vec_new(X->ncols);
-    for (j = 0; j < X->ncols; j++) {
-        double sum = 0.0;
-        for (i = 0; i < X->nrows; i++)
-            sum += mat_get(X, i, j);
-        vec_set(col_sums, j, sum);
-    }
-    return col_sums;
 }
 
 /* Return the sum of the squares of the entries in a vector */
@@ -804,19 +657,6 @@ double mat_logdet_chol(Matrix *L) {
         logdet_sigma += log(diag);
     }
     logdet_sigma *= 2.0;
-
-    return logdet_sigma;
-}
-
-/* Compute the log-determinant of a matrix*/
-double mat_logdet(Matrix *Sigma) {
-
-    Matrix *L = mat_new(Sigma->nrows, Sigma->nrows);
-    mat_cholesky(L, Sigma);
-
-    double logdet_sigma =  mat_logdet_chol(L);
-
-    mat_free(L);
 
     return logdet_sigma;
 }
