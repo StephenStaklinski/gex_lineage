@@ -5,8 +5,6 @@
 #include "pca.h"
 #include "model.h"
 
-#include "mvn.h"
-
 #include <phast/matrix.h>
 #include <phast/trees.h>
 
@@ -27,7 +25,6 @@ typedef struct {
     double l1_objective;
     double L_loading_overlap_objective;
     double FL_frobenius_norm;
-    MVN *latent_mvn;
 } GexLatentBrownianModel;
 
 GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,

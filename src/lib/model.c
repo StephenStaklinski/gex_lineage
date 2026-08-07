@@ -1894,8 +1894,6 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
         mat_free(model->FL);
     if (model->log_sigma2_latent != NULL) 
         free(model->log_sigma2_latent);
-    if (model->latent_mvn != NULL) 
-        mvn_free(model->latent_mvn);
     free(model);
 }
 

@@ -45,8 +45,6 @@ typedef enum {
 
 void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma);
 
-void print_weight_matrix_summary(Matrix *W);
-
 MoranResult *gex_compute_morans_i(Matrix *X,
                                       Matrix **Sigmas,
                                       int n_sigmas);

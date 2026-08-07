@@ -1,6 +1,5 @@
 #include "gexmatrix.h"
 
-#include "misc.h"
 #include "external_libs.h"
 
 #include <phast/matrix.h>
@@ -41,18 +40,6 @@ void gex_free_matrix_data(GexMatrix *gex) {
         mat_free(gex->X);
 
     free(gex);
-}
-
-GexMatrix *gex_mat_copy(GexMatrix *gex) {
-    if (gex == NULL)
-        return NULL;
-
-    GexMatrix *copy = scalloc(1, sizeof(GexMatrix));
-    copy->X = mat_create_copy(gex->X);
-    copy->cell_names = copy_string_array(gex->cell_names, gex->X->nrows);
-    copy->gene_names = copy_string_array(gex->gene_names, gex->X->ncols);
-
-    return copy;
 }
 
 static int gene_has_case_insensitive_prefix(const char *gene_name,

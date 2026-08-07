@@ -201,30 +201,6 @@ Matrix *gex_average_tree_covariance(TreeNode **trees,
     return avg;
 }
 
-/* Print a summary of the covariance matrix. */
-void print_covariance_summary(Matrix *Sigma, char **names, int n) {
-    int i, j;
-
-    if (Sigma == NULL || names == NULL || n <= 0) {
-        fprintf(stderr, "ERROR: cannot summarize NULL covariance matrix\n");
-        return;
-    }
-    if (Sigma->nrows != n || Sigma->ncols != n) {
-        fprintf(stderr, "ERROR: covariance summary got mismatched dimensions\n");
-        return;
-    }
-
-    printf("\n");
-    printf("First few entries of covariance matrix:\n");
-    for (i = 0; i < n && i < 10; i++) {
-        printf("%s", names[i]);
-        for (j = 0; j < n && j < 10; j++)
-            printf("\t%g", mat_get(Sigma, i, j));
-        printf("\n");
-    }
-    printf("\n");
-}
-
 Matrix *brownian_simulate(Matrix **Sigmas, int n_sigmas, Vector *mu, int n_cols,
                           Vector *sigma2s) {
 

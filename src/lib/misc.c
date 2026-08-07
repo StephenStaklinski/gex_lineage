@@ -10,15 +10,6 @@
 #include <stdlib.h>
 
 
-char **copy_string_array(char **input, int n) {
-    int i;
-    char **copy = scalloc(n, sizeof(char *));
-    for (i = 0; i < n; i++) {
-        copy[i] = strdup(input[i]);
-    }
-    return copy;
-}
-
 char **copy_string_array_inplace(char **output, char **input, int n) {
     int i;
     for (i = 0; i < n; i++) {

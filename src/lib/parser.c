@@ -274,27 +274,6 @@ TreeNode **read_nexus(const char *filename, int *n_trees, int max_trees) {
     return trees;
 }
 
-int keep_one_tree(TreeNode **trees, int *n_trees, int tree_index) {
-    TreeNode *selected;
-    int i;
-
-    if (trees == NULL || n_trees == NULL || *n_trees < 1)
-        return -1;
-    if (tree_index < 1 || tree_index > *n_trees)
-        return -1;
-
-    selected = trees[tree_index - 1];
-    for (i = 0; i < *n_trees; i++) {
-        if (i != tree_index - 1 && trees[i] != NULL) {
-            tr_free(trees[i]);
-            trees[i] = NULL;
-        }
-    }
-    trees[0] = selected;
-    *n_trees = 1;
-    return 0;
-}
-
 static int is_leaf(TreeNode *node) {
     return (node != NULL && node->lchild == NULL && node->rchild == NULL);
 }
@@ -623,38 +602,6 @@ GexMatrix *read_gex_matrix(const char *filename) {
     free(line);
 
     return gex;
-}
-
-/* Print a summary of the tree set and expr matrix i/o results */
-void gex_print_io_summary(TreeNode **trees, int n_trees, GexMatrix *gex) {
-    int i;
-    int n_print = 10; /* Number of variable entries to print in each summary */
-
-    if (gex != NULL && gex->X != NULL) {
-        printf("\n");
-        printf("First few cell names:\n");
-        for (i = 0; i < gex->X->nrows && i < n_print; i++)
-            printf("  %s\n", gex->cell_names[i]);
-
-        printf("First few gene names:\n");
-        for (i = 0; i < gex->X->ncols && i < n_print; i++)
-            printf("  %s\n", gex->gene_names[i]);
-
-        printf("First few entries of matrix:\n");
-        for (i = 0; i < gex->X->nrows && i < n_print; i++) {
-            int j;
-            printf("  %s:", gex->cell_names[i]);
-            for (j = 0; j < gex->X->ncols && j < n_print; j++)
-                printf(" %g", mat_get(gex->X, i, j));
-            printf("\n");
-        }
-    }
-
-    if (n_trees > 0 && trees != NULL && trees[0] != NULL) {
-        printf("First tree: ");
-        tr_print(stdout, trees[0], 1);
-        printf("\n");
-    }
 }
 
 static int gex_name_in_char_array(const char *name, char **names, int n) {

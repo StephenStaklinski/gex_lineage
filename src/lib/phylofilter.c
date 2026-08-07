@@ -114,25 +114,6 @@ void weight_matrix_from_covariance(Matrix *W, Matrix *Sigma) {
     }
 }
 
-/* Print a summary of the covariance-based weight matrix. */
-void print_weight_matrix_summary(Matrix *W) {
-    int i, j;
-
-    if (W == NULL) {
-        fprintf(stderr, "ERROR: cannot summarize NULL weight matrix\n");
-        return;
-    }
-
-    printf("\n");
-    printf("First few entries of covariance-based weight matrix:\n");
-    for (i = 0; i < W->nrows && i < 10; i++) {
-        for (j = 0; j < W->ncols && j < 10; j++)
-            printf(" %g", mat_get(W, i, j));
-        printf("\n");
-    }
-    printf("\n");
-}
-
 /* Compute Moran's I-based phylogenetic autocorrelation for each 
 gene in the expression matrix. This function is written to functionally 
 match the xcor function from the R package PATH by Schiffman et al. 

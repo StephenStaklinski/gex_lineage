@@ -14,8 +14,6 @@ GexMatrix *gex_mat_new(int n_cells, int n_genes);
 
 void gex_free_matrix_data(GexMatrix *gex);
 
-GexMatrix *gex_mat_copy(GexMatrix *gex);
-
 int gex_remove_ribo_mito_genes(GexMatrix *gex);
 
 void mat_set_col(Matrix *res, int i, Vector *sim_vec);

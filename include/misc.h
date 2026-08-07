@@ -3,8 +3,6 @@
 
 #include <phast/vector.h>
 
-char **copy_string_array(char **input, int n);
-
 char **copy_string_array_inplace(char **output, char **input, int n);
 
 Vector *expand_input_csv(Vector *input, int expected_size);
