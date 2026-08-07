@@ -91,11 +91,14 @@ static int write_latent_flow_tsv(const char *outprefix,
 
     tr_set_nnodes(tree);
     preorder = tr_preorder(tree);
+    if (preorder == NULL)
+        return -1;
 
     snprintf(path, sizeof(path), "%s.latent_flow.tsv", outprefix);
     fh = fopen(path, "w");
     if (fh == NULL) {
         fprintf(stderr, "ERROR: could not open %s for writing.\n", path);
+        lst_free(preorder);
         return -1;
     }
 
@@ -131,6 +134,7 @@ static int write_latent_flow_tsv(const char *outprefix,
             cell_index = find_cell_index(cell_names, F->nrows, name);
             if (cell_index < 0) {
                 fclose(fh);
+                lst_free(preorder);
                 fprintf(stderr, "ERROR: could not find tip '%s' in expression data while writing latent flow.\n",
                         name);
                 return -1;
@@ -162,6 +166,7 @@ static int write_latent_flow_tsv(const char *outprefix,
     }
 
     fclose(fh);
+    lst_free(preorder);
     return 0;
 }
 

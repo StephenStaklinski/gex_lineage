@@ -150,6 +150,8 @@ static int init_brownian_pruning_tree(TreeNode *tree,
 
     tr_set_nnodes(tree);
     postorder_list = tr_postorder(tree);
+    if (postorder_list == NULL)
+        return -1;
     n_postorder = lst_size(postorder_list);
     postorder = scalloc(n_postorder, sizeof(TreeNode *));
     tip_index_by_id = smalloc(tree->nnodes * sizeof(int));
@@ -171,11 +173,13 @@ static int init_brownian_pruning_tree(TreeNode *tree,
                         node->name);
                 free(postorder);
                 free(tip_index_by_id);
+                lst_free(postorder_list);
                 return -1;
             }
         }
     }
 
+    lst_free(postorder_list);
     *postorder_out = postorder;
     *n_postorder_out = n_postorder;
     *tip_index_by_id_out = tip_index_by_id;
@@ -442,6 +446,7 @@ static int brownian_reconstruct_full_tree(TreeNode *tree,
         }
     }
 
+    lst_free(preorder);
     free(outside_mean);
     free(outside_var);
     return 0;
