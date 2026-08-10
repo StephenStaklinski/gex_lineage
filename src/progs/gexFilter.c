@@ -206,23 +206,26 @@ int main(int argc, char *argv[]) {
     }
 
     gex_filtered = gex_filter_genes(gex, morans, lrt, filter_mode, max_q);
-    printf("Filtered matrix has %d cells and %d gene(s).\n",
-           gex_filtered->X->nrows, gex_filtered->X->ncols);
+    if (gex_filtered != NULL) {
+        printf("Filtered matrix has %d cells and %d gene(s).\n",
+               gex_filtered->X->nrows, gex_filtered->X->ncols);
 
-    {
-        char filtered_path[4096];
-        snprintf(filtered_path, sizeof(filtered_path), "%s.filtered.tsv", outprefix);
-        write_labeled_matrix_tsv(filtered_path, gex_filtered->X,
-                                 gex_filtered->cell_names, gex_filtered->X->nrows,
-                                 gex_filtered->gene_names, gex_filtered->X->ncols,
-                                 "cell");
-        printf("Wrote modeling-ready filtered expression matrix to %s\n", filtered_path);
+        {
+            char filtered_path[4096];
+            snprintf(filtered_path, sizeof(filtered_path), "%s.filtered.tsv", outprefix);
+            write_labeled_matrix_tsv(filtered_path, gex_filtered->X,
+                                     gex_filtered->cell_names, gex_filtered->X->nrows,
+                                     gex_filtered->gene_names, gex_filtered->X->ncols,
+                                     "cell");
+            printf("Wrote modeling-ready filtered expression matrix to %s\n", filtered_path);
+        }
     }
 
     /* Free memory */
     gex_free_trees(trees, n_trees);
     gex_free_matrix_data(gex);
-    gex_free_matrix_data(gex_filtered);
+    if (gex_filtered != NULL)
+        gex_free_matrix_data(gex_filtered);
     free_moran_result(morans);
     free_lrt_result(lrt);
     if (filter_avg_Sigma != NULL) {

@@ -776,7 +776,7 @@ GexMatrix *gex_filter_genes(GexMatrix *gex,
             nkeep++;
     }
     if (nkeep <= 0) {
-        fprintf(stderr, "ERROR: no genes passed the filter(s)\n");
+        fprintf(stderr, "WARNING: no genes passed the filter(s)\n");
         return NULL;
     }
 
