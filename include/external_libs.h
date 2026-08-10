@@ -1,5 +1,5 @@
-#ifndef _GEX_EXTERNAL_LIBS_
-#define _GEX_EXTERNAL_LIBS_
+#ifndef GEX_LINEAGE_EXTERNAL_LIBS_H
+#define GEX_LINEAGE_EXTERNAL_LIBS_H
 
 #include <stdlib.h>
 

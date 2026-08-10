@@ -1,5 +1,5 @@
-#ifndef GEXLATENTFLOW_H
-#define GEXLATENTFLOW_H
+#ifndef GEX_LINEAGE_LATENTFLOW_H
+#define GEX_LINEAGE_LATENTFLOW_H
 
 #include "gexmatrix.h"
 #include "model.h"

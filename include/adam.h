@@ -1,5 +1,5 @@
-#ifndef GEXADAM_H
-#define GEXADAM_H
+#ifndef GEX_LINEAGE_ADAM_H
+#define GEX_LINEAGE_ADAM_H
 
 #include <phast/matrix.h>
 

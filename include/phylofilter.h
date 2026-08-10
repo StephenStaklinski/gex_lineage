@@ -1,5 +1,5 @@
-#ifndef GEXPHYLOFILTER_H
-#define GEXPHYLOFILTER_H
+#ifndef GEX_LINEAGE_PHYLOFILTER_H
+#define GEX_LINEAGE_PHYLOFILTER_H
 
 #include "gexmatrix.h"
 

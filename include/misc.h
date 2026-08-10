@@ -1,5 +1,5 @@
-#ifndef GECXMISC_H
-#define GECXMISC_H
+#ifndef GEX_LINEAGE_MISC_H
+#define GEX_LINEAGE_MISC_H
 
 #include <phast/vector.h>
 

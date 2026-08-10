@@ -30,16 +30,6 @@ foreach(tgt gexFilter gexPca gexFactor gexSim gexEvalSim)
     endif()
 endforeach()
 
-# Read version file and strip whitespace
-file(READ "${CMAKE_SOURCE_DIR}/version" GEX_LINEAGE_VERSION_RAW)
-string(STRIP "${GEX_LINEAGE_VERSION_RAW}" GEX_LINEAGE_VERSION)
-message(STATUS "GEX_LINEAGE_VERSION='${GEX_LINEAGE_VERSION}'")
-
-foreach(tgt gexFilter gexPca gexFactor gexSim gexEvalSim)
-    target_compile_definitions(${tgt} PRIVATE GEX_LINEAGE_VERSION="${GEX_LINEAGE_VERSION}")
-endforeach()
-
-
 # Install all progs into bin/
 install(TARGETS
   gexFilter

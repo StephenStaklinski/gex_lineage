@@ -1,5 +1,5 @@
-#ifndef GEXBROWNIAN_H
-#define GEXBROWNIAN_H
+#ifndef GEX_LINEAGE_BROWNIAN_H
+#define GEX_LINEAGE_BROWNIAN_H
 
 #include <phast/matrix.h>
 #include <phast/trees.h>

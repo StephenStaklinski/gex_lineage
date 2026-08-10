@@ -1,5 +1,5 @@
-#ifndef GEXPARSER_H
-#define GEXPARSER_H
+#ifndef GEX_LINEAGE_PARSER_H
+#define GEX_LINEAGE_PARSER_H
 
 #include "gexmatrix.h"
 

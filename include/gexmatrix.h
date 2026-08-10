@@ -1,5 +1,5 @@
-#ifndef GEXMATRIX_H
-#define GEXMATRIX_H
+#ifndef GEX_LINEAGE_GEXMATRIX_H
+#define GEX_LINEAGE_GEXMATRIX_H
 
 #include <phast/matrix.h>
 #include <phast/vector.h>

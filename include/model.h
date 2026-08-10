@@ -1,5 +1,5 @@
-#ifndef GEXMODEL_H
-#define GEXMODEL_H
+#ifndef GEX_LINEAGE_MODEL_H
+#define GEX_LINEAGE_MODEL_H
 
 #include "gexmatrix.h"
 #include "pca.h"

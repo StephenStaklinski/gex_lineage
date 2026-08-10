@@ -1,5 +1,5 @@
-#ifndef GEX_MVN_H
-#define GEX_MVN_H
+#ifndef GEX_LINEAGE_MVN_H
+#define GEX_LINEAGE_MVN_H
 
 #include <phast/matrix.h>
 
