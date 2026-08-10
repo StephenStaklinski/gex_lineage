@@ -73,7 +73,7 @@ Matrix *mat_factor_pearson_correlation(Matrix *A, Matrix *B, int compare_rows, i
 
 double mat_logdet_chol(Matrix *L);
 
-void mat_add_gaussian_noise(Matrix *X, double sigma2);
+void mat_add_gaussian_noise(Matrix *X, double stddev);
 
 void mat_mult_lapack(Matrix *prod, Matrix *m1, Matrix *m2);
 

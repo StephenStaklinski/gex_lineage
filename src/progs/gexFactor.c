@@ -249,8 +249,6 @@ int main(int argc, char *argv[]) {
 
     /* Compare the fitted factors to the initial PCA factors */
     if (pca != NULL) {
-        Matrix *factor_corr = NULL;
-        char factor_corr_path[4096];
         char **pca_factor_names = scalloc(pca->K, sizeof(char *));
 
         generate_names(pca_factor_names, pca->K, "PC");

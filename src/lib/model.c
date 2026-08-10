@@ -1643,7 +1643,6 @@ GexLatentBrownianModel *gex_fit_latent_brownian_model(GexMatrix *gex,
 
     /* Run Adam */
     for (step = 1; ; step++) {
-        int d;
 
         /* Reset clipping flag */
         clipping_on = 0;
