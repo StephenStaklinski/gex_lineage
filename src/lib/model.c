@@ -194,40 +194,33 @@ static void free_brownian_pruning_arrays(TreeNode ***postorders,
 
     if (postorders != NULL) {
         for (i = 0; i < n_trees; i++)
-            if (postorders[i] != NULL)
-                free(postorders[i]);
+            free(postorders[i]);
         free(postorders);
     }
-    if (n_postorders != NULL)
-        free(n_postorders);
+    free(n_postorders);
     if (tip_index_by_id != NULL) {
         for (i = 0; i < n_trees; i++)
-            if (tip_index_by_id[i] != NULL)
-                free(tip_index_by_id[i]);
+            free(tip_index_by_id[i]);
         free(tip_index_by_id);
     }
     if (means != NULL) {
         for (i = 0; i < n_trees; i++)
-            if (means[i] != NULL)
-                free(means[i]);
+            free(means[i]);
         free(means);
     }
     if (vars != NULL) {
         for (i = 0; i < n_trees; i++)
-            if (vars[i] != NULL)
-                free(vars[i]);
+            free(vars[i]);
         free(vars);
     }
     if (adjoints != NULL) {
         for (i = 0; i < n_trees; i++)
-            if (adjoints[i] != NULL)
-                free(adjoints[i]);
+            free(adjoints[i]);
         free(adjoints);
     }
     if (tree_grads != NULL) {
         for (i = 0; i < n_trees; i++)
-            if (tree_grads[i] != NULL)
-                free(tree_grads[i]);
+            free(tree_grads[i]);
         free(tree_grads);
     }
 }
@@ -666,20 +659,13 @@ Matrix *gex_reconstruct_latent_tree_states(TreeNode *tree,
             mat_set(states, i, d, reconstructed_mean[i]);
     }
 
-    if (postorder != NULL)
-        free(postorder);
-    if (tip_index_by_id != NULL)
-        free(tip_index_by_id);
-    if (mean != NULL)
-        free(mean);
-    if (var != NULL)
-        free(var);
-    if (adjoint != NULL)
-        free(adjoint);
-    if (z != NULL)
-        free(z);
-    if (reconstructed_mean != NULL)
-        free(reconstructed_mean);
+    free(postorder);
+    free(tip_index_by_id);
+    free(mean);
+    free(var);
+    free(adjoint);
+    free(z);
+    free(reconstructed_mean);
 
     return states;
 }
@@ -1124,8 +1110,7 @@ static void free_best_latent_brownian_state(BestLatentBrownianState *best) {
         mat_free(best->F);
     if (best->L != NULL)
         mat_free(best->L);
-    if (best->log_sigma2_latent != NULL)
-        free(best->log_sigma2_latent);
+    free(best->log_sigma2_latent);
 }
 
 static void store_best_latent_brownian_state(BestLatentBrownianState *best,
@@ -1891,8 +1876,7 @@ void gex_free_latent_brownian_model(GexLatentBrownianModel *model) {
         mat_free(model->L);
     if (model->FL != NULL) 
         mat_free(model->FL);
-    if (model->log_sigma2_latent != NULL) 
-        free(model->log_sigma2_latent);
+    free(model->log_sigma2_latent);
     free(model);
 }
 

@@ -226,8 +226,7 @@ int gex_write_latent_flow_outputs(const char *outprefix,
 
     if (latent_pca != NULL)
         free_pca(latent_pca);
-    if (tip_factor_means != NULL)
-        free(tip_factor_means);
+    free(tip_factor_means);
 
     return status;
 }

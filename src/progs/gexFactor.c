@@ -263,8 +263,7 @@ int main(int argc, char *argv[]) {
         mat_free(factor_corr);
 
         for (i = 0; i < pca->K; i++) {
-            if (pca_factor_names[i] != NULL)
-                free(pca_factor_names[i]);
+            free(pca_factor_names[i]);
         }
         free(pca_factor_names);
     }
@@ -272,8 +271,7 @@ int main(int argc, char *argv[]) {
     /* Free memory */
     if (factor_names != NULL) {
         for (i = 0; i < k; i++) {
-            if (factor_names[i] != NULL)
-                free(factor_names[i]);
+            free(factor_names[i]);
         }
         free(factor_names);
     }

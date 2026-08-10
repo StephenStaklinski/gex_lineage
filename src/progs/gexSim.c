@@ -342,8 +342,7 @@ int main(int argc, char *argv[]) {
                         gex->gene_names, k, brownian_negll, observation_negll, sigma2_obs, sigma2s->data);
 
         /* Free memory */
-        if (log_sigma2_latent != NULL)
-            free(log_sigma2_latent);
+        free(log_sigma2_latent);
         if (L != NULL)
             mat_free(L);
         if (gex_obs != NULL)

@@ -264,8 +264,7 @@ MoranResult *gex_compute_morans_i(Matrix *X,
         mat_free(W);
     if (d0 != NULL)
         mat_free(d0);
-    if (Vjs != NULL)
-        free(Vjs);
+    free(Vjs);
 
     return res;
 }
@@ -636,8 +635,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         vec_free(y);
     if (y_sim != NULL)
         vec_free(y_sim);
-    if (ll_alts != NULL)
-        free(ll_alts);
+    free(ll_alts);
     if (X_centered != NULL)
         mat_free(X_centered);
     if (Ls != NULL) {
@@ -647,8 +645,7 @@ GexLRTResult *gex_compute_brownian_lrt(Matrix *X,
         }
         free(Ls);
     }
-    if (logdet_sigmas != NULL)
-        free(logdet_sigmas);
+    free(logdet_sigmas);
     if (ones != NULL)
         vec_free(ones);
     if (tmp != NULL)
@@ -711,16 +708,11 @@ void write_lrt_tsv(const char *filename,
 void free_moran_result(MoranResult *res) {
     if (res == NULL)
         return;
-    if (res->morans_i != NULL)
-        free(res->morans_i);
-    if (res->zscores != NULL)
-        free(res->zscores);
-    if (res->pvals != NULL)
-        free(res->pvals);
-    if (res->qvals != NULL)
-        free(res->qvals);
-    if (res->gene_variance != NULL)
-        free(res->gene_variance);
+    free(res->morans_i);
+    free(res->zscores);
+    free(res->pvals);
+    free(res->qvals);
+    free(res->gene_variance);
 
     free(res);
 }
@@ -729,20 +721,13 @@ void free_lrt_result(GexLRTResult *res) {
     if (res == NULL)
         return;
 
-    if (res->lrt_stat != NULL)
-        free(res->lrt_stat);
-    if (res->pvals != NULL)
-        free(res->pvals);
-    if (res->qvals != NULL)
-        free(res->qvals);
-    if (res->ll_null != NULL)
-        free(res->ll_null);
-    if (res->ll_alt != NULL)
-        free(res->ll_alt);
-    if (res->lambda_hat != NULL)
-        free(res->lambda_hat);
-    if (res->gene_variance != NULL)
-        free(res->gene_variance);
+    free(res->lrt_stat);
+    free(res->pvals);
+    free(res->qvals);
+    free(res->ll_null);
+    free(res->ll_alt);
+    free(res->lambda_hat);
+    free(res->gene_variance);
     free(res);
 }
 

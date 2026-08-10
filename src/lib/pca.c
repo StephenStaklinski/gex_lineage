@@ -117,8 +117,7 @@ static PCA *pca_eigen(Matrix *Cov) {
     }
 
     /* Free memory */
-    if (pairs != NULL)
-        free(pairs);
+    free(pairs);
     if (eigvals != NULL)
         vec_free(eigvals);
     if (eigvecs != NULL)
@@ -260,18 +259,12 @@ static PCA *pca_lapack(Matrix *Xc, int k) {
 cleanup:
     if (gram_matrix != NULL)
         mat_free(gram_matrix);
-    if (gram != NULL)
-        free(gram);
-    if (eigvals != NULL)
-        free(eigvals);
-    if (eigvecs != NULL)
-        free(eigvecs);
-    if (isuppz != NULL)
-        free(isuppz);
-    if (work != NULL)
-        free(work);
-    if (iwork != NULL)
-        free(iwork);
+    free(gram);
+    free(eigvals);
+    free(eigvecs);
+    free(isuppz);
+    free(work);
+    free(iwork);
     return out;
 }
 
@@ -562,10 +555,8 @@ void free_pca(PCA *pca) {
 
     if (pca->components != NULL)
         mat_free(pca->components);
-    if (pca->eigenvalues != NULL)
-        free(pca->eigenvalues);
-    if (pca->var_explained != NULL)
-        free(pca->var_explained);
+    free(pca->eigenvalues);
+    free(pca->var_explained);
 
     free(pca);
 }
