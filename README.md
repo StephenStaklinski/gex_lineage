@@ -25,17 +25,6 @@ cmake --install build
 Here, `PHAST_ROOT` should point to the installation prefix of PHAST (e.g.,
 `/opt/homebrew/opt/phast`).
 
-## Multithreading Support
-Uses OpenMP by default if found by CMake. OpenMP is not required. 
-
-Note for MacOS: if OpenMP is not found by default, try explicitly
-specifying the LLVM compiler during configuration, e.g., 
-```sh
-cmake -S . -B build -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang
-```
-
-The number of threads can be controlled with the -j option.
-
 ## Usage
 
 Filtering, PCA initialization, and factor-model fitting are exposed as separate
@@ -47,14 +36,12 @@ gexPca --help
 gexFactor --help
 ```
 
-`gexPca` writes maxPhyloPCA results, including a
-`.pca.eigenvectors.tsv` loading matrix. Pass that matrix to
-`gexFactor --pca`; when `--pca` is omitted, `gexFactor` initializes its
-loadings randomly using the configured seed.
-
-## Support
-
-For questions or bug reports, please use the project issue tracker.
+- `gexFilter` preprocesses the expression matrix and retains genes with
+  phylogenetic signal.
+- `gexPca` finds tree-aware principal components that can initialize the
+  factor model (optional).
+- `gexFactor` fits the latent Brownian factor model and writes the inferred
+  factors, gene loadings, and reconstructed expression.
 
 ## License
 
