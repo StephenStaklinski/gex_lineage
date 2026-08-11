@@ -169,14 +169,14 @@ int main(int argc, char *argv[]) {
         printf("Applying the phylogenetic signal gene filter using the covariance averaged across all %d tree(s)...\n",
                n_trees);
 
-        /* Pagel's lambda LRT is only for <=5000 cells; Full LRT is only for <=500 cells */
+        /* Pagel's lambda LRT is only for <=1000 cells; Full LRT is only for <=100 cells */
         if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_LAMBDA && gex->X->nrows > 1000) {
             filter_mode = GEX_FILTER_MORAN;
             printf("WARNING: Pagel's lambda Brownian LRT is only for <=1000 cells. Switching to Moran's I filter instead.\n");
         }
-        if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_FULL && gex->X->nrows > 500) {
+        if (filter_mode == GEX_FILTER_LRT && lrt_alt_mode == GEX_LRT_ALT_FULL && gex->X->nrows > 100) {
             filter_mode = GEX_FILTER_MORAN;
-            printf("WARNING: Full Brownian LRT is only for <=500 cells. Switching to Moran's I filter instead.\n");
+            printf("WARNING: Full Brownian LRT is only for <=100 cells. Switching to Moran's I filter instead.\n");
         }
 
         /* Run the phylogenetic autocorrelation filter tests if requested */
