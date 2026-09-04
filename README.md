@@ -1,4 +1,4 @@
-# Lineage-constrained factor analysis model of single-cell gene expression evolution
+# Single-cell phylogenetic factor analysis (scPFA)
 
 ## Requirements
 
