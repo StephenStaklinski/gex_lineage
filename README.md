@@ -1,7 +1,4 @@
-# gexLineage
-
-**gexLineage** is a program and set of supporting libraries for modeling
-gene expression with phylogenetic lineage structure.
+# Lineage-constrained factor analysis model of single-cell gene expression evolution
 
 ## Requirements
 
@@ -11,8 +8,7 @@ gene expression with phylogenetic lineage structure.
 
 ## Building from Source
 
-If PHAST is installed in a standard location, CMake will usually find it
-automatically. Otherwise, you can specify its install prefix explicitly:
+Specify the PHAST installation prefix explicitly:
 
 ```bash
 cmake -S . -B build \
@@ -38,8 +34,9 @@ gexFactor --help
 
 - `gexFilter` preprocesses the expression matrix and retains genes with
   phylogenetic signal.
-- `gexPca` finds tree-aware principal components that can initialize the
-  factor model (optional).
+- `gexPca` finds tree-aware principal components. This could optionally be used to initialize the factor
+  analysis model, though I usually prefer the default random initialization. It can also be used independently 
+  for its own tree-aware PCA analysis to compare and contrast with the factor analysis result.
 - `gexFactor` fits the latent Brownian factor model and writes the inferred
   factors, gene loadings, and reconstructed expression.
 
